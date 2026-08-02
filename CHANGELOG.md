@@ -58,6 +58,13 @@ tracking table) until the first production deployment freezes the schema.
   instead of stack traces.
 
 ### Changed
+- **Model refresh (2026-08)**: default agent model → Claude Sonnet 5
+  (`anthropic.claude-sonnet-5`, date-less current-generation Bedrock id;
+  note the new tokenizer counts ~30% more tokens for the same text);
+  `balanced`/`budget` presets → GLM-5 (`zai.glm-5`, Bedrock March 2026);
+  rival-grader judge and teacher defaults → Sonnet 5, replacing
+  `anthropic.claude-3-5-sonnet-20241022-v2:0`, which AWS retired in
+  October 2025 (the old default would 404 on first live use).
 - Docs retargeted from the pre-workspace flat layout to `packages/*` paths;
   counts regenerated from measured reality; LoRA doc numbers aligned to the
   shipped defaults (r=16, α=32); kappa RL gate unified at κ ≥ 0.78.

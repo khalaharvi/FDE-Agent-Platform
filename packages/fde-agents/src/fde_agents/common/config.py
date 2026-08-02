@@ -38,15 +38,23 @@ from functools import lru_cache
 
 from fde_mcp.config import get_settings
 
-# The model this platform's prompts have been tuned against. Overridable per
-# deployment via `FDE_MODEL_ID` -- the SAME variable `fde_mcp.config.
-# AgentSettings.model_id` reads for the audit trail written alongside every
-# proposal, so the model id recorded on a proposal and the model id this
-# process actually calls Bedrock with can never disagree. Only the
-# *default* applied when the variable is unset is decided here, not there --
-# "what happens when it's unset" is an agent-runtime concern, not something
-# the MCP server (which never calls a model itself) needs an opinion on.
-DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+# The default model. Overridable per deployment via `FDE_MODEL_ID` -- the
+# SAME variable `fde_mcp.config.AgentSettings.model_id` reads for the audit
+# trail written alongside every proposal, so the model id recorded on a
+# proposal and the model id this process actually calls Bedrock with can
+# never disagree. Only the *default* applied when the variable is unset is
+# decided here, not there -- "what happens when it's unset" is an
+# agent-runtime concern, not something the MCP server (which never calls a
+# model itself) needs an opinion on.
+#
+# Claude Sonnet 5 (Bedrock id: current-generation models are date-less and
+# `anthropic.`-prefixed). Two migration notes from Sonnet 4.5, which the
+# original prompts were authored against: the new tokenizer produces ~30%
+# more tokens for the same text (per-token price unchanged -- re-baseline
+# token budgets, not the rates), and adaptive thinking is on by default.
+# Verify availability in your region with `aws bedrock list-foundation-models`
+# before deploying (README "Status and honesty").
+DEFAULT_MODEL_ID = "anthropic.claude-sonnet-5"
 
 # ---------------------------------------------------------------------
 # Model presets -- `FDE_MODEL_PRESET`, the budget dial.
@@ -82,17 +90,17 @@ MODEL_PRESETS: dict[str, dict[str, str]] = {
     # propose-and-gate agents; Claude stays on codegen (scaffolds ship as
     # reviewable packages, but generated code quality is worth the spend).
     "balanced": {
-        "engagement": "zai.glm-4.7",
-        "workflow": "zai.glm-4.7",
+        "engagement": "zai.glm-5",
+        "workflow": "zai.glm-5",
         "development": DEFAULT_MODEL_ID,
     },
     # Tiered-aggressive: open-weight everywhere. Cheapest defensible mix --
     # small models stay OUT of the 21-tool loop entirely; this dial selects
     # among capable agentic models, it never degrades below them.
     "budget": {
-        "engagement": "zai.glm-4.7",
-        "workflow": "zai.glm-4.7",
-        "development": "zai.glm-4.7",
+        "engagement": "zai.glm-5",
+        "workflow": "zai.glm-5",
+        "development": "zai.glm-5",
     },
 }
 

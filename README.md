@@ -157,13 +157,18 @@ Presets are defined in one place —
 
 | Preset | Engagement / Workflow | Development | ~Inference cost* |
 |---|---|---|---|
-| `premium` (default) | Claude Sonnet 4.5 | Claude Sonnet 4.5 | ~$350/mo |
-| `balanced` | GLM-4.7 | Claude Sonnet 4.5 | ~$125/mo |
-| `budget` | GLM-4.7 | GLM-4.7 | ~$60/mo |
+| `premium` (default) | Claude Sonnet 5 | Claude Sonnet 5 | ~$350/mo |
+| `balanced` | GLM-5 | Claude Sonnet 5 | ~$150/mo |
+| `budget` | GLM-5 | GLM-5 | ~$110/mo |
 
 *Order-of-magnitude, one active engagement (~200 sessions × ~500k tokens),
-Bedrock on-demand list prices, before prompt caching (−75% on cached reads)
-and batch-tier discounts. Re-derive against current pricing for a real budget.
+Bedrock on-demand list prices (Sonnet 5 $3/$15 per MTok, GLM-5 $1/$3.20),
+before prompt caching (−75% on cached reads) and batch-tier discounts.
+Sonnet 5's tokenizer produces ~30% more tokens for the same text than
+Sonnet 4.5's — re-baseline token budgets when comparing. GLM-4.7
+($0.60/$2.20) and GLM-4.7-Flash ($0.07/$0.40) remain on Bedrock if you want
+to dial a custom `FDE_MODEL_ID` lower. Re-derive against current pricing
+for a real budget.
 
 Why cheap models are unusually safe here: every agent write passes the same
 human gates and fail-closed validation regardless of which model proposed

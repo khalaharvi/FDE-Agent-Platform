@@ -123,7 +123,7 @@ def heuristic_teacher_fn(rng: random.Random) -> TeacherFn:
 
 
 def bedrock_teacher_fn(
-    model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0", region: str | None = None
+    model_id: str = "anthropic.claude-sonnet-5", region: str | None = None
 ) -> TeacherFn:
     """Real path: Bedrock Converse with `toolConfig` describing the
     `kg_search`/`kg_traverse`/`kg_get_node` tool schemas, one turn per call.

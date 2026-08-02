@@ -149,7 +149,7 @@ JudgeFn = Callable[[str], JudgeVerdict]
 
 def bedrock_judge(
     prompt: str,
-    model_id: str = "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    model_id: str = "anthropic.claude-sonnet-5",
     region: str | None = None,
 ) -> JudgeVerdict:
     """Real Bedrock Converse call. Import boto3 lazily so this module is

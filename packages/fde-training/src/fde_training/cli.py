@@ -519,7 +519,7 @@ def _add_rival_grader_parser(sub: argparse._SubParsersAction) -> None:
         ),
     )
     p_rival_run.add_argument("--judge", choices=["bedrock", "mock"], default="mock")
-    p_rival_run.add_argument("--judge-model", default="anthropic.claude-3-5-sonnet-20241022-v2:0")
+    p_rival_run.add_argument("--judge-model", default="anthropic.claude-sonnet-5")
     p_rival_run.add_argument("--k", type=int, default=10)
     p_rival_run.add_argument(
         "--embed",
@@ -550,7 +550,7 @@ def _add_generate_traces_parser(sub: argparse._SubParsersAction) -> None:
     p_gen.add_argument("--teacher", choices=["heuristic", "bedrock"], default="heuristic")
     p_gen.add_argument(
         "--judge-model",
-        default="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        default="anthropic.claude-sonnet-5",
         help="Model id for --teacher=bedrock.",
     )
     p_gen.add_argument("--seed", type=int, default=0)
