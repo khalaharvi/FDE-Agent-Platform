@@ -40,56 +40,43 @@ improve rather than just run.
 ## Quick start (clone → running locally, no AWS account needed)
 
 ```bash
-# 0. Toolchain (uv is the only prerequisite; it manages Python itself)
+# toolchain
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --all-packages --frozen
 
-# 1. Database — the same pgvector image CI uses, on port 55432 so it never
-#    collides with a Postgres you already run
+# database (CI's exact pgvector image, port 55432)
 docker compose up -d db
 export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
-./db/rebuild.sh fde                     # 15 migrations + 25 smoke tests
+./db/rebuild.sh fde
 export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
-#    (already running Postgres with pgvector >= 0.8? skip compose:
-#     createdb fde && ./db/rebuild.sh fde && export FDE_DB_DSN=postgresql:///fde)
 
-# 2. Prove it works
-uv run pytest packages                  # 545 tests against live Postgres
-
-# 3. The product itself: the review console, in your browser, no AWS —
-#    the same lambda_handler the deployed console runs
-FDE_GATE_DEV_PRINCIPAL=sme@example.com uv run fde-gate-dev   # -> http://127.0.0.1:8787/ui
+# prove it works, then open the review console
+uv run pytest packages
+FDE_GATE_DEV_PRINCIPAL=sme@example.com uv run fde-gate-dev   # → http://127.0.0.1:8787/ui
 ```
 
+Already running Postgres with pgvector ≥ 0.8? Skip compose:
+`createdb fde && ./db/rebuild.sh fde && export FDE_DB_DSN=postgresql:///fde`.
+
 <details>
-<summary><b>More local pipelines, deploy, and image builds</b></summary>
+<summary><b>Beyond hello world: MCP server, pipelines, deploy</b></summary>
 
 ```bash
-# MCP server over stdio (21 tools)
-FDE_MCP_TRANSPORT=stdio uv run fde-mcp
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp     # the MCP server, 21 tools
+uv run fde-training export-sft --stats     # training data from gate outcomes
+uv run fde-sor replay --help               # drift ingestion from a JSONL export
 
-# Local, AWS-free pipelines
-uv run fde-training export-sft --stats                 # training data from gate outcomes
-uv run fde-sor replay --help                           # drift ingestion from a JSONL export
-uv run fde-training seed-eval-queries --dry-run \
-  --file packages/fde-training/fixtures/eval_queries.jsonl
-
-# Deploy (needs AWS credentials; pick a model tier first — see below)
+# deploy (AWS credentials; pick a model preset below)
 uv run fde-agents-deploy codezip --agents engagement --code-bucket <bucket>
 uv run fde-agents-deploy runtimes --agents engagement --role-arn <arn> \
   --artifact-mode code --model-preset balanced
 
-# Build an image (ARM64 is mandatory for the container path)
+# ARM64 container path
 docker buildx build --platform linux/arm64 --build-arg AGENT=engagement \
   -f packages/fde-agents/Dockerfile -t $ECR/fde-engagement:$TAG --push .
 ```
 
-Lint and types, exactly what CI runs:
-
-```bash
-uv run ruff check packages && uv run ruff format --check packages
-uv run mypy        # strict, all four production packages
-```
+Lint, types, and the full gate list are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
 
