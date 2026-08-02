@@ -1,0 +1,45 @@
+# Fast local gate. Everything here also runs in CI -- pre-commit is the
+# convenience, CI is the contract. Never make CI weaker than this file.
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=512]
+        # uv.lock is legitimately large and MUST be committed.
+        exclude: ^uv\.lock$
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.8.17
+    hooks:
+      # Refuses the commit if pyproject.toml changed without uv.lock being
+      # regenerated -- the single most common way a "reproducible" build
+      # quietly stops being reproducible.
+      - id: uv-lock
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict, fde-mcp + fde-agents)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        files: ^packages/fde-(mcp|agents)/src/

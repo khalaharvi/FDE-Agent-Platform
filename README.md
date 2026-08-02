@@ -1,0 +1,218 @@
+# FDE Agent Platform
+
+Three forward-deployed-engineering agents on Amazon Bedrock AgentCore, over a
+knowledge graph in PostgreSQL, with deterministic human gates between the agents and
+the graph.
+
+Built from the *3 Pillars of the Agent* framing — Engagement, Workflow, Development —
+as a system an engineer can build and deploy, not a slide.
+
+---
+
+## The idea in five sentences
+
+An **Engagement Agent** sits with SMEs and turns what they say into evidenced,
+structured claims about how work is done. Those claims are **proposals**, not writes:
+a deterministic SQL function computes which humans must sign off, and only after they
+do does anything reach the graph. A **Workflow Agent** reads the graph at a pinned
+commit and authors workflows where every step must name the graph element it
+implements — then watches the system of record and reports where reality has diverged
+from the model. A **Development Agent** turns a published workflow into a deployable
+agent package with evals and guardrails derived from the workflow itself. Every human
+decision along the way is captured as a training label, which is what makes the whole
+thing improve rather than just run.
+
+---
+
+## What is here
+
+```
+fde-platform/
+├── pyproject.toml       uv workspace root: 3 members, ruff + mypy config
+├── uv.lock              committed; every build is --frozen
+├── docs/                12 documents — the blueprints. START HERE.
+├── db/                  12 migrations + a 16-test smoke suite
+├── packages/
+│   ├── fde-mcp/         MCP server: config, db, embeddings, tools/{graph,proposals,drift,workflow}
+│   ├── fde-agents/      3 AgentCore runtimes over one shared common/runtime.py, + deploy CLI
+│   └── fde-training/    SFT export, rewards/ package, rollout env, rival graders
+├── diagrams/            6 self-contained HTML diagrams, light + dark
+└── .github/workflows/   CI: static → database → tests → ARM64 image builds
+```
+
+**Gates, all green:** `ruff check` + `ruff format --check` across 78 files ·
+`mypy --strict` on `fde-mcp` and `fde-agents` (39 source files, 0 issues) ·
+`uv lock --check` · 16 SQL smoke tests on a clean rebuild · **190 Python tests** ·
+six database invariant attempts, all correctly denied.
+
+---
+
+## Read in this order
+
+| # | Document | What it answers |
+|---|---|---|
+| 0 | [`docs/00-architecture.md`](docs/00-architecture.md) | how it fits together, and why relational+pgvector over a graph DB |
+| 1 | [`docs/01-knowledge-graph.md`](docs/01-knowledge-graph.md) | the ontology, bitemporality, retrieval, pgvector operations |
+| 2 | [`docs/07-hitl-gates.md`](docs/07-hitl-gates.md) | **the gate model — read this one if you read only one** |
+| 3 | [`docs/02-agent-engagement.md`](docs/02-agent-engagement.md) | Engagement Agent blueprint |
+| 4 | [`docs/03-agent-workflow.md`](docs/03-agent-workflow.md) | Workflow Agent blueprint |
+| 5 | [`docs/04-agent-development.md`](docs/04-agent-development.md) | Development Agent blueprint |
+| 6 | [`docs/05-mcp-surface.md`](docs/05-mcp-surface.md) | every tool contract |
+| 7 | [`docs/06-training.md`](docs/06-training.md) | SFT → RL → rival graders, with honest volume gates |
+| 8 | [`docs/08-drift-monitor.md`](docs/08-drift-monitor.md) | SoR adapters and the four detectors |
+| 9 | [`docs/09-deployment.md`](docs/09-deployment.md) | AgentCore, IAM, CI/CD, cost, build order |
+| 10 | [`docs/10-prodops-runbook.md`](docs/10-prodops-runbook.md) | for the product operations group |
+| 11 | [`docs/11-python-conventions.md`](docs/11-python-conventions.md) | uv workspace, package boundaries, logging, what the tooling enforces |
+| — | [`docs/99-sources.md`](docs/99-sources.md) | every external claim → a URL, plus what could not be verified |
+
+---
+
+## The invariant
+
+> **Agents propose. Humans dispose. Only `hitl.merge_proposal` writes the graph.**
+
+Enforced at four independent layers, so removing any one does not open the door:
+
+1. **Grant** — `fde_agent` has no write privilege on `kg.node`/`kg.edge`/`kg.commit`
+2. **Function** — `hitl.merge_proposal` is `SECURITY DEFINER`, revoked from `PUBLIC`
+3. **Precondition** — gate quorum is re-checked *inside* the merge transaction
+4. **Fail-closed submit** — a proposal matching no policy raises rather than sailing through
+
+Smoke tests 2, 3, and 4 exist to prove layers 2–4 hold, including the case where a
+reviewer approves a gate they have no authority to clear.
+
+### Why "deterministic"
+
+The gate set required to merge a proposal is computed by
+`hitl.compute_required_gates()` — pure SQL over a policy table. Same proposal, same
+policy, same gates, every time. No model in that decision.
+
+That buys three things: an auditable answer to "why did this need compliance
+sign-off," an agent that cannot negotiate its way to a lighter review, and — the one
+that matters most downstream — a training label that is genuinely human, not the
+model grading itself.
+
+---
+
+## Quick start
+
+```bash
+# 0. Toolchain (uv is the only prerequisite; it manages Python itself)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync --all-packages --frozen
+
+# 1. Database
+createdb fde && ./db/rebuild.sh fde     # 12 migrations + 16 smoke tests
+
+# 2. Everything else
+export FDE_DB_DSN="postgresql:///fde"
+uv run pytest packages                  # 190 tests
+uv run ruff check packages && uv run mypy packages/fde-mcp/src packages/fde-agents/src
+
+# 3. Run the MCP server locally over stdio
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp
+
+# 4. Training pipeline
+uv run fde-training export-sft --stats
+
+# 5. Deploy (needs AWS credentials)
+uv run fde-agents-deploy runtimes --agent engagement --build codezip
+
+# 6. Build an image (ARM64 is mandatory for the container path)
+docker buildx build --platform linux/arm64 --build-arg AGENT=engagement \
+  -f packages/fde-agents/Dockerfile -t $ECR/fde-engagement:$TAG --push .
+```
+
+**Two prerequisites that are not negotiable.** pgvector **≥ 0.8.0**. `db/001` refuses to
+install below it. On older versions, filtered ANN queries silently return incomplete
+results — a correctness bug that presents as "the graph doesn't know that."
+And build pgvector with `OPTFLAGS=""`: the default `-march=native` produces a
+binary tuned to the build host, and Postgres dies with **SIGILL** the first time
+an HNSW query runs on a different CPU. This repo hit it.
+
+---
+
+## Design decisions worth arguing with
+
+Each of these is defended at length in the docs. The short version:
+
+**Relational edge tables + pgvector, not Apache AGE or Neptune.** AGE is not
+available on RDS or Aurora. Neptune means a second datastore, and `merge_proposal`
+needs graph rows, evidence, the embed queue, and a drift signal in one transaction.
+Recursive CTEs with the PG14 `CYCLE` clause and partial composite indexes are
+adequate at 10³–10⁵ nodes. → `docs/00-architecture.md` §4
+
+**Three embedding granularities, fused with RRF at k=60.** Nodes, edges, and evidence
+chunks are embedded separately because queries match at different levels — the edge
+*"Sales Rep hands off Quote Approval to Deal Desk when discount exceeds 20%"* is a
+sentence worth embedding, and it is invisible if you only embed node summaries. RRF
+is rank-based because cosine distance and hop distance are not on a comparable scale.
+→ `docs/01-knowledge-graph.md` §5
+
+**Drift detection is SQL, not an LLM.** Deterministic, reproducible, cheap, and
+honest about sample size. The agent does not decide *whether* drift exists; it
+decides what to do about it. → `docs/08-drift-monitor.md`
+
+**Workflows pin to a commit and every step must bind to a graph element.**
+`wf.assert_faithful()` refuses to pass a workflow with an unbound step or a binding
+to a key that was not live at the pin. That is what makes "faithful" checkable rather
+than aspirational. → `docs/03-agent-workflow.md` §2
+
+**Most teams should stop after SFT.** RL costs weeks and its ceiling is set by your
+reward function, which is set by your judge, which needs Cohen's kappa ≥ 0.78 against
+humans to be trustworthy as a reward at all. → `docs/06-training.md` §8
+
+**The reviewer edit is the most valuable event in the system.** It is a paired
+(wrong, right) example on identical input — a free preference dataset from someone
+doing their job properly. Design the review UI to make editing as easy as approving.
+→ `docs/07-hitl-gates.md` §5
+
+---
+
+## Diagrams
+
+Self-contained HTML, light and dark mode, no network required.
+
+| File | Shows |
+|---|---|
+| `diagrams/01-system-topology.html` | AWS deployment topology and trust boundaries |
+| `diagrams/02-graph-schema.html` | ERD, bitemporal columns, partial HNSW indexes |
+| `diagrams/03-ontology.html` | all 15 node + 15 edge types, with a Quote-to-Cash example |
+| `diagrams/04-hitl-flow.html` | the gate flow with all four fail-closed points |
+| `diagrams/05-drift-loop.html` | reality drift vs pin drift, and how each closes |
+| `diagrams/06-training-loop.html` | gate outcomes → labels → SFT → GRPO → graders |
+
+---
+
+## Status and honesty
+
+**Validated here:** all 12 migrations apply cleanly in order on an empty database;
+16 end-to-end smoke tests pass (including the fail-closed and unauthorised-approval
+cases); 27 MCP server tests pass against live Postgres; 50 reward-function tests
+pass; every Python file compiles; all six diagrams screenshot-verified in both
+colour schemes.
+
+**Not validated here:** anything requiring live AWS credentials — Bedrock model and
+embedding calls, AgentCore control-plane and data-plane calls, Gateway and Memory
+provisioning, and Bedrock RFT submission. Those are written against the verified API
+shapes documented in `docs/99-sources.md` but have not been executed.
+
+**Four real bugs were found and fixed while building this**, all recorded in
+`docs/99-sources.md` §7:
+
+- `merge_proposal` stamped `valid_from` with `clock_timestamp()` while reads used
+  transaction time — a read-your-own-write failure where `kg.traverse` silently
+  returned zero rows.
+- `REFRESH MATERIALIZED VIEW CONCURRENTLY` requires the calling role to own the view;
+  `sor.run_all_detectors` is `SECURITY DEFINER` for this reason.
+- `fde_agent` was never granted `EXECUTE` on `sor.run_all_detectors`, so the
+  autonomous drift loop was structurally monitoring nothing — and failing silently
+  inside the tool's error boundary.
+- pgvector compiled with the default `-march=native` crashed Postgres with **SIGILL**
+  after the host CPU changed. Build with `OPTFLAGS=""` on any heterogeneous fleet.
+
+Items that could not be verified from primary AWS sources — cold-start latency,
+per-minor pgvector versions on RDS 13–16, Aurora Serverless v2 + HNSW memory
+behaviour, the full built-in evaluator roster, and whether a CMI-imported model can
+be a Bedrock RFT base — are listed explicitly in `docs/99-sources.md` §6. Check those
+before you build a release process around them.

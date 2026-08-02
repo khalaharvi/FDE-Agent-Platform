@@ -1,0 +1,22 @@
+{
+  "_comment": "Trust policy for the FDE agent runtime execution role. Attach as the role's AssumeRolePolicyDocument. The two Condition blocks are both required, not belt-and-suspenders duplicates of each other: aws:SourceAccount pins the role to THIS account (stops a runtime in a different AWS account from assuming it), and aws:SourceArn pins it to a SPECIFIC agent runtime ARN within that account (stops a different runtime in the SAME account -- e.g. a lower-trust experiment someone else deployed -- from assuming a role meant for the Engagement/Workflow/Development agent). Replace ${AWS_ACCOUNT_ID} and ${AGENT_RUNTIME_ARN} at deploy time (agents/deploy/create_runtimes.py does not templatize this file automatically -- it is meant to be rendered once per runtime by your own deploy pipeline, since each of the three agents gets its own runtime ARN and, in the least-privilege case, its own role).",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAgentCoreRuntimeAssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "bedrock-agentcore.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${AWS_ACCOUNT_ID}"
+        },
+        "ArnLike": {
+          "aws:SourceArn": "${AGENT_RUNTIME_ARN}"
+        }
+      }
+    }
+  ]
+}
