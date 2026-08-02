@@ -183,6 +183,17 @@ BEGIN
 
   -- Any published workflow pinned to an older commit is now potentially stale.
   -- Recorded here rather than detected later so the signal is transactional.
+  --
+  -- The ON CONFLICT clause is not optional and is not defensive padding: it
+  -- is the same dedup sor.record_drift performs (007:154-162), and without it
+  -- this statement aborts the whole merge the SECOND time an engagement
+  -- merges while a published workflow is still behind head --
+  -- drift_signal_dedup_uq already holds an open stale_pin row for that
+  -- workflow_uuid. Every engagement could merge exactly once after
+  -- publishing a workflow and then all merges failed on a drift-queue
+  -- housekeeping insert. Verified empirically against 001-012 alone.
+  -- detected_at deliberately keeps its original value (when the workflow
+  -- FIRST went stale); detail is refreshed so commits_behind stays true.
   INSERT INTO sor.drift_signal (engagement_id, drift_kind, severity, subject_kind,
                                 subject_ref, detected_at, detail)
   SELECT p.engagement_id, 'stale_pin', 'low', 'workflow', w.workflow_uuid::text, v_now,
@@ -192,7 +203,12 @@ BEGIN
     FROM wf.workflow w
    WHERE w.engagement_id = p.engagement_id
      AND w.status = 'published'
-     AND w.pinned_commit_id < c.commit_id;
+     AND w.pinned_commit_id < c.commit_id
+  ON CONFLICT (engagement_id, drift_kind, subject_kind, subject_ref)
+    WHERE state IN ('open','triaged','proposal_raised')
+  DO UPDATE SET last_seen_at = now(),
+                occurrences  = sor.drift_signal.occurrences + 1,
+                detail       = EXCLUDED.detail;
 
   RETURN c;
 END $$;
