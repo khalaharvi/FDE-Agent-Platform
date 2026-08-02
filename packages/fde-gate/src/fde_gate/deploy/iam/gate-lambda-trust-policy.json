@@ -1,0 +1,19 @@
+{
+  "_comment": "Trust policy for the FDE gate service Lambda execution role. Attach as the role's AssumeRolePolicyDocument (this is NOT a permissions policy -- see gate-lambda-permissions-policy.json for that). The aws:SourceAccount condition pins the role to THIS account, so a Lambda in a different AWS account cannot assume the role that holds the platform's merge authority. There is deliberately no aws:SourceArn condition as there is on the agent runtime trust policy: Lambda's service principal does not reliably populate SourceArn on assume-role for function execution roles, and a condition that silently never matches would break deployment rather than tighten it. Scope the role to one function by not attaching it to a second one. Replace ${AWS_ACCOUNT_ID} at deploy time.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowLambdaAssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${AWS_ACCOUNT_ID}"
+        }
+      }
+    }
+  ]
+}

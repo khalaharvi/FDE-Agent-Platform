@@ -1,0 +1,48 @@
+# =====================================================================
+# fde-gate -- the gate service, prod-ops console, and workflow runner.
+#
+# A fourth workspace member rather than a module inside fde-mcp, for the
+# reason docs/11 §2 gives for the existing split: the boundary is the
+# DEPLOYMENT unit, not the topic. This code runs in a Lambda behind an
+# API Gateway as `fde_gate_service`/`fde_prodops` -- a different artifact,
+# a different credential ceiling, and a different dependency set (it adds
+# jinja2 and must never pull strands-agents or the AgentCore SDK) than
+# either the MCP server or the agent runtimes.
+#
+# Folding it into fde-mcp would have put reviewer-facing MERGE authority
+# in the same artifact as the agent-facing tool surface, which is exactly
+# the boundary db/010 and db/011 spend two hundred lines keeping apart.
+# =====================================================================
+[project]
+name = "fde-gate"
+version = "0.1.0"
+description = "Gate service + prod-ops console: review queue, merge, workflow runner (Lambda + API GW)"
+requires-python = ">=3.12"
+dependencies = [
+  # db.tool_transaction, config.DatabaseSettings, logging. Same reuse the
+  # fde-training member makes of the same three modules.
+  "fde-mcp",
+  # The only genuinely new runtime dependency in this package: the console
+  # is server-rendered, so there is no build toolchain and no SPA.
+  "jinja2>=3.1",
+  "boto3>=1.35",
+  "psycopg[binary,pool]>=3.2",
+  "pydantic>=2.9",
+  "structlog>=24.4",
+]
+
+[project.scripts]
+fde-gate-deploy = "fde_gate.deploy.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# `packages` already sweeps in src/fde_gate/templates -- hatchling includes
+# every file under a package directory, not only *.py. It is named here
+# anyway so that a future `exclude` rule (or a switch to an explicit
+# `include` list) cannot silently ship a wheel whose console renders
+# TemplateNotFound on the first request.
+packages = ["src/fde_gate"]
+artifacts = ["src/fde_gate/templates/*.html.j2"]

@@ -1,0 +1,8 @@
+{% extends "base.html.j2" %}
+{% block title %}Not found{% endblock %}
+{% block content %}
+<h1>Not found</h1>
+<p>There is no {{ what }} here.</p>
+<p class="muted">It may have been on a different engagement, or the id may be
+  from another environment. Start from the <a href="/ui">review queue</a>.</p>
+{% endblock %}

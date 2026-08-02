@@ -1,0 +1,94 @@
+{% extends "base.html.j2" %}
+{% block title %}Run {{ run.run_id }}{% endblock %}
+{% block content %}
+<h1>{{ run.workflow_title }} <span class="muted">run #{{ run.run_id }}</span></h1>
+<p>
+  <span class="pill">{{ run.status }}</span>
+  <span class="muted">
+    started by {{ run.started_by }} at {{ run.started_at }}
+    {% if run.finished_at %}&middot; finished {{ run.finished_at }}{% endif %}
+    {% if run.runtime_session_id %}&middot; session {{ run.runtime_session_id }}{% endif %}
+  </span>
+</p>
+
+{% if run.error %}
+  {# Verbatim. docs/10 §2 tells the operator to read this; paraphrasing it
+     would be paraphrasing the only evidence they have. #}
+  <div class="banner error"><strong>Run error</strong><pre>{{ run.error | tojson(indent=2) }}</pre></div>
+{% endif %}
+
+<h2>Input and context</h2>
+<div class="grid2">
+  <div><strong>Input</strong><pre>{{ run.input | tojson(indent=2) }}</pre></div>
+  <div><strong>Context</strong><pre>{{ run.context | tojson(indent=2) }}</pre></div>
+</div>
+
+<h2>Attempts</h2>
+{% if not run.steps %}
+  <p class="empty">This run has not opened a step yet.</p>
+{% else %}
+<table>
+  <tr><th>Step</th><th>Attempt</th><th>Status</th><th>On failure</th>
+      <th>Output / error</th><th>Timing</th></tr>
+  {% for s in run.steps %}
+  <tr>
+    <td>{{ s.ordinal }}. {{ s.title }}
+        <div class="muted">{{ s.step_key }} &middot; {{ s.kind }}</div></td>
+    <td>{{ s.attempt }}</td>
+    <td><span class="pill">{{ s.status }}</span></td>
+    <td>{{ s.on_failure }}</td>
+    <td>
+      {% if s.error %}<pre>{{ s.error | tojson(indent=2) }}</pre>
+      {% elif s.output %}<pre>{{ s.output | tojson(indent=2) }}</pre>
+      {% else %}<span class="muted">—</span>{% endif %}
+      {% if s.human_response %}
+        <div class="muted">answered by {{ s.responded_by }} at {{ s.responded_at }}</div>
+        <pre>{{ s.human_response | tojson(indent=2) }}</pre>
+      {% endif %}
+    </td>
+    <td class="muted">{{ s.started_at }}{% if s.finished_at %}<br>{{ s.finished_at }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% for s in run.awaiting %}
+<h2>Waiting on you: {{ s.title }}</h2>
+<p>{{ s.human_prompt or s.instruction }}</p>
+{% if s.input and s.input.escalated_error %}
+  <div class="banner error"><strong>This step failed and was escalated</strong>
+    <pre>{{ s.input.escalated_error | tojson(indent=2) }}</pre></div>
+  <p class="muted">Answer <strong>retry</strong> to run the step again, or
+    <strong>skip</strong> to move past it. <strong>approve</strong> is only for
+    steps the workflow author intended to stop at.</p>
+{% endif %}
+{% if s.human_schema %}
+  <p class="muted">Expected answer shape: <code>{{ s.human_schema | tojson }}</code></p>
+{% endif %}
+<form method="post" action="/ui/run-steps/{{ s.run_step_id }}/respond">
+  <input type="hidden" name="run_id" value="{{ run.run_id }}">
+  <fieldset>
+    <legend>Your answer</legend>
+    <label>Action:
+      <select name="action">
+        <option value="approve">approve</option>
+        <option value="retry">retry</option>
+        <option value="skip">skip</option>
+        <option value="abort">abort the run</option>
+      </select>
+    </label>
+    <label style="display:block">Response (JSON object, merged into the run context):
+      <textarea name="response" placeholder="{}"></textarea>
+    </label>
+    <button type="submit">Answer</button>
+  </fieldset>
+</form>
+{% endfor %}
+
+{% if run.status in ("pending", "running", "awaiting_human") %}
+<h2>Cancel</h2>
+<form method="post" action="/ui/runs/{{ run.run_id }}/cancel">
+  <button type="submit">Cancel this run</button>
+</form>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,71 @@
+{
+  "_comment": "Permissions policy for the FDE gate service Lambda execution role. Note what is NOT here: any database authorization. This policy only gets the function to a place where it CAN open a Postgres connection (read the secret, or mint an IAM DB auth token); what that connection may then do is decided entirely at the SQL layer by SET LOCAL ROLE fde_gate_service / fde_prodops (see fde_mcp/db.py and db/010_roles_and_seed_policy.sql). An operator widening this policy does not widen what the service can do to the graph -- that is the point of putting the boundary in Postgres. Replace ${AWS_REGION}, ${AWS_ACCOUNT_ID}, ${FDE_DB_SECRET_ARN}, ${DB_RESOURCE_ID} and ${FDE_GATE_FUNCTION_NAME} at deploy time.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OwnLogGroupOnly",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda/${FDE_GATE_FUNCTION_NAME}:*"
+    },
+    {
+      "Sid": "ReadTheDbSecret",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "${FDE_DB_SECRET_ARN}"
+    },
+    {
+      "_comment": "IAM database authentication, the alternative to the secret. Scoped to the two dbuser names this service ever connects as. It connects as an owner-adjacent principal and downgrades per request, so these are the LOGIN roles, not the SET LOCAL ROLE targets.",
+      "Sid": "IamDbAuthFallback",
+      "Effect": "Allow",
+      "Action": "rds-db:connect",
+      "Resource": [
+        "arn:aws:rds-db:${AWS_REGION}:${AWS_ACCOUNT_ID}:dbuser:${DB_RESOURCE_ID}/fde_gate_service",
+        "arn:aws:rds-db:${AWS_REGION}:${AWS_ACCOUNT_ID}:dbuser:${DB_RESOURCE_ID}/fde_prodops"
+      ]
+    },
+    {
+      "_comment": "Agent steps in a workflow run. Scoped to runtimes named fde-* so this role cannot invoke an arbitrary agent runtime someone else deployed in the same account.",
+      "Sid": "InvokeFdeAgentRuntimes",
+      "Effect": "Allow",
+      "Action": "bedrock-agentcore:InvokeAgentRuntime",
+      "Resource": [
+        "arn:aws:bedrock-agentcore:${AWS_REGION}:${AWS_ACCOUNT_ID}:runtime/fde-*",
+        "arn:aws:bedrock-agentcore:${AWS_REGION}:${AWS_ACCOUNT_ID}:runtime/fde-*/runtime-endpoint/*"
+      ]
+    },
+    {
+      "_comment": "The async self-invoke that keeps a slow agent/tool step off the 29-second API Gateway budget. Scoped to this function's own ARN: it may re-invoke itself and nothing else.",
+      "Sid": "AsyncSelfInvoke",
+      "Effect": "Allow",
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${FDE_GATE_FUNCTION_NAME}"
+    },
+    {
+      "_comment": "Only needed when the database is not publicly reachable, which is the normal case. Required by Lambda to create and clean up the ENIs it uses to reach a VPC; the actions cannot be resource-scoped (AWS does not support it for these), which is why they are isolated in their own statement rather than hidden among the scoped ones.",
+      "Sid": "VpcNetworkInterfacesForPrivateDb",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DeleteNetworkInterface",
+        "ec2:AssignPrivateIpAddresses",
+        "ec2:UnassignPrivateIpAddresses"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "XRayTracing",
+      "Effect": "Allow",
+      "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

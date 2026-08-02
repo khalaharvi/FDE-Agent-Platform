@@ -48,6 +48,8 @@ members = ["packages/*"]
 fde-mcp = { workspace = true }
 fde-agents = { workspace = true }
 fde-training = { workspace = true }
+fde-gate = { workspace = true }
+fde-sor = { workspace = true }
 
 [tool.uv]
 # Fail rather than silently resolving to a different set than uv.lock pins.
@@ -60,7 +62,13 @@ default-groups = ["dev"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["packages/fde-mcp/src", "packages/fde-agents/src", "packages/fde-training/src"]
+src = [
+  "packages/fde-mcp/src",
+  "packages/fde-agents/src",
+  "packages/fde-training/src",
+  "packages/fde-gate/src",
+  "packages/fde-sor/src",
+]
 
 [tool.ruff.lint]
 select = [
@@ -103,9 +111,11 @@ ignore = [
 "packages/fde-training/src/**" = ["T20"]
 # Deploy scripts shell out and print progress.
 "packages/fde-agents/src/fde_agents/deploy/**" = ["T20", "S603", "S607"]
+"packages/fde-gate/src/fde_gate/deploy/**" = ["T20", "S603", "S607"]
+"packages/fde-sor/src/fde_sor/deploy/**" = ["T20", "S603", "S607"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["fde_mcp", "fde_agents", "fde_training"]
+known-first-party = ["fde_mcp", "fde_agents", "fde_training", "fde_gate", "fde_sor"]
 required-imports = ["from __future__ import annotations"]
 
 [tool.ruff.lint.flake8-tidy-imports]
@@ -133,7 +143,12 @@ disallow_any_generics = true
 no_implicit_reexport = true
 show_error_codes = true
 pretty = true
-files = ["packages/fde-mcp/src", "packages/fde-agents/src"]
+files = [
+  "packages/fde-mcp/src",
+  "packages/fde-agents/src",
+  "packages/fde-gate/src",
+  "packages/fde-sor/src",
+]
 
 [[tool.mypy.overrides]]
 # Third-party packages without shipped stubs. Listing them explicitly rather
@@ -159,7 +174,13 @@ disallow_untyped_defs = false
 # ---------------------------------------------------------------------
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["packages/fde-mcp/tests", "packages/fde-agents/tests", "packages/fde-training/tests"]
+testpaths = [
+  "packages/fde-mcp/tests",
+  "packages/fde-agents/tests",
+  "packages/fde-training/tests",
+  "packages/fde-gate/tests",
+  "packages/fde-sor/tests",
+]
 addopts = "-q --strict-markers --strict-config"
 markers = [
   "requires_db: needs a live Postgres with the db/ migrations applied",
@@ -175,7 +196,12 @@ filterwarnings = [
 ]
 
 [tool.coverage.run]
-source = ["packages/fde-mcp/src", "packages/fde-agents/src"]
+source = [
+  "packages/fde-mcp/src",
+  "packages/fde-agents/src",
+  "packages/fde-gate/src",
+  "packages/fde-sor/src",
+]
 branch = true
 
 [tool.coverage.report]

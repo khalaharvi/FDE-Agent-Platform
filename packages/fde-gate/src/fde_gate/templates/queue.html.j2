@@ -1,0 +1,69 @@
+{% extends "base.html.j2" %}
+{% block title %}Review queue{% endblock %}
+{% block content %}
+<h1>Review queue</h1>
+<p class="muted">
+  Proposals awaiting a decision, and workflow steps waiting on a person.
+  {% if mine %}
+    Showing only gates you can clear. <a href="/ui">Show everything</a>
+  {% else %}
+    <a href="/ui?mine=1">Show only what I can clear</a>
+  {% endif %}
+</p>
+
+<h2>Proposals ({{ proposals | length }})</h2>
+{% if not proposals %}
+  <p class="empty">Nothing awaiting review.</p>
+{% else %}
+<table>
+  <tr>
+    <th>Proposal</th><th>Agent</th><th>Status</th><th>Items</th>
+    <th>Open gates</th><th>Expires</th>
+  </tr>
+  {% for p in proposals %}
+  <tr>
+    <td><a href="/ui/proposals/{{ p.proposal_id }}">{{ p.title }}</a>
+        <div class="muted">#{{ p.proposal_id }}</div></td>
+    <td>{{ p.agent_name }}<div class="muted">{{ p.authored_by }}</div></td>
+    <td><span class="pill">{{ p.status }}</span></td>
+    <td>{{ p.item_count }}</td>
+    <td>
+      {% for g in p.open_gates %}
+        <div>
+          <span class="pill">{{ g.gate_kind }}</span>
+          {{ g.approvals }}/{{ g.quorum }}
+          {% if g.blocked %}<span class="overdue">blocked</span>{% endif %}
+          {% if g.i_can_clear %}<strong>&mdash; you can clear this</strong>{% endif %}
+          {% if g.overdue %}<span class="overdue">overdue</span>{% endif %}
+        </div>
+      {% else %}
+        <span class="muted">all cleared</span>
+      {% endfor %}
+    </td>
+    <td {% if p.expired %}class="overdue"{% endif %}>{{ p.expires_at or "—" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Steps waiting on a human ({{ awaiting_steps | length }})</h2>
+{% if not awaiting_steps %}
+  <p class="empty">No workflow step is waiting on anyone.</p>
+{% else %}
+<table>
+  <tr><th>Run</th><th>Step</th><th>Asked</th><th>Assigned</th><th>Waiting since</th></tr>
+  {% for s in awaiting_steps %}
+  <tr>
+    <td><a href="/ui/runs/{{ s.run_id }}">{{ s.workflow_title }}</a>
+        <div class="muted">run #{{ s.run_id }}</div></td>
+    <td>{{ s.title }}
+        <div class="muted">{{ s.step_key }} &middot; {{ s.kind }}
+        {% if s.escalated %}<span class="overdue">escalated failure</span>{% endif %}</div></td>
+    <td>{{ s.human_prompt or s.instruction }}</td>
+    <td>{{ s.awaiting_principal or "anyone on shift" }}</td>
+    <td>{{ s.started_at }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

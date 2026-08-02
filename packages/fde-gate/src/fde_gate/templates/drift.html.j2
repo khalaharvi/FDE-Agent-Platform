@@ -1,0 +1,53 @@
+{% extends "base.html.j2" %}
+{% block title %}Drift queue{% endblock %}
+{% block content %}
+<h1>Drift queue</h1>
+<p class="muted">
+  Where the system of record disagrees with the graph.
+  {% if severity %}Showing <strong>{{ severity }}</strong>. <a href="/ui/drift">all severities</a>
+  {% else %}Showing every severity.{% endif %}
+  &middot; <a href="/ui/drift?severity=critical">critical</a>
+  &middot; <a href="/ui/drift?severity=high">high</a>
+  &middot; <a href="/ui/drift?severity=medium">medium</a>
+</p>
+{# db/007's own comment: a signal with n=3 is noise. Sample size sits next to
+   severity so the two are never read apart. #}
+
+{% if not signals %}
+  <p class="empty">Nothing open in the drift queue.</p>
+{% else %}
+{% for s in signals %}
+<fieldset>
+  <legend>
+    <span class="pill">{{ s.severity }}</span>
+    {{ s.drift_kind }} on {{ s.subject_kind }} <code>{{ s.subject_ref }}</code>
+    <span class="pill">{{ s.state }}</span>
+  </legend>
+  <p class="muted">
+    #{{ s.signal_id }} &middot; first seen {{ s.detected_at }} &middot;
+    last seen {{ s.last_seen_at }} &middot; {{ s.occurrences }} occurrence(s) &middot;
+    sample size {{ s.sample_size if s.sample_size is not none else "unknown" }}
+    {% if s.effect_size is not none %}&middot; effect size {{ s.effect_size }}{% endif %}
+  </p>
+  <pre>{{ s.detail | tojson(indent=2) }}</pre>
+  {% if s.triaged_by %}
+    <p class="muted">Triaged by {{ s.triaged_by }} at {{ s.triaged_at }}
+      {% if s.resolution_note %}— {{ s.resolution_note }}{% endif %}</p>
+  {% endif %}
+  <form method="post" action="/ui/drift/{{ s.signal_id }}/triage">
+    <label>Move to:
+      <select name="state">
+        <option value="triaged">triaged</option>
+        <option value="proposal_raised">proposal raised</option>
+        <option value="accepted">accepted (the SoR is right, the graph is wrong)</option>
+        <option value="dismissed">dismissed (noise)</option>
+        <option value="resolved">resolved</option>
+      </select>
+    </label>
+    <label>Note: <input type="text" name="note" size="50"></label>
+    <button type="submit">Save</button>
+  </form>
+</fieldset>
+{% endfor %}
+{% endif %}
+{% endblock %}

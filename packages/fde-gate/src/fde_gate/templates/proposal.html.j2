@@ -1,0 +1,187 @@
+{% extends "base.html.j2" %}
+{% block title %}Proposal {{ proposal.proposal_id }}{% endblock %}
+{% block content %}
+<h1>{{ proposal.title }}</h1>
+<p>
+  <span class="pill">{{ proposal.status }}</span>
+  <span class="muted">
+    #{{ proposal.proposal_id }} &middot; {{ proposal.agent_name }} agent &middot;
+    {{ proposal.authored_by }}{% if proposal.model_id %} &middot; {{ proposal.model_id }}{% endif %}
+    &middot; base commit {{ proposal.base_commit_id or "—" }}
+  </span>
+</p>
+<p>{{ proposal.rationale }}</p>
+{% if proposal.trace_session_id %}
+  <p class="muted">Trace session {{ proposal.trace_session_id }} — its training label is
+  written when this proposal is merged or rejected.</p>
+{% endif %}
+
+<h2>Gates</h2>
+<table>
+  <tr><th>Kind</th><th>Quorum</th><th>Approvals</th><th>Due</th><th>State</th><th>Who can clear it</th></tr>
+  {% for g in proposal.gates %}
+  <tr>
+    <td><span class="pill">{{ g.gate_kind }}</span></td>
+    <td>{{ g.quorum }}{% if g.allow_self %} <span class="muted">(self allowed)</span>{% endif %}</td>
+    <td>{{ g.approvals }}</td>
+    <td {% if g.overdue and not g.cleared_at %}class="overdue"{% endif %}>{{ g.due_at }}</td>
+    <td>
+      {% if g.cleared_at %}cleared {{ g.cleared_at }}
+      {% elif g.blocked %}<span class="overdue">blocked by a live reject / changes-requested</span>
+      {% else %}open{% endif %}
+    </td>
+    <td>
+      {% for r in g.authorized %}
+        <div>{{ r.display_name }} <span class="muted">{{ r.principal }}</span>
+          {% if r.has_decided %}<span class="muted">— already decided</span>{% endif %}</div>
+      {% else %}
+        <span class="overdue">nobody currently holds this authority</span>
+      {% endfor %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% for g in proposal.gates %}
+  {% if g.live_decisions %}
+  <h3>Decisions on the {{ g.gate_kind }} gate</h3>
+  <table>
+    <tr><th>Reviewer</th><th>Decision</th><th>Comment</th><th>Seconds</th><th>When</th></tr>
+    {% for d in g.live_decisions %}
+    <tr>
+      <td>{{ d.display_name }} <span class="muted">{{ d.principal }}</span></td>
+      <td><span class="pill">{{ d.decision }}</span></td>
+      <td>{{ d.comment or "—" }}</td>
+      <td>{{ d.review_seconds if d.review_seconds is not none else "—" }}</td>
+      <td>{{ d.decided_at }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+{% endfor %}
+
+<h2>Items</h2>
+{% for item in proposal["items"] %}
+<fieldset>
+  <legend>{{ item.ordinal }}. {{ item.op }} <code>{{ item.subject_key }}</code>
+    <span class="pill">{{ item.item_status }}</span></legend>
+  <p class="muted">
+    {{ item.node_type or item.edge_type }} &middot;
+    agent confidence {{ item.agent_confidence }}
+    {% if item.supersedes_key %} &middot; supersedes <code>{{ item.supersedes_key }}</code>{% endif %}
+    {% if item.edited_by %} &middot; edited by {{ item.edited_by }} at {{ item.edited_at }}{% endif %}
+  </p>
+
+  {% if item.original_payload %}
+    <div class="grid2">
+      <div><strong>As proposed by the agent</strong><pre>{{ item.original_payload | tojson(indent=2) }}</pre></div>
+      <div><strong>As it stands now</strong><pre>{{ item.payload | tojson(indent=2) }}</pre></div>
+    </div>
+  {% else %}
+    <pre>{{ item.payload | tojson(indent=2) }}</pre>
+  {% endif %}
+
+  <strong>Evidence</strong>
+  {% if item.evidence %}
+  <table>
+    <tr><th>Source</th><th>Kind</th><th>Captured</th><th>URI</th></tr>
+    {% for e in item.evidence %}
+    <tr>
+      <td>{{ e.title }}</td><td>{{ e.source_kind }}</td>
+      <td>{{ e.captured_at }}</td><td class="muted">{{ e.uri or "—" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+    <p class="empty">No evidence attached.</p>
+  {% endif %}
+
+  {% if proposal.status in ("submitted", "in_review") %}
+  <form method="post" action="/ui/items/{{ item.item_id }}/edit">
+    <input type="hidden" name="proposal_id" value="{{ proposal.proposal_id }}">
+    <label for="payload_edit_{{ item.item_id }}">Rewrite this payload (JSON object):</label>
+    <textarea id="payload_edit_{{ item.item_id }}" name="payload">{{ item.payload | tojson(indent=2) }}</textarea>
+    <button type="submit">Save edit</button>
+  </form>
+  {% endif %}
+</fieldset>
+{% endfor %}
+
+{% if proposal.status in ("submitted", "in_review") %}
+<h2>Record a decision</h2>
+<form method="post" action="/ui/proposals/{{ proposal.proposal_id }}/decision">
+  {# The render time, subtracted on submit to get review_seconds. See ui.py. #}
+  <input type="hidden" name="rendered_at" value="{{ rendered_at }}">
+  <fieldset>
+    <legend>Your decision</legend>
+    <label>Gate:
+      <select name="gate_id">
+        {% for g in proposal.gates %}
+          {% if not g.cleared_at and g.i_can_clear %}
+            <option value="{{ g.gate_id }}">{{ g.gate_kind }} ({{ g.approvals }}/{{ g.quorum }})</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label>Decision:
+      <select name="decision">
+        <option value="approve">approve</option>
+        <option value="request_changes">request changes</option>
+        <option value="reject">reject</option>
+        <option value="abstain">abstain</option>
+      </select>
+    </label>
+    <label style="display:block">Comment:
+      <textarea name="comment" style="min-height:3rem"></textarea>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Per-item verdicts (optional)</legend>
+    {% for item in proposal["items"] %}
+    <div>
+      <label>{{ item.ordinal }}. <code>{{ item.subject_key }}</code>
+        <select name="verdict_{{ item.item_id }}">
+          <option value="">leave as is</option>
+          <option value="accept">accept</option>
+          <option value="drop">drop</option>
+          <option value="edit">edit (use the box below)</option>
+        </select>
+      </label>
+      <textarea name="payload_{{ item.item_id }}"
+                placeholder="Edited payload as a JSON object; only used when the verdict is 'edit'."></textarea>
+    </div>
+    {% endfor %}
+  </fieldset>
+  <button type="submit">Record decision</button>
+</form>
+{% endif %}
+
+{# A proposal can sit in the queue without being decidable. `changes_requested`
+   is in the queue's open set (and in hitl.expire_proposals' sweep, so its SLA
+   still runs) but hitl.record_decision and hitl.edit_item both refuse it --
+   it is back with the agent. Saying so beats an absent form the reviewer has
+   to reason about. #}
+{% if proposal.status == "changes_requested" %}
+<h2>Waiting on the agent</h2>
+<p class="muted">Changes were requested, so this proposal has gone back to the
+  {{ proposal.agent_name }} agent. It is not decidable or editable until the agent
+  resubmits it, but its SLA is still running{% if proposal.expires_at %} and it
+  expires at {{ proposal.expires_at }}{% endif %}.</p>
+{% elif proposal.status in ("rejected", "expired") %}
+<h2>Closed</h2>
+<p class="muted">This proposal is {{ proposal.status }} and can no longer be
+  decided, edited or merged.</p>
+{% endif %}
+
+{% if proposal.status == "approved" %}
+<h2>Merge</h2>
+<p class="muted">Every gate is satisfied. Merging seals a commit, writes the graph,
+  and labels this proposal's trace session.</p>
+<form method="post" action="/ui/proposals/{{ proposal.proposal_id }}/merge">
+  <button type="submit">Merge into the graph</button>
+</form>
+{% elif proposal.status == "merged" %}
+<p>Merged as commit {{ proposal.merged_commit_id }}.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "base.html.j2" %}
+{% block title %}Workflows{% endblock %}
+{% block content %}
+<h1>Workflows</h1>
+<p class="muted">
+  {# docs/10 §2 tells the operator to filter to published before running
+     anything, so that is the default rather than a thing to remember. #}
+  Showing <strong>{{ status }}</strong>.
+  <a href="/ui/workflows?status=published">published</a> &middot;
+  <a href="/ui/workflows?status=draft">draft</a> &middot;
+  <a href="/ui/workflows?status=review">in review</a> &middot;
+  <a href="/ui/workflows?status=all">all</a>
+</p>
+
+{% if not workflows %}
+  <p class="empty">No workflow in this state.</p>
+{% else %}
+<table>
+  <tr>
+    <th>Workflow</th><th>Status</th><th>Steps</th><th>Pinned commit</th>
+    <th>Runnable by</th><th>Autonomy</th><th></th>
+  </tr>
+  {% for w in workflows %}
+  <tr>
+    <td>{{ w.title }}
+        <div class="muted">{{ w.slug }} v{{ w.version }} &middot; {{ w.root_process_key }}</div></td>
+    <td><span class="pill">{{ w.status }}</span>
+        {% if w.published_by %}<div class="muted">by {{ w.published_by }}</div>{% endif %}</td>
+    <td>{{ w.step_count }}
+        {% if w.unbound_steps %}
+          <div class="overdue">{{ w.unbound_steps }} unbound</div>
+        {% endif %}</td>
+    <td>{{ w.pinned_commit_id }}</td>
+    <td>{{ w.runnable_by | join(", ") or "anyone in product ops" }}</td>
+    <td>{{ w.autonomy_level }}</td>
+    <td>
+      {% if w.status in ("draft", "review") %}
+        <form method="post" action="/ui/workflows/{{ w.workflow_id }}/publish">
+          <button type="submit">Publish</button>
+        </form>
+        {% if w.unbound_steps %}
+          <div class="muted">Publishing will be refused until every step cites a
+            graph element it implements.</div>
+        {% endif %}
+      {% elif w.status == "published" %}
+        <a href="/ui/runs">Start a run</a>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}
