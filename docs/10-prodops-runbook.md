@@ -57,6 +57,14 @@ and some simply halt for someone to look at. If a run shows as failed:
    failing is failing for a reason, and forcing past it can leave a system of
    record in a half-updated state.
 
+**Two step kinds behave differently in this deployment.** Steps that write
+to a system of record (`sor_write`) are not machine-executable here — they
+fail on purpose and, when authored with "escalate" as their failure policy,
+land in your queue so a person does the write and records the result.
+Notification steps (`notify`) don't send anything yet: they log the message
+and record `delivered: false` in the run, so the run history is honest about
+what actually went out.
+
 ---
 
 ## 3. The review queue
