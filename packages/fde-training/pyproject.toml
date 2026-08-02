@@ -1,6 +1,6 @@
 [project]
 name = "fde-training"
-version = "0.1.0"
+version = "0.2.0"
 description = "SFT export, GRPO rewards, rollout environment, and rival graders"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }

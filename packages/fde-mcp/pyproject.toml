@@ -1,6 +1,6 @@
 [project]
 name = "fde-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server exposing the FDE knowledge graph as typed tools"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }

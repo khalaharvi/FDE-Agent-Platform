@@ -742,7 +742,7 @@ wheels = [
 
 [[package]]
 name = "fde-agents"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/fde-agents" }
 dependencies = [
     { name = "bedrock-agentcore" },
@@ -773,7 +773,7 @@ requires-dist = [
 
 [[package]]
 name = "fde-gate"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/fde-gate" }
 dependencies = [
     { name = "boto3" },
@@ -796,7 +796,7 @@ requires-dist = [
 
 [[package]]
 name = "fde-mcp"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/fde-mcp" }
 dependencies = [
     { name = "boto3" },
@@ -817,7 +817,7 @@ requires-dist = [
 
 [[package]]
 name = "fde-platform"
-version = "0.1.0"
+version = "0.2.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -844,7 +844,7 @@ dev = [
 
 [[package]]
 name = "fde-sor"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/fde-sor" }
 dependencies = [
     { name = "awslambdaric" },
@@ -865,7 +865,7 @@ requires-dist = [
 
 [[package]]
 name = "fde-training"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "packages/fde-training" }
 dependencies = [
     { name = "boto3" },

@@ -7,6 +7,16 @@ tracking table) until the first production deployment freezes the schema.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] — 2026-08-02
+
+First public release: the completion build. Everything below landed between
+the 0.1.0 baseline snapshot and the repo going public on GitHub. Also fixes
+the two failures the first public CI run surfaced (editable workspace
+installs breaking the two-stage Docker images; a hardware-validating
+`GRPOConfig` test on CPU-only runners — `docs/99-sources.md` §7.3).
+
 ### Added
 - **Open-source readiness**: `LICENSE` (Apache-2.0) + `NOTICE`, `SECURITY.md`
   (vuln reporting scoped to the four-layer invariant), `CONTRIBUTING.md`,

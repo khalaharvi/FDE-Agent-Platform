@@ -15,7 +15,7 @@
 # =====================================================================
 [project]
 name = "fde-gate"
-version = "0.1.0"
+version = "0.2.0"
 description = "Gate service + prod-ops console: review queue, merge, workflow runner (Lambda + API GW)"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
