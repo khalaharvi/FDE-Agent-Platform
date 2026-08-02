@@ -58,6 +58,52 @@ log = get_logger(__name__)
 # ===========================================================================
 JUDGE_PROMPT_VERSION = "v1"
 
+# ===========================================================================
+# Judge-usability band. `docs/06-training.md`'s calibration section states
+# this contract twice and the README once; the code used to disagree with
+# all three, green-lighting kappa as low as 0.60 -- roughly "agrees with a
+# human about as often as the base rate would predict". The band lives here
+# once, as named constants, so `test_docs_sync.py` compares the docs against
+# the code rather than two prose copies against each other.
+#
+# Why an UPPER bound at all: a judge that agrees with a human almost
+# perfectly on a retrieval A/B test is usually not a better judge, it is a
+# judge whose verdicts are being driven by a surface artefact both it and
+# the human adjudicator anchor on (result-list length, a shared house
+# style). db/009_training.sql's `trn.judge_kappa` carries the same
+# "suspiciously high" band for the same reason.
+# ===========================================================================
+KAPPA_RL_MIN = 0.78
+KAPPA_SUSPICIOUS_MAX = 0.82
+BIAS_RATE_MAX = 0.15
+
+
+def usable_as_rl_reward(kappa: float | None, bias_rate: float | None) -> bool:
+    """Whether a judge's measured agreement makes it safe to use as an RL
+    reward signal.
+
+    Pure predicate, extracted from `calibrate()` so the threshold is
+    unit-testable without a database: `calibrate` supplies the numbers,
+    this decides. A `kappa` of None (no adjudicated duels yet) is never
+    usable; a `bias_rate` of None (position bias not yet measurable) is
+    treated as "not disqualifying", since the kappa gate has already been
+    passed at that point.
+
+    Args:
+        kappa: Cohen's kappa from `trn.judge_kappa`, or None.
+        bias_rate: Position-bias rate from `trn.judge_position_bias`, or None.
+
+    Returns:
+        True only when `KAPPA_RL_MIN <= kappa <= KAPPA_SUSPICIOUS_MAX` and
+        the bias rate is under `BIAS_RATE_MAX`.
+    """
+    if kappa is None:
+        return False
+    if not (KAPPA_RL_MIN <= kappa <= KAPPA_SUSPICIOUS_MAX):
+        return False
+    return bias_rate is None or bias_rate < BIAS_RATE_MAX
+
+
 JUDGE_PROMPT_V1 = """You are evaluating two retrieval result sets, Set A and Set B, both produced \
 in an attempt to answer the same question against the same knowledge graph.
 
@@ -454,20 +500,22 @@ def calibrate(
         cur.execute("SELECT * FROM trn.judge_position_bias(%(jm)s)", {"jm": judge_model})
         bias_row = cur.fetchone()
 
-    usable_as_rl_reward = (
-        kappa_row is not None
-        and kappa_row["cohens_kappa"] is not None
-        and 0.60 <= kappa_row["cohens_kappa"] <= 0.82
-        and (bias_row is None or bias_row["bias_rate"] is None or bias_row["bias_rate"] < 0.15)
+    usable = usable_as_rl_reward(
+        kappa_row["cohens_kappa"] if kappa_row else None,
+        bias_row["bias_rate"] if bias_row else None,
     )
     return {
         "kappa": dict(kappa_row) if kappa_row else None,
         "position_bias": dict(bias_row) if bias_row else None,
-        "usable_as_rl_reward": usable_as_rl_reward,
+        "usable_as_rl_reward": usable,
         "verdict": (
             "USABLE as an RL reward signal"
-            if usable_as_rl_reward
-            else "NOT recommended as an RL reward signal yet -- see kappa verdict / position bias rate above"
+            if usable
+            else (
+                f"NOT recommended as an RL reward signal yet -- kappa must be in "
+                f"[{KAPPA_RL_MIN}, {KAPPA_SUSPICIOUS_MAX}] and position bias below "
+                f"{BIAS_RATE_MAX}; see the values above"
+            )
         ),
     }
 
@@ -479,12 +527,12 @@ def leaderboard(iterations: int = 100) -> list[dict[str, Any]]:
         return cur.fetchall()
 
 
-def default_embed_fn() -> Callable[[str], list[float]]:
-    """Lazily import `rollout_env` (which itself has zero heavy-ML imports,
-    but keeping the import inside the function avoids a module-level
-    dependency cycle: `rollout_env` does not import this module, but
-    keeping the wiring one-directional at import time is simpler to reason
-    about than relying on that being true forever)."""
-    from fde_training import rollout_env  # noqa: PLC0415
-
-    return rollout_env.deterministic_fake_embed
+# NOTE: there is deliberately no `default_embed_fn()` factory here any more.
+# It returned `rollout_env.deterministic_fake_embed` -- a vector carrying no
+# semantic information at all -- and both of its call sites (the CLI's
+# `rival-grader run` and `bedrock_rft.build_dataset`) treated it as "the
+# default embedding", so every tournament and every RFT dataset was scored
+# against noise retrieval while looking exactly like a real run. Callers now
+# choose explicitly between `rollout_env.default_embed_fn` (Bedrock) and
+# `rollout_env.deterministic_fake_embed` (offline tests only); see
+# `fde_training.cli._resolve_embed_fn` for the resolution rules.

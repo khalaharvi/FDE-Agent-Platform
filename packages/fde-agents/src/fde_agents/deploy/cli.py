@@ -1,11 +1,11 @@
 """One console-script entrypoint (`fde-agents-deploy`) for every operator
-deploy action, replacing four separate `python -m fde_agents.deploy.<x>`
+deploy action, replacing several separate `python -m fde_agents.deploy.<x>`
 invocations with one command and a subcommand name.
 
 Design intent
 -------------
-`runtimes.py`, `gateway.py`, `memory.py`, and `invoke.py` each already
-expose a `main(argv: list[str] | None) -> int` -- the standard shape this
+`runtimes.py`, `codezip.py`, `gateway.py`, `memory.py`, and `invoke.py` each
+already expose a `main(argv: list[str] | None) -> int` -- the standard shape this
 platform's other CLIs use (see `fde_mcp.__main__`, `fde_mcp.embedder_
 worker`). This module does not reimplement any of their argument parsing or
 provisioning logic; it is a thin `argparse` subparser dispatcher that hands
@@ -15,8 +15,8 @@ the remaining argv straight to the chosen module's own `main()`, so
 arguments and behave identically -- there is exactly one place each
 subcommand's argument grammar is defined, here or there, never both.
 
-Kept as one flat dispatch table (`_SUBCOMMANDS`) rather than four
-`click`/`typer` command groups because every one of the four modules needs
+Kept as one flat dispatch table (`_SUBCOMMANDS`) rather than a set of
+`click`/`typer` command groups because every one of those modules needs
 to remain independently runnable (`python -m ...`) for scripts and runbooks
 that already call them that way; this file is additive, not a replacement
 for those entrypoints.
@@ -27,10 +27,11 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
-from . import gateway, invoke, memory, runtimes
+from . import codezip, gateway, invoke, memory, runtimes
 
 _SUBCOMMANDS: dict[str, Callable[[list[str] | None], int]] = {
     "runtimes": runtimes.main,
+    "codezip": codezip.main,
     "gateway": gateway.main,
     "memory": memory.main,
     "invoke": invoke.main,

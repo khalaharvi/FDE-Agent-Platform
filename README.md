@@ -116,7 +116,8 @@ FDE_MCP_TRANSPORT=stdio uv run fde-mcp
 uv run fde-training export-sft --stats
 
 # 5. Deploy (needs AWS credentials)
-uv run fde-agents-deploy runtimes --agent engagement --build codezip
+uv run fde-agents-deploy codezip --agents engagement --code-bucket <bucket>
+uv run fde-agents-deploy runtimes --agents engagement --role-arn <arn> --artifact-mode code
 
 # 6. Build an image (ARM64 is mandatory for the container path)
 docker buildx build --platform linux/arm64 --build-arg AGENT=engagement \

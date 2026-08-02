@@ -220,28 +220,188 @@ class MaskVerificationError(RuntimeError):
     pass
 
 
+def _enclosing_message_index(char_start: int, message_char_ranges: list[tuple[int, int]]) -> int:
+    """Index of the message whose rendered character range contains
+    `char_start`, or -1 if it falls outside every range (possible only for
+    template epilogue text emitted after the last message).
+    """
+    for i, (m_start, m_end) in enumerate(message_char_ranges):
+        if m_start <= char_start < m_end:
+            return i
+    return -1
+
+
+def _token_level_check(
+    full_text: str,
+    gen_spans: list[tuple[int, int]],
+    message_char_ranges: list[tuple[int, int]],
+    expected_trainable: list[bool],
+    tokenizer: Any,
+    *,
+    max_report: int = 20,
+) -> dict[str, Any]:
+    """Phase 2 of `verify_masking`: assert the mask at TOKEN granularity.
+
+    Phase 1 compares whole messages against the template's `{% generation %}`
+    spans, which is cheap and catches the common export bug. It cannot see
+    the failure this function exists for: a token whose character span
+    overlaps a generation span while its enclosing message was exported as
+    non-trainable. That token receives loss. When the non-trainable message
+    is a `tool` result -- i.e. retrieved graph content -- the model is being
+    trained to reproduce evidence it is supposed to be reading, which is
+    precisely the hallucination failure the whole grounding reward stack
+    exists to suppress.
+
+    Args:
+        full_text: The fully rendered conversation.
+        gen_spans: `(start, end)` character spans the chat template marked
+            as generation.
+        message_char_ranges: `(start, end)` character range per message, in
+            message order.
+        expected_trainable: `assistant_mask`, one bool per message.
+        tokenizer: A FAST tokenizer (offset mappings are the whole point).
+        max_report: Cap on how many individual mismatches are described.
+
+    Returns:
+        `{"tokens_checked", "token_mismatches", "token_mismatch_details",
+        "boundary_straddling_tokens"}`. Raising is the caller's job.
+
+    Raises:
+        MaskVerificationError: if `tokenizer` is not a fast tokenizer, since
+            a slow one silently has no offsets to check and returning a
+            clean report would be a lie.
+    """
+    if not getattr(tokenizer, "is_fast", False):
+        msg = (
+            "token-level masking verification requires a fast tokenizer (offset "
+            "mappings); pass a PreTrainedTokenizerFast, or use a model that ships "
+            "a tokenizer.json. Refusing to report a clean mask that was never checked."
+        )
+        raise MaskVerificationError(msg)
+
+    encoded = tokenizer(full_text, return_offsets_mapping=True, add_special_tokens=False)
+    offsets = encoded["offset_mapping"]
+
+    mismatches: list[dict[str, Any]] = []
+    n_mismatches = 0
+    straddling = 0
+    checked = 0
+
+    for token_index, (start, end) in enumerate(offsets):
+        if end <= start:
+            # Special/added tokens map to a zero-length offset; there is no
+            # character range to attribute them to.
+            continue
+        checked += 1
+        in_generation = any(g_start < end and start < g_end for g_start, g_end in gen_spans)
+        straddles = any(
+            start < g_start < end or start < g_end < end for g_start, g_end in gen_spans
+        )
+        if straddles:
+            straddling += 1
+
+        if not in_generation:
+            # A trainable message's non-generation tokens (role headers, EOS
+            # scaffolding) are expected and fine: phase 1 has already proved
+            # every trainable message overlaps a generation span.
+            continue
+
+        message_index = _enclosing_message_index(start, message_char_ranges)
+        if message_index < 0 or expected_trainable[message_index]:
+            continue
+
+        n_mismatches += 1
+        if len(mismatches) < max_report:
+            mismatches.append(
+                {
+                    "token_index": token_index,
+                    "char_span": [start, end],
+                    "token_text": full_text[start:end],
+                    "message_index": message_index,
+                    "expected_trainable": False,
+                    "in_generation_span": True,
+                }
+            )
+
+    return {
+        "tokens_checked": checked,
+        "token_mismatches": n_mismatches,
+        "token_mismatch_details": mismatches,
+        "boundary_straddling_tokens": straddling,
+    }
+
+
+def _merge_token_report(
+    summary: dict[str, Any],
+    report: dict[str, Any],
+    messages: list[dict[str, Any]],
+    session_id: str | None,
+) -> None:
+    """Fold one example's phase-2 report into the run summary.
+
+    The per-example detail keeps the offending message's ROLE alongside the
+    token, because "a token in a generation span belongs to a non-trainable
+    message" only tells a reader how bad it is once they know whether that
+    message was a tool result.
+    """
+    summary["tokens_checked"] += report["tokens_checked"]
+    summary["token_mismatches"] += report["token_mismatches"]
+    summary["boundary_straddling_tokens"] += report["boundary_straddling_tokens"]
+    if not report["token_mismatches"]:
+        return
+    details = report["token_mismatch_details"]
+    summary["token_mismatch_examples"].append(
+        {
+            "session_id": session_id,
+            "roles": [messages[t["message_index"]]["role"] for t in details],
+            "tokens": details,
+        }
+    )
+
+
 def verify_masking(
     dataset: list[dict[str, Any]],
     tokenizer: Any,
     chat_template: str | None = None,
     max_examples: int = 50,
 ) -> dict[str, Any]:
-    """`dataset` is a list of export_sft.py records:
+    """Cross-check an exported dataset's loss mask two independent ways, and
+    refuse to return normally if they disagree.
+
+    `dataset` is a list of export_sft.py records:
       {"messages": [...], "assistant_mask": [...], "meta": {...}}
 
-    Renders each example's messages through `chat_template` (defaults to
-    this repo's `chat_template.jinja`) using
+    **Phase 1 (message level).** Each example's messages are rendered through
+    `chat_template` (defaults to this repo's `chat_template.jinja`) with
     `transformers.utils.chat_template_utils.render_jinja_template`, which
-    returns character-offset generation spans without requiring a full
-    tokenizer vocabulary -- but we ALSO tokenize (via `tokenizer(...,
-    return_offsets_mapping=True)`) so we can assert at TOKEN granularity,
-    which is what actually matters for the loss (a token can straddle a
-    span boundary at the character level in ways that are invisible until
-    you tokenize).
+    returns character-offset generation spans. Rendering increasing prefixes
+    gives each message's own character range, and a message that overlaps a
+    generation span must be exactly the set of messages `assistant_mask`
+    marks trainable.
 
-    Returns a summary dict and prints one fully-decoded, mask-annotated
-    example (trainable tokens wrapped in >>...<<) so a human can eyeball it
-    before a training run starts.
+    **Phase 2 (token level).** The same rendered text is tokenized with
+    `return_offsets_mapping=True` and every token that overlaps a generation
+    span is attributed back to its enclosing message. A token inside a
+    generation span whose message is NOT trainable is a real loss-mask leak
+    and fails the check -- see `_token_level_check`. Tokens that merely
+    straddle a span boundary are counted and reported (the character-level-
+    invisible case) but are not fatal on their own. This phase needs a fast
+    tokenizer and says so loudly if it does not get one.
+
+    Args:
+        dataset: export_sft.py records.
+        tokenizer: A fast HF tokenizer, used for phase 2.
+        chat_template: Jinja template text; defaults to this package's.
+        max_examples: Cap on how many records are checked.
+
+    Returns:
+        A summary dict with both phases' counters. Also prints one
+        fully-decoded, mask-annotated example (trainable spans wrapped in
+        >>...<<) so a human can eyeball it before a training run starts.
+
+    Raises:
+        MaskVerificationError: on any phase-1 or phase-2 mismatch, or on a
+            malformed record.
     """
     from transformers.utils.chat_template_utils import render_jinja_template  # noqa: PLC0415
 
@@ -249,7 +409,15 @@ def verify_masking(
     n_checked = 0
     n_examples_with_mismatch = 0
     printed_demo = False
-    summary: dict[str, Any] = {"examples_checked": 0, "mismatches": 0, "mismatch_examples": []}
+    summary: dict[str, Any] = {
+        "examples_checked": 0,
+        "mismatches": 0,
+        "mismatch_examples": [],
+        "tokens_checked": 0,
+        "token_mismatches": 0,
+        "token_mismatch_examples": [],
+        "boundary_straddling_tokens": 0,
+    }
 
     for record in dataset[:max_examples]:
         messages = record["messages"]
@@ -329,6 +497,15 @@ def verify_masking(
                 }
             )
 
+        _merge_token_report(
+            summary,
+            _token_level_check(
+                full_text, gen_spans, message_char_ranges, expected_trainable, tokenizer
+            ),
+            messages,
+            record.get("meta", {}).get("session_id"),
+        )
+
         if not printed_demo:
             printed_demo = True
             _print_annotated_example(full_text, gen_spans)
@@ -340,6 +517,15 @@ def verify_masking(
             f"{n_examples_with_mismatch}/{n_checked} examples have a mismatch between "
             f"export_sft.py's assistant_mask and chat_template.jinja's {{% generation %}} "
             f"spans -- see summary['mismatch_examples']. DO NOT TRAIN until this is fixed. "
+            f"summary={summary}"
+        )
+        raise MaskVerificationError(msg)
+    if summary["token_mismatches"]:
+        msg = (
+            f"{summary['token_mismatches']} token(s) across {len(summary['token_mismatch_examples'])} "
+            f"example(s) fall inside a {{% generation %}} span but belong to a message "
+            f"assistant_mask marks NON-trainable -- those tokens would receive loss. See "
+            f"summary['token_mismatch_examples']. DO NOT TRAIN until this is fixed. "
             f"summary={summary}"
         )
         raise MaskVerificationError(msg)

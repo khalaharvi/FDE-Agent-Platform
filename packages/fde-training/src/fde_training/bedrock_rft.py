@@ -78,9 +78,19 @@ def build_dataset(
     (the champion `trn.retriever_variant`) against the live graph right
     now, not from a stale cached set, so the grader's grounding check
     reflects what a real rollout would actually be able to retrieve.
+
+    `embed_fn` defaults to the REAL Bedrock embedding path
+    (`rollout_env.default_embed_fn`). That default is load-bearing: the
+    `provenance_keys` this function writes become the Lambda grader's
+    entire notion of "what the model could legitimately have cited", so
+    building the set with `rollout_env.deterministic_fake_embed` freezes a
+    noise retrieval into the reward for the whole RFT run. Pass the fake
+    embed explicitly, and only for offline smoke tests.
     """
     if embed_fn is None:
-        embed_fn = rival_grader.default_embed_fn()
+        from fde_training import rollout_env  # noqa: PLC0415 -- keeps boto3 off the import path
+
+        embed_fn = rollout_env.default_embed_fn
 
     with common.connect() as db:
         cur = db.cursor()
@@ -192,3 +202,135 @@ def submit_job(job_config: dict[str, Any], region: str) -> dict[str, Any]:
 
     client = boto3.client("bedrock", region_name=region)
     return client.create_model_customization_job(**job_config)  # type: ignore[no-any-return]
+
+
+# ===========================================================================
+# Grader Lambda packaging + deployment
+#
+# `lambda_grader.py` is written to have zero non-stdlib imports precisely so
+# its deployment package can be that one file and nothing else -- see that
+# module's docstring. `build_grader_zip` is therefore trivially small, and
+# deliberately so: any growth in this function (vendoring a dependency,
+# bundling the rest of `fde_training`) is a signal that the grader has
+# picked up an import it must not have, and the test that zipimports the
+# built archive in isolation is what catches it.
+# ===========================================================================
+GRADER_HANDLER = "lambda_grader.lambda_handler"
+GRADER_RUNTIME = "python3.12"
+GRADER_ARCHITECTURE = "arm64"
+
+_GRADER_SOURCE = Path(__file__).resolve().parent / "lambda_grader.py"
+
+
+def build_grader_zip(out_path: str | Path) -> Path:
+    """Write the grader's Lambda deployment package to `out_path`.
+
+    The archive contains exactly one member, `lambda_grader.py`, at the zip
+    root -- which is what makes `GRADER_HANDLER` resolvable. Deterministic
+    output (fixed timestamp, fixed compression) so re-running the packaging
+    step for an unchanged grader produces a byte-identical zip and a
+    redeploy is a visible no-op rather than a mystery new version.
+
+    Args:
+        out_path: Destination `.zip` path; parent directories are created.
+
+    Returns:
+        The resolved path actually written.
+    """
+    import zipfile  # noqa: PLC0415 -- packaging-only, not needed to build a job config
+
+    dest = Path(out_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    source = _GRADER_SOURCE.read_text()
+    info = zipfile.ZipInfo("lambda_grader.py", date_time=(1980, 1, 1, 0, 0, 0))
+    info.external_attr = 0o644 << 16
+    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(info, source)
+    log.info("grader_zip_built", path=str(dest), bytes=dest.stat().st_size)
+    return dest
+
+
+def build_grader_function_config(
+    function_name: str,
+    role_arn: str,
+    *,
+    timeout_s: int = 30,
+    memory_mb: int = 256,
+) -> dict[str, Any]:
+    """The `lambda.create_function` keyword arguments for the grader, minus
+    the code payload itself.
+
+    Kept as a pure dict (same rationale as `build_job_config`) so the shape
+    is testable and diffable with no AWS access. `arm64`/`python3.12` match
+    the rest of the platform's deployment posture -- see
+    `docs/11-python-conventions.md` §8 and the AgentCore codezip runtime.
+
+    Args:
+        function_name: Lambda function name.
+        role_arn: Execution role ARN. The grader does no I/O at all, so the
+            basic Lambda execution role (CloudWatch Logs only) is enough.
+        timeout_s: Wall-clock ceiling. RFT's own contract is "must run in
+            seconds"; 30 is a generous ceiling for a handler that is pure
+            string processing.
+        memory_mb: Memory size.
+
+    Returns:
+        A dict ready to splat into `boto3.client("lambda").create_function`.
+    """
+    return {
+        "FunctionName": function_name,
+        "Runtime": GRADER_RUNTIME,
+        "Role": role_arn,
+        "Handler": GRADER_HANDLER,
+        "Architectures": [GRADER_ARCHITECTURE],
+        "Timeout": timeout_s,
+        "MemorySize": memory_mb,
+        "Description": "FDE Bedrock RFT code grader (fde_training.lambda_grader)",
+        "Publish": True,
+    }
+
+
+def deploy_grader(
+    zip_path: str | Path,
+    function_name: str,
+    role_arn: str,
+    region: str,
+    *,
+    update: bool = False,
+) -> dict[str, Any]:
+    """Create (or, with `update=True`, update the code of) the grader Lambda.
+
+    Lazily imports boto3, mirroring `submit_job`. NOT exercised against a
+    live AWS account in this environment.
+
+    Args:
+        zip_path: Package built by `build_grader_zip`.
+        function_name: Lambda function name.
+        role_arn: Execution role ARN (ignored on the update path, which only
+            replaces code).
+        region: AWS region.
+        update: Update an existing function's code instead of creating one.
+
+    Returns:
+        The raw boto3 response, which carries `FunctionArn` -- the value
+        `rft-submit build-job-config --grader-lambda-arn` wants.
+    """
+    import boto3  # noqa: PLC0415
+
+    payload = Path(zip_path).read_bytes()
+    client = boto3.client("lambda", region_name=region)
+    if update:
+        response = client.update_function_code(
+            FunctionName=function_name, ZipFile=payload, Publish=True
+        )
+    else:
+        config = build_grader_function_config(function_name, role_arn)
+        response = client.create_function(Code={"ZipFile": payload}, **config)
+    log.info(
+        "grader_deployed",
+        function_name=function_name,
+        region=region,
+        update=update,
+        function_arn=response.get("FunctionArn"),
+    )
+    return response  # type: ignore[no-any-return]

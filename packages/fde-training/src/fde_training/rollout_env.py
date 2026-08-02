@@ -22,19 +22,31 @@ this module re-implements the SAME SQL queries `fde_mcp.server`'s tools run
 (copied 1:1 from db/008_retrieval.sql, cited per-method below) against an
 explicit, per-episode `session_id` threaded through every call --
 byte-identical retrieval behaviour, safe concurrency. If `fde_mcp.server`'s
-queries change, these must change with them; a parity test that diffs the
-two on every PR is the intended follow-up (see the package README's test
-plan).
+queries change, these must change with them, and that is enforced rather
+than remembered: `tests/test_parity.py` diffs the two modules' SQL text on
+every run and asserts the small set of deliberate divergences (commit
+pinning, `kg_get_node`'s richer MCP-side result) exactly, so both silent
+drift and silent convergence fail the build.
 
 Reproducibility: commit pinning
 ---------------------------------
 `reset()` reads the current sealed HEAD commit (`kg.commit`) and pins
 `(commit_id, sealed_at)` for the life of the episode. Every subsequent call
-to an as-of-capable function (`kg.traverse`, `kg.dependency_closure`,
-`kg.impact_radius` all take `p_as_of`, per db/008_retrieval.sql) is pinned
-to that `sealed_at` timestamp, so re-running the episode later (for
-debugging a reward, or replaying it for SFT export) sees the same graph
-even if new commits have since merged.
+to an as-of-capable function is pinned to that `sealed_at` timestamp, so
+re-running the episode later (for debugging a reward, or replaying it for
+SFT export) sees the same graph even if new commits have since merged.
+
+Three functions are as-of-capable, and only two of them always were.
+`kg.traverse` has taken `p_as_of` since db/008_retrieval.sql.
+`kg.dependency_closure`/`kg.impact_radius` shipped as 3-arg wrappers that
+called `kg.traverse` WITHOUT it -- so they always read `now()`, and two of
+this module's eight tools were silently not commit-pinned while this
+docstring claimed otherwise. The migration adding 4-arg
+`(engagement, key, max_hops, as_of)` overloads is what makes the claim
+true; the 3-arg signatures remain untouched because they are the MCP tool
+contract (`fde_mcp.tools.graph`), where reading live is the correct
+behaviour -- an agent answering a question about the business should see
+the business as it is now. Only the rollout pins.
 
 HONEST LIMITATION, not papered over: `kg.hybrid_search` / `kg.ann_nodes` /
 `kg.ann_edges` / `kg.ann_chunks` (db/008_retrieval.sql) have NO `p_as_of`
@@ -459,11 +471,20 @@ class RolloutEnv:
         )
 
     def kg_dependency_closure(self, node_key: str, max_hops: int = 4) -> dict[str, Any]:
+        """mirrors fde_mcp.server:kg_dependency_closure / kg.dependency_closure.
+        Uses the 4-arg as-of overload, pinned to this episode's commit (see
+        module docstring); the MCP tool keeps the live-reading 3-arg form."""
+        st = self._require_state()
         sql_text = (
             "SELECT node_key, node_type, label, depth, path, path_confidence "
-            "FROM kg.dependency_closure(%(eng)s::uuid, %(key)s, %(hops)s)"
+            "FROM kg.dependency_closure(%(eng)s::uuid, %(key)s, %(hops)s, %(as_of)s)"
         )
-        params = {"eng": self.engagement_id, "key": node_key, "hops": max_hops}
+        params = {
+            "eng": self.engagement_id,
+            "key": node_key,
+            "hops": max_hops,
+            "as_of": st.pinned_sealed_at,
+        }
         return self._run_tool(
             "kg_dependency_closure",
             {"node_key": node_key, "max_hops": max_hops},
@@ -473,11 +494,19 @@ class RolloutEnv:
         )
 
     def kg_impact_radius(self, node_key: str, max_hops: int = 4) -> dict[str, Any]:
+        """mirrors fde_mcp.server:kg_impact_radius / kg.impact_radius. As-of
+        pinned for the same reason as `kg_dependency_closure`."""
+        st = self._require_state()
         sql_text = (
             "SELECT node_key, node_type, label, depth, path, path_confidence "
-            "FROM kg.impact_radius(%(eng)s::uuid, %(key)s, %(hops)s)"
+            "FROM kg.impact_radius(%(eng)s::uuid, %(key)s, %(hops)s, %(as_of)s)"
         )
-        params = {"eng": self.engagement_id, "key": node_key, "hops": max_hops}
+        params = {
+            "eng": self.engagement_id,
+            "key": node_key,
+            "hops": max_hops,
+            "as_of": st.pinned_sealed_at,
+        }
         return self._run_tool(
             "kg_impact_radius",
             {"node_key": node_key, "max_hops": max_hops},

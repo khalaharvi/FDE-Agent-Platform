@@ -89,8 +89,15 @@ class GatewaySettings:
         stdio_command: `FDE_MCP_SERVER_CMD`, default "python3". Dev-mode
             local stdio subprocess command.
         stdio_args: `FDE_MCP_SERVER_ARGS`, whitespace-split, default
-            `("server.py",)`.
-        stdio_cwd: `FDE_MCP_SERVER_CWD`, default "/app/mcp".
+            `("-m", "fde_mcp")`. That is the package's real entrypoint
+            (`fde_mcp/__main__.py`); the previous `server.py` default was
+            inherited from the pre-workspace flat layout and no longer
+            exists on any path, so dev stdio mode could only ever fail.
+        stdio_cwd: `FDE_MCP_SERVER_CWD`, default None -- inherit the agent
+            process's own working directory. `python -m fde_mcp` resolves
+            through the installed package, so pinning a directory is not
+            only unnecessary, it is what made the old `/app/mcp` default
+            wrong everywhere outside one container layout.
         identity_provider_name: `FDE_IDENTITY_PROVIDER_NAME`, default
             "fde-gateway-m2m". The AgentCore Identity M2M credential
             provider name used to mint the Gateway's bearer token.
@@ -106,7 +113,7 @@ class GatewaySettings:
     url: str | None
     stdio_command: str
     stdio_args: tuple[str, ...]
-    stdio_cwd: str
+    stdio_cwd: str | None
     identity_provider_name: str
     scopes: tuple[str, ...]
     startup_timeout_s: int
@@ -117,8 +124,8 @@ class GatewaySettings:
         return cls(
             url=_env_opt_str("FDE_GATEWAY_URL"),
             stdio_command=_env_str("FDE_MCP_SERVER_CMD", "python3"),
-            stdio_args=tuple(_env_str("FDE_MCP_SERVER_ARGS", "server.py").split()),
-            stdio_cwd=_env_str("FDE_MCP_SERVER_CWD", "/app/mcp"),
+            stdio_args=tuple(_env_str("FDE_MCP_SERVER_ARGS", "-m fde_mcp").split()),
+            stdio_cwd=_env_opt_str("FDE_MCP_SERVER_CWD"),
             identity_provider_name=_env_str("FDE_IDENTITY_PROVIDER_NAME", "fde-gateway-m2m"),
             scopes=tuple(
                 s for s in _env_str("FDE_GATEWAY_SCOPES", "gateway:invoke").split(",") if s

@@ -5,10 +5,19 @@ Entrypoint contract
 POST /invocations body:
 
     {
-      "task": "generate_agent_spec" | "generate_evals" | "generate_guardrails" | "scaffold_agent",
+      "task": "generate_agent_spec" | "generate_evals" | "generate_guardrails"
+              | "scaffold_agent" | "review_agent",
       "engagement_id": "<uuid>",
       "input": { "workflow_id": <int>, ... }
     }
+
+`review_agent` closes the loop on `scaffold_agent`: it takes the generated
+package back in via `input.context.files` and audits it against the
+authorizing workflow (binding fidelity, tool allowlist, autonomy ceiling,
+guardrail coverage, and whether PROVENANCE.md accounts for every file). It
+is read-only in the strongest sense -- it produces findings, never a
+rewritten package -- which is why it shares the same tool allowlist as
+every other task here.
 
 Unlike the Engagement and Workflow agents, this agent never stages a
 `hitl.proposal` and therefore never needs `fde_agents.common.hitl`'s gate
@@ -37,7 +46,7 @@ out of the response itself.
 
 Everything generic about the entrypoint contract lives in
 `fde_agents.common.runtime` -- this module contributes the system prompt,
-the four task names, the `workflow_id` precondition, the read-only tool
+the task names, the `workflow_id` precondition, the read-only tool
 allowlist, and the scaffold-file extraction hook.
 """
 
@@ -56,7 +65,13 @@ from fde_mcp.logging import get_logger
 log = get_logger(__name__)
 
 VALID_TASKS = frozenset(
-    {"generate_agent_spec", "generate_evals", "generate_guardrails", "scaffold_agent"}
+    {
+        "generate_agent_spec",
+        "generate_evals",
+        "generate_guardrails",
+        "scaffold_agent",
+        "review_agent",
+    }
 )
 
 # This agent's tool surface is read-only by design (see prompt.py's closing
@@ -133,7 +148,7 @@ def _build_task_prompt(
             "bound step, kg_get_node on its bound key. Produce a guardrails config per "
             "your system prompt's GENERATE_GUARDRAILS section."
         )
-    else:  # scaffold_agent
+    elif task == "scaffold_agent":
         body = (
             f"TASK: scaffold_agent\nworkflow_id: {workflow_id!r}\n\n"
             "Assume the agent spec, eval config, and guardrail config for this workflow "
@@ -142,9 +157,33 @@ def _build_task_prompt(
             "your system prompt's GENERATE_SCAFFOLD_AGENT section. "
             "End your response with a single fenced ```json code block whose content is "
             'exactly {"files": {"<relative/path>": "<file contents as a string>", ...}} '
-            "covering at minimum agent.py, prompt.py, requirements.txt, and Dockerfile. "
+            "covering at minimum agent.py, prompt.py, requirements.txt, Dockerfile, and "
+            "PROVENANCE.md. "
             f"\n\nProvided spec/config context (may be empty): {json.dumps(task_input.get('context', {}))}"
         )
+    elif task == "review_agent":
+        body = (
+            f"TASK: review_agent\nworkflow_id: {workflow_id!r}\n\n"
+            "Call wf_get(workflow_id) to recover the authorizing workflow, then review "
+            "the already-scaffolded package supplied below against your system prompt's "
+            "REVIEW_AGENT section. Check every item on that checklist and, for each, say "
+            "PASS or FAIL with the specific file, line, workflow step, or graph key that "
+            "justifies the verdict -- a finding with no citation is not a finding. Verify "
+            "PROVENANCE.md exists and that every generated file traces to a workflow step "
+            "or graph element; a file nothing in the workflow authorizes is a finding, not "
+            "a bonus. Use kg_get_node on any binding whose confidence you need to judge. "
+            "This task is READ-ONLY: report findings, do not rewrite the package. "
+            f"\n\nPackage under review (files map, may be empty): "
+            f"{json.dumps(task_input.get('context', {}).get('files', {}))}"
+        )
+    else:
+        # `create_app` already validates `task` against `valid_tasks`, so this
+        # is unreachable in normal operation. It exists because the previous
+        # bare `else` silently rendered the scaffold prompt for any task name
+        # that got added to VALID_TASKS without a branch here -- a mislabeling
+        # bug that produces a plausible-looking response for the wrong task.
+        msg = f"unknown development-agent task {task!r}"
+        raise ValueError(msg)
     return header + body
 
 

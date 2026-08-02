@@ -59,7 +59,11 @@ def _build_artifact(agent_name: str, args: argparse.Namespace) -> dict[str, Any]
     if args.artifact_mode == "container":
         registry = args.ecr_registry or os.environ["FDE_ECR_REGISTRY"]
         tag = args.image_tag or os.environ.get("FDE_IMAGE_TAG", "latest")
-        container_uri = f"{registry}/fde-{agent_name}-agent:{tag}"
+        # `fde-{agent}`, NOT `fde-{agent}-agent`: the Dockerfile, the CI image
+        # build (.github/workflows/ci.yml), and the README all name the
+        # repository that way, and a mismatch here is only discoverable as an
+        # ImageNotFound at runtime-creation time.
+        container_uri = f"{registry}/fde-{agent_name}:{tag}"
         return {"containerConfiguration": {"containerUri": container_uri}}
 
     if args.artifact_mode == "code":
