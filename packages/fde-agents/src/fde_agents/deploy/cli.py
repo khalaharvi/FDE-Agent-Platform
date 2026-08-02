@@ -57,7 +57,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _print_usage() -> None:
     print("usage: fde-agents-deploy <subcommand> [args...]")
-    print(f"subcommands: {', '.join(sorted(_SUBCOMMANDS))}")
+    print()
+    print("  codezip   stage + upload the CodeZip artifact (root agent.py shim, arm64 deps)")
+    print("  gateway   create the AgentCore Gateway (mcpServer + lambda targets)")
+    print("  invoke    call a deployed agent runtime and stream its response")
+    print("  memory    provision AgentCore Memory for the three agents")
+    print("  runtimes  create or update the three agent runtimes (container or code)")
+    print()
+    print("run `fde-agents-deploy <subcommand> --help` for that subcommand's flags")
 
 
 if __name__ == "__main__":

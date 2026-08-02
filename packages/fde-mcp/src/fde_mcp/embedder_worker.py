@@ -44,6 +44,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import signal
+import sys
 from typing import Any
 
 from fde_mcp import db, embeddings
@@ -394,6 +395,14 @@ async def run_forever(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
             n = await run_once()
+        except db.ConfigError as exc:
+            # A missing/invalid DB configuration is permanent, not transient:
+            # retrying every poll interval just repeats an identical traceback
+            # forever while the operator reads "worker is running" from the
+            # process table. Say it once, plainly, and exit nonzero so the
+            # supervisor (ECS/K8s/systemd) surfaces the failure.
+            log.error("embedder_config_error", error=str(exc))
+            raise SystemExit(2) from exc
         except Exception:
             log.exception("embedder_batch_failed")
             n = 0
@@ -403,7 +412,31 @@ async def run_forever(stop_event: asyncio.Event) -> None:
     log.info("embedder_worker_stopping")
 
 
+_USAGE = """\
+usage: fde-embedder
+
+Drains kg.embed_queue continuously (nodes, edges, evidence chunks).
+Configured via environment variables, not flags: FDE_DB_DSN (or the
+secret/IAM variants), FDE_EMBEDDER_* for role/batch/poll -- see
+packages/fde-mcp/src/fde_mcp/config.py for every variable and default.
+
+Quick local run:
+  FDE_DB_DSN=postgresql:///fde uv run fde-embedder
+"""
+
+
 def main() -> None:
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        sys.stdout.write(_USAGE)
+        raise SystemExit(0)
+    if args:
+        sys.stderr.write(
+            f"fde-embedder: unknown argument {args[0]!r} -- the worker takes no flags;\n"
+            "it is configured via FDE_* environment variables. Run `fde-embedder --help`.\n"
+        )
+        raise SystemExit(2)
+
     configure_logging()
     stop_event = asyncio.Event()
 

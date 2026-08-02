@@ -37,9 +37,9 @@ repos:
   - repo: local
     hooks:
       - id: mypy
-        name: mypy (strict, fde-mcp + fde-agents)
+        name: mypy (strict, all four production packages)
         entry: uv run mypy
         language: system
         types: [python]
         pass_filenames: false
-        files: ^packages/fde-(mcp|agents)/src/
+        files: ^packages/fde-(mcp|agents|gate|sor)/src/

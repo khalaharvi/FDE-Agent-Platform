@@ -298,6 +298,29 @@ def _run_sync_command(args: argparse.Namespace) -> int | None:
     return None
 
 
+def _expected_errors() -> tuple[type[Exception], ...]:
+    """The failure modes an operator can cause and fix -- misconfiguration,
+    an unregistered adapter, a bad mapping, a missing salt. These print as
+    one-line errors; anything else is a bug and keeps its traceback.
+    Imported lazily so `--help` stays fast.
+    """
+    from fde_sor.adapters.event_stream import EventStreamError  # noqa: PLC0415
+    from fde_sor.adapters.rest_poll import RestPollError  # noqa: PLC0415
+    from fde_sor.hashing import SaltUnavailableError  # noqa: PLC0415
+    from fde_sor.mapping import MappingError, RecordError  # noqa: PLC0415
+    from fde_sor.registry import AdapterNotFoundError  # noqa: PLC0415
+
+    return (
+        db.ConfigError,
+        AdapterNotFoundError,
+        MappingError,
+        RecordError,
+        SaltUnavailableError,
+        RestPollError,
+        EventStreamError,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_logging()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -312,23 +335,27 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _build_parser().parse_args(raw_argv)
 
-    sync_result = _run_sync_command(args)
-    if sync_result is not None:
-        return sync_result
+    try:
+        sync_result = _run_sync_command(args)
+        if sync_result is not None:
+            return sync_result
 
-    key = f"{args.command}:{args.subcommand}" if args.command == "adapter" else args.command
-    handler = _ASYNC_COMMANDS.get(key)
-    if handler is None:
-        log.error("unknown_command", command=key)
+        key = f"{args.command}:{args.subcommand}" if args.command == "adapter" else args.command
+        handler = _ASYNC_COMMANDS.get(key)
+        if handler is None:
+            log.error("unknown_command", command=key)
+            return 2
+
+        async def _run() -> int:
+            try:
+                return await handler(args)
+            finally:
+                await db.close_pool()
+
+        return asyncio.run(_run())
+    except _expected_errors() as exc:
+        sys.stderr.write(f"fde-sor: {exc}\n")
         return 2
-
-    async def _run() -> int:
-        try:
-            return await handler(args)
-        finally:
-            await db.close_pool()
-
-    return asyncio.run(_run())
 
 
 if __name__ == "__main__":

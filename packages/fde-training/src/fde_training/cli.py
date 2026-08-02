@@ -25,9 +25,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from fde_mcp.logging import configure_logging, get_logger
 from fde_training import bedrock_rft, common, export_sft, generate_traces, rival_grader, rollout_env
@@ -699,7 +702,18 @@ def _add_train_grpo_parser(sub: argparse._SubParsersAction) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="fde-training", description=__doc__)
+    ap = argparse.ArgumentParser(
+        prog="fde-training",
+        description=(
+            "One operator entrypoint for the whole training pipeline: trace export, "
+            "reward checks, retrieval tournaments, teacher traces, SFT/GRPO training, "
+            "and the Bedrock RFT path."
+        ),
+        epilog=(
+            "Pipeline map, volume gates, and environment contract: "
+            "packages/fde-training/README.md (design rationale: docs/06-training.md)."
+        ),
+    )
     sub = ap.add_subparsers(dest="command", required=True)
 
     _add_export_sft_parser(sub)
@@ -720,7 +734,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     handler = args.handler
-    return int(handler(args))
+    try:
+        return int(handler(args))
+    except (RuntimeError, ValueError, FileNotFoundError) as exc:
+        # Operator-fixable failures (missing train extra, bad fixture file,
+        # invalid arguments discovered past argparse) print as one line --
+        # the message already names the remedy. Genuine bugs (TypeError,
+        # KeyError, ...) keep their tracebacks.
+        print(f"fde-training: {exc}", file=sys.stderr)
+        return 2
+    except psycopg.Error as exc:
+        print(f"fde-training: database error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
