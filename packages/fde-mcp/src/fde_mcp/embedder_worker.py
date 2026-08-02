@@ -22,6 +22,13 @@ Verbalisation
   003_vectors_hnsw.sql's own comment on this). `_verbalise_edge` looks up
   both endpoint labels and renders `"{src label} {phrase} {dst label}"`,
   optionally folding in a branch condition from edge.attributes when present.
+* Chunks: `kg.chunk.content` VERBATIM. There is nothing to verbalise -- a
+  chunk already is the evidence text a human would read, and paraphrasing it
+  would embed something other than what a reviewer sees. The 8000-character
+  cap that `kg_ingest_chunks` enforces (tools/evidence.py) keeps every chunk
+  inside the embedding model's input budget, which is why there is no
+  truncation logic here; a chunk that arrived through some other path and is
+  too long must fail loudly at Bedrock rather than be silently half-embedded.
 
 Runs as a standalone process: `python -m fde_mcp.embedder_worker` (or the
 `fde-embedder` console script). Polls kg.embed_queue on
@@ -169,6 +176,15 @@ async def _load_edge_text(conn: db.Connection, edge_id: int) -> tuple[dict[str, 
     return edge, text
 
 
+async def _load_chunk(conn: db.Connection, chunk_id: int) -> dict[str, Any] | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT chunk_id, engagement_id, content FROM kg.chunk WHERE chunk_id = %(id)s",
+            {"id": chunk_id},
+        )
+        return await cur.fetchone()
+
+
 async def _mark_complete(conn: db.Connection, queue_id: int) -> None:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -255,6 +271,33 @@ async def _upsert_edge_embedding(
         )
 
 
+async def _write_chunk_embedding(
+    conn: db.Connection, chunk: dict[str, Any], vector: list[float], model_id: str
+) -> None:
+    """UPDATE, not INSERT ... ON CONFLICT like the node/edge paths.
+
+    kg.chunk stores its embedding as a column on the chunk row itself
+    (003_vectors_hnsw.sql) rather than in a side table, so there is no row to
+    upsert and no `is_current`/`embedded_at` to maintain -- a chunk's text is
+    immutable (see tools/evidence.py), so its embedding is either absent or
+    correct for the current model, and re-embedding under a new model is a
+    plain overwrite.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            UPDATE kg.chunk
+               SET embedding = %(vec)s::kg.embedding, model_id = %(model_id)s
+             WHERE chunk_id = %(id)s
+            """,
+            {
+                "id": chunk["chunk_id"],
+                "vec": embeddings.to_pgvector_literal(vector),
+                "model_id": model_id,
+            },
+        )
+
+
 async def _embed_and_write(conn: db.Connection, item: dict[str, Any]) -> None:
     """The part of processing one queue row that can fail (missing row,
     Bedrock error, bad response shape). Raises on any problem; never calls
@@ -278,13 +321,20 @@ async def _embed_and_write(conn: db.Connection, item: dict[str, Any]) -> None:
         edge, text = loaded
         vector = await embeddings.embed(text, input_type=EMBED_INPUT_TYPE)
         await _upsert_edge_embedding(conn, edge, text, vector, model_id)
+    elif item["subject_kind"] == "chunk":
+        chunk = await _load_chunk(conn, item["subject_id"])
+        if chunk is None:
+            msg = f"chunk_id {item['subject_id']} no longer exists"
+            raise LookupError(msg)
+        vector = await embeddings.embed(chunk["content"], input_type=EMBED_INPUT_TYPE)
+        await _write_chunk_embedding(conn, chunk, vector, model_id)
     else:
-        # 'chunk' is a valid subject_kind in the queue's CHECK constraint
-        # (003_vectors_hnsw.sql) for future evidence-chunk ingestion, but no
-        # ingest pipeline populates it yet. Fail loudly rather than silently
-        # dropping it so a future producer's bug is visible.
-        msg = f"subject_kind={item['subject_kind']!r} has no embedder implementation yet"
-        raise NotImplementedError(msg)
+        # Unreachable while kg.embed_queue's CHECK constraint holds
+        # (003_vectors_hnsw.sql allows only node/edge/chunk). Kept so that
+        # adding a fourth subject_kind to the constraint without adding a
+        # branch here fails on the first queued row instead of dropping it.
+        msg = f"unknown embed_queue subject_kind {item['subject_kind']!r}"
+        raise ValueError(msg)
 
 
 async def _process_one(conn: db.Connection, item: dict[str, Any]) -> None:

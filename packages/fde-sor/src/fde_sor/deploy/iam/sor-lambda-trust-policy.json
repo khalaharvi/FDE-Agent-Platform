@@ -1,0 +1,19 @@
+{
+  "_comment": "Trust policy for the fde-sor Lambda execution role. Attach as the role's AssumeRolePolicyDocument (this is NOT a permissions policy -- see sor-lambda-permissions-policy.json for that). The aws:SourceAccount condition pins the role to THIS account so a Lambda in a different account cannot assume a role that holds a customer's system-of-record credentials. Replace ${AWS_ACCOUNT_ID} at deploy time; fde_sor/deploy/sor_lambdas.py does not templatize this file, deliberately -- rendering it belongs to the pipeline that knows the account, and the four functions can legitimately share one role or have four, depending on how far you take least privilege.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowLambdaAssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "aws:SourceAccount": "${AWS_ACCOUNT_ID}"
+        }
+      }
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 Nothing in here reimplements graph, retrieval, or gating logic (that stays
 in the database, see db/008_retrieval.sql's module docstring). What lives
-here is the boundary work that would otherwise be copy-pasted into all 18
+here is the boundary work that would otherwise be copy-pasted into all 21
 tools: classifying a psycopg error into "the model can fix this" versus
 "this is our problem", making a fetched row JSON-safe, and best-effort
 training-trace emission. Centralising it means the self-correctable/opaque

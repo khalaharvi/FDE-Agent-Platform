@@ -1,0 +1,13 @@
+# The adapters run in their own namespace, not alongside the MCP server.
+# They hold per-customer system-of-record credentials and connect to Postgres
+# as fde_ingest -- a different credential set and blast radius than the
+# always-on MCP service running as fde_agent (docs/11 section 2). A namespace
+# is where NetworkPolicy, ResourceQuota, and RBAC can be scoped to that
+# boundary rather than to "everything FDE".
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fde-sor
+  labels:
+    app.kubernetes.io/name: fde-sor
+    app.kubernetes.io/part-of: fde-platform

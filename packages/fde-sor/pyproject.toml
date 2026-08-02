@@ -1,0 +1,27 @@
+[project]
+name = "fde-sor"
+version = "0.1.0"
+description = "System-of-record adapters: normalised observation ingestion and scheduled drift detection"
+requires-python = ">=3.12"
+dependencies = [
+  "fde-mcp",
+  "psycopg[binary,pool]>=3.2",
+  "boto3>=1.35",
+  "structlog>=24.4",
+  # The AWS Lambda Runtime Interface Client. A normal runtime dependency, not
+  # a Lambda-only one: the same image serves the four Lambdas (via ImageConfig
+  # EntryPoint) and the EKS CronJobs/Deployment (via the `fde-sor` console
+  # script), and one image that behaves identically in both is worth more than
+  # a marginally smaller container.
+  "awslambdaric>=3.0",
+]
+
+[project.scripts]
+fde-sor = "fde_sor.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fde_sor"]

@@ -1,0 +1,73 @@
+# Long-running SQS consumer for ONE event_stream adapter. Template: substitute
+# ${ADAPTER_KEY}, ${ENGAGEMENT_ID}, ${FDE_SOR_IMAGE}.
+#
+# replicas: 1 by default -- not because more is unsafe, but because it is
+# rarely useful. SQS visibility timeouts make competing consumers correct
+# (each message goes to one consumer at a time), and the dedup index from
+# db/014 absorbs the redeliveries that happen at a visibility-timeout
+# boundary. Scale up when one consumer cannot keep pace with the queue depth;
+# there is no coordination to configure when you do.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fde-sor-stream-${ADAPTER_KEY}
+  namespace: fde-sor
+  labels:
+    app.kubernetes.io/name: fde-sor
+    app.kubernetes.io/component: stream
+    fde.sor/adapter-key: "${ADAPTER_KEY}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fde-sor
+      app.kubernetes.io/component: stream
+      fde.sor/adapter-key: "${ADAPTER_KEY}"
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fde-sor
+        app.kubernetes.io/component: stream
+        fde.sor/adapter-key: "${ADAPTER_KEY}"
+    spec:
+      serviceAccountName: fde-sor
+      # The consumer deletes each message only AFTER its batch commits in
+      # Postgres, so a SIGTERM mid-batch loses nothing -- the messages become
+      # visible again and are redelivered. This is long enough for an
+      # in-flight batch to finish committing.
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: stream
+          image: ${FDE_SOR_IMAGE}
+          command:
+            - fde-sor
+            - stream-consume
+            - --engagement-id
+            - "${ENGAGEMENT_ID}"
+            - --adapter-key
+            - "${ADAPTER_KEY}"
+          envFrom:
+            - configMapRef:
+                name: fde-sor-config
+            - secretRef:
+                name: fde-sor-db
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          # No HTTP port and therefore no HTTP probe: this process is a
+          # consumer, not a server. Liveness is "the process is running";
+          # `fde-sor stream-consume` exits non-zero on a fatal error and the
+          # Deployment restarts it, which is the whole health model.

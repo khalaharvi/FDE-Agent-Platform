@@ -1,0 +1,80 @@
+# The scheduled drift scan: every 6 hours (docs/09 section 7), across every
+# engagement with an active adapter.
+#
+# ONE of these for the whole cluster, not one per engagement -- `fde-sor
+# drift-scan` with no --engagement-id iterates
+# `SELECT DISTINCT engagement_id FROM sor.adapter WHERE is_active` itself, and
+# one engagement's failure does not stop the others.
+#
+# Deliberately agent-free. `sor.run_all_detectors` is pure SQL; making the
+# platform's "we notice when the graph stops matching reality" claim depend on
+# an agent runtime being healthy would mean drift goes unnoticed exactly when
+# the platform is unwell. The Workflow Agent's triage path sits on top of this,
+# deciding what to DO about a signal -- which is a judgement. Whether a signal
+# exists is not.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fde-sor-drift-scan
+  namespace: fde-sor
+  labels:
+    app.kubernetes.io/name: fde-sor
+    app.kubernetes.io/component: drift-scan
+spec:
+  schedule: "0 */6 * * *"
+  # A scan that overruns six hours must not have a second one start on top of
+  # it: run_all_detectors does REFRESH MATERIALIZED VIEW CONCURRENTLY, and two
+  # concurrent refreshes of sor.observed_transition serialise on each other
+  # for no benefit.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: fde-sor
+            app.kubernetes.io/component: drift-scan
+        spec:
+          serviceAccountName: fde-sor
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            fsGroup: 1001
+          containers:
+            - name: drift-scan
+              image: ${FDE_SOR_IMAGE}
+              command: ["fde-sor", "drift-scan", "--all-engagements"]
+              envFrom:
+                - configMapRef:
+                    name: fde-sor-config
+                - secretRef:
+                    name: fde-sor-db
+              env:
+                # Set this to page on critical control_bypass signals. Without
+                # it the scan still runs and still records every signal into
+                # the triage queue -- it just logs a warning instead of
+                # publishing. Absent, not empty: an empty ARN would be
+                # published to and fail.
+                - name: FDE_SOR_ALERT_TOPIC_ARN
+                  valueFrom:
+                    secretKeyRef:
+                      name: fde-sor-alerts
+                      key: FDE_SOR_ALERT_TOPIC_ARN
+                      optional: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 512Mi
+                limits:
+                  memory: 2Gi

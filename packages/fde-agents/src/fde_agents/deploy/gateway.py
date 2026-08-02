@@ -23,11 +23,20 @@ Two targets are created:
      should not tie up the MCP server's connection pool
      (`FDE_DB_POOL_MAX`, see `fde_mcp.db`) for the minutes or hours it might
      run. Its tool schema is supplied inline (`toolSchema.inlinePayload`)
-     from `--lambda-tool-schema-file` rather than fetched from S3, since
-     this platform's Lambda-backed tools are few and change rarely enough
-     that keeping the schema in the deploy script's own inputs (versioned
-     alongside the Lambda itself) is simpler than another S3 object to keep
-     in sync.
+     rather than fetched from S3, since this platform's Lambda-backed tools
+     are few and change rarely enough that keeping the schema versioned
+     alongside the code is simpler than another S3 object to keep in sync.
+
+     That schema is `deploy/schemas/sor_backfill_tool_schema.json`, loaded
+     via `importlib.resources` so it travels with the installed package.
+     It used to be a placeholder dict written inline in this function, and
+     it had drifted: it described a tool that "returns immediately with a
+     job id", which `fde_sor.lambda_handlers.backfill_handler` does not and
+     never did. Nothing connected the two, so nothing caught it. The schema
+     is now the real handler's contract, and
+     `packages/fde-sor/tests/test_gateway_schema.py` fails if the two stop
+     agreeing. `--lambda-tool-schema-file` still overrides it, for a
+     deployment that registers additional Lambda-backed tools.
 
 `protocolType='MCP'` with `protocolConfiguration.mcp.searchType='SEMANTIC'`
 is what lets the Gateway's own tool search narrow an agent's tool list by
@@ -42,6 +51,7 @@ import argparse
 import json
 import os
 import sys
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +60,24 @@ import boto3
 from fde_mcp.logging import get_logger
 
 log = get_logger(__name__)
+
+DEFAULT_LAMBDA_TOOL_SCHEMA = "sor_backfill_tool_schema.json"
+
+
+def load_default_tool_schema() -> list[dict[str, Any]]:
+    """The packaged `lambda` target tool schema.
+
+    `importlib.resources` rather than a path relative to `__file__` so it
+    resolves from an installed wheel and from a zipped code artifact, not only
+    from a source checkout -- `deploy/codezip.py` builds the latter.
+    """
+    text = (
+        resources.files("fde_agents.deploy.schemas")
+        .joinpath(DEFAULT_LAMBDA_TOOL_SCHEMA)
+        .read_text(encoding="utf-8")
+    )
+    schema: list[dict[str, Any]] = json.loads(text)
+    return schema
 
 
 def create_gateway(client: Any, args: argparse.Namespace) -> dict[str, Any]:
@@ -122,34 +150,11 @@ def create_lambda_target(
     if not args.lambda_arn:
         log.info("gateway_lambda_target_skipped", reason="no --lambda-arn given")
         return None
-    tool_schema: list[dict[str, Any]]
-    if args.lambda_tool_schema_file:
-        tool_schema = json.loads(Path(args.lambda_tool_schema_file).read_text())
-    else:
-        # Minimal placeholder schema for the batch-ingest escape hatch
-        # described in this module's docstring -- replace via
-        # --lambda-tool-schema-file with the real tool definition(s) before
-        # using this in a real deployment.
-        tool_schema = [
-            {
-                "name": "sor_backfill_observations",
-                "description": (
-                    "Kick off an out-of-band, long-running backfill of "
-                    "sor.observation from a customer data warehouse export. "
-                    "Returns immediately with a job id; does not block the "
-                    "MCP server's own connection pool."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "engagement_id": {"type": "string"},
-                        "adapter_key": {"type": "string"},
-                        "s3_uri": {"type": "string"},
-                    },
-                    "required": ["engagement_id", "adapter_key", "s3_uri"],
-                },
-            }
-        ]
+    tool_schema = (
+        json.loads(Path(args.lambda_tool_schema_file).read_text())
+        if args.lambda_tool_schema_file
+        else load_default_tool_schema()
+    )
 
     response = client.create_gateway_target(
         gatewayIdentifier=gateway_id,

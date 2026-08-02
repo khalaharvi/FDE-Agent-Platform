@@ -1,0 +1,29 @@
+# Non-secret tuning only. Every key here is declared in
+# packages/fde-sor/src/fde_sor/config.py with its default and what happens if
+# it is wrong -- this file overrides, it does not define.
+#
+# FDE_ACTOR_HASH_SALT is deliberately ABSENT and must never be added: it is the
+# local/CI fallback salt, and one shared salt across engagements makes every
+# customer's actor_hash values comparable to every other customer's. In a
+# cluster the salt comes per-engagement from Secrets Manager, via the prefix
+# below.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fde-sor-config
+  namespace: fde-sor
+data:
+  FDE_SOR_ROLE: "fde_ingest"
+  FDE_SOR_BATCH_SIZE: "500"
+  FDE_SOR_STATEMENT_TIMEOUT: "120s"
+  FDE_SOR_DRIFT_STATEMENT_TIMEOUT: "300s"
+  FDE_SOR_HTTP_TIMEOUT: "30"
+  FDE_SOR_LOOKBACK_DAYS: "90"
+  FDE_SOR_MAX_RECORD_ERRORS: "20"
+  FDE_SOR_SQS_BATCH_SIZE: "10"
+  FDE_SOR_SQS_WAIT_SECONDS: "20"
+  FDE_ACTOR_SALT_SECRET_PREFIX: "fde/actor-hash-salt/"
+  AWS_REGION: "us-east-1"
+  # JSON logs to stdout. Never set FDE_LOG_CONSOLE=1 here: CloudWatch and
+  # every other log pipeline can query JSON fields and cannot query text.
+  FDE_SERVICE_NAME: "fde-sor"

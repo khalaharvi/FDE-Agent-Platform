@@ -1,0 +1,32 @@
+[
+  {
+    "name": "sor_backfill_observations",
+    "description": "Replay a historical system-of-record export (JSONL, one raw record per line, in S3) into sor.observation for an already-registered adapter, using that adapter's human-authored mapping. Runs as an out-of-band Lambda rather than inside the MCP server, so a multi-minute backfill does not hold the MCP server's database connection pool. The insert is idempotent on (adapter_id, dedup_key), so re-running a backfill, or overlapping one with a live poll, cannot double-count observations -- which matters because the drift detectors compute rates over counted rows. Returns what landed; it does NOT return a job id and does not poll.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "engagement_id": {
+          "type": "string",
+          "description": "The engagement whose adapter to backfill (uuid)."
+        },
+        "adapter_key": {
+          "type": "string",
+          "description": "sor.adapter.adapter_key, e.g. 'jira-prod'. The adapter must already be registered: its mapping is the measurement instrument, and it is authored by a human at onboarding (docs/08 section 2.5), never supplied per call."
+        },
+        "s3_uri": {
+          "type": "string",
+          "description": "s3://bucket/key of the JSONL export. Exports too large for one 15-minute run are split into several objects and this tool is invoked once per object."
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Run the full mapping and hashing path and report what would land, without writing any observation or touching the adapter's watermark. Use this to check a freshly authored mapping against real records."
+        }
+      },
+      "required": [
+        "engagement_id",
+        "adapter_key",
+        "s3_uri"
+      ]
+    }
+  }
+]

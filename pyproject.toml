@@ -185,6 +185,7 @@ addopts = "-q --strict-markers --strict-config"
 markers = [
   "requires_db: needs a live Postgres with the db/ migrations applied",
   "requires_aws: needs live AWS credentials (skipped in CI)",
+  "requires_cdc: needs a Postgres with wal_level=logical and wal2json (self-skips otherwise)",
 ]
 filterwarnings = [
   "error",

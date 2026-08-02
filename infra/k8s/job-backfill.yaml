@@ -1,0 +1,73 @@
+# One-off historical import. Template: substitute ${ENGAGEMENT_ID},
+# ${ADAPTER_KEY}, ${S3_URI}, ${JOB_SUFFIX}, ${FDE_SOR_IMAGE}.
+#
+#   ENGAGEMENT_ID=... ADAPTER_KEY=jira-prod \
+#   S3_URI=s3://acme-exports/jira-2025.jsonl JOB_SUFFIX=jira-2025 \
+#   FDE_SOR_IMAGE=$ECR/fde-sor:$TAG \
+#     envsubst < infra/k8s/job-backfill.yaml | kubectl apply -f -
+#
+# The adapter must already be registered: the mapping lives on the adapter row
+# and is authored by a human at onboarding (docs/08 section 2.5). That is also
+# what makes the seam safe -- a backfill and a live poll covering the same
+# window produce identical dedup_keys, so the overlap collapses in the index
+# instead of double-counting into detect_control_bypass's rate.
+#
+# Re-running is safe and is the intended recovery for a failure: it re-reads
+# from the start and the dedup index discards everything already landed.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fde-sor-backfill-${JOB_SUFFIX}
+  namespace: fde-sor
+  labels:
+    app.kubernetes.io/name: fde-sor
+    app.kubernetes.io/component: backfill
+    fde.sor/adapter-key: "${ADAPTER_KEY}"
+spec:
+  backoffLimit: 2
+  # Clean up a week after finishing -- long enough to read the logs, short
+  # enough that onboarding does not leave a year of completed Jobs behind.
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fde-sor
+        app.kubernetes.io/component: backfill
+    spec:
+      serviceAccountName: fde-sor
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: backfill
+          image: ${FDE_SOR_IMAGE}
+          command:
+            - fde-sor
+            - backfill
+            - --engagement-id
+            - "${ENGAGEMENT_ID}"
+            - --adapter-key
+            - "${ADAPTER_KEY}"
+            - --s3-uri
+            - "${S3_URI}"
+          envFrom:
+            - configMapRef:
+                name: fde-sor-config
+            - secretRef:
+                name: fde-sor-db
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              # A backfill streams the export line by line and never holds the
+              # object resident, so this bounds the batch buffer, not the file.
+              memory: 2Gi

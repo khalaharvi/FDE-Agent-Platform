@@ -1,0 +1,69 @@
+{
+  "_comment": "Permissions policy for the fde-sor Lambda execution role. This role holds the keys to two things that are not ours: a customer's system-of-record credentials and the per-engagement actor-hash salts. Note what is absent -- there are NO Postgres permissions here, because database authorization is enforced at the SQL layer (SET LOCAL ROLE fde_ingest, see fde_mcp.db). This policy only gets the function to a place where it CAN open a connection; db/010 and db/014 decide what that connection may do. Replace ${AWS_REGION} and ${AWS_ACCOUNT_ID} at deploy time. The SQS resource is scoped to a naming convention; narrow it to the exact queue ARNs once the adapters are registered.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LambdaLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda/fde-sor-*"
+    },
+    {
+      "_comment": "Three distinct secrets under one prefix: the database login (fde/db/*), the per-customer SoR credential named by sor.adapter.secret_arn (fde/sor/*), and the per-engagement actor-hash salt (fde/actor-hash-salt/*). GetSecretValue only -- nothing here rotates or writes a secret.",
+      "Sid": "ReadPlatformSecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:fde/*"
+    },
+    {
+      "_comment": "The event-source mapping polls on the function's behalf using these permissions. DeleteMessage is what the EKS long-poll consumer uses after a batch commits; the Lambda path never calls it itself.",
+      "Sid": "ConsumeAdapterQueues",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:DeleteMessageBatch",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:fde-sor-*"
+    },
+    {
+      "_comment": "Backfill reads a customer's historical export. Read-only: a backfill that could write to the export bucket could rewrite the evidence it is about to ingest.",
+      "Sid": "ReadBackfillExports",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::${FDE_EXPORT_BUCKET}",
+        "arn:aws:s3:::${FDE_EXPORT_BUCKET}/*"
+      ]
+    },
+    {
+      "_comment": "One topic, for critical control_bypass escalation from the drift scan (docs/08 section 7).",
+      "Sid": "PublishDriftAlerts",
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "arn:aws:sns:${AWS_REGION}:${AWS_ACCOUNT_ID}:fde-sor-alerts"
+    },
+    {
+      "_comment": "Required for VpcConfig: Lambda creates and deletes an ENI in the database's subnets on the function's behalf. These actions do not support resource-level permissions, which is why the Resource is * -- the ec2:Subnet condition narrows it to the subnets you actually deploy into.",
+      "Sid": "VpcNetworkInterfaces",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DeleteNetworkInterface",
+        "ec2:AssignPrivateIpAddresses",
+        "ec2:UnassignPrivateIpAddresses"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

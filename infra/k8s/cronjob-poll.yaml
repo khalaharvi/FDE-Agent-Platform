@@ -1,0 +1,77 @@
+# One CronJob per POLLED adapter (rest_poll, db_cdc). Template: substitute
+# ${ADAPTER_KEY}, ${SCHEDULE}, ${ENGAGEMENT_ID}, ${FDE_SOR_IMAGE} -- see
+# README.md for the envsubst invocation.
+#
+# ${SCHEDULE} is sor.adapter.poll_cron VERBATIM. Kubernetes CronJob takes
+# 5-field cron directly, so unlike the EventBridge path (which needs
+# `fde-sor deploy sync-schedules` to translate to a 6-field cron() expression
+# with a '?' day field) there is nothing to translate and nothing to get wrong.
+#
+#   SELECT adapter_key, poll_cron FROM sor.adapter
+#    WHERE is_active AND poll_cron IS NOT NULL AND kind <> 'event_stream';
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fde-sor-poll-${ADAPTER_KEY}
+  namespace: fde-sor
+  labels:
+    app.kubernetes.io/name: fde-sor
+    app.kubernetes.io/component: poll
+    fde.sor/adapter-key: "${ADAPTER_KEY}"
+spec:
+  schedule: "${SCHEDULE}"
+  # Forbid, not Allow or Replace. Two concurrent polls of one adapter would
+  # both read the same last_cursor and fetch the same window; the dedup index
+  # would absorb the duplicate rows, but the two runs would still race on the
+  # cursor advance and the SoR would be billed twice for nothing. A poll that
+  # overruns its schedule wants the next run skipped, not stacked.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # No retries. A failed poll is not lost work: last_cursor did not
+      # advance past the uncommitted batch, so the NEXT scheduled run resumes
+      # from exactly where this one stopped. Retrying immediately just hammers
+      # an SoR that is probably already unwell.
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: fde-sor
+            app.kubernetes.io/component: poll
+        spec:
+          serviceAccountName: fde-sor
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            fsGroup: 1001
+          containers:
+            - name: poll
+              image: ${FDE_SOR_IMAGE}
+              command:
+                - fde-sor
+                - poll
+                - --engagement-id
+                - "${ENGAGEMENT_ID}"
+                - --adapter-key
+                - "${ADAPTER_KEY}"
+              envFrom:
+                - configMapRef:
+                    name: fde-sor-config
+                - secretRef:
+                    name: fde-sor-db
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
