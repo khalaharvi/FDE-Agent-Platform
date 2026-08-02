@@ -184,7 +184,7 @@ verified" and recheck before quoting externally:
 
 ## 7. Field notes — discovered while building this repo
 
-Two things found empirically, not documented anywhere upstream, that would
+Three things found empirically, not documented anywhere upstream, that would
 otherwise cost someone a debugging session:
 
 **1. pgvector compiled with the default `-march=native` crashes Postgres
@@ -236,6 +236,25 @@ handles this gracefully (a structured `{error, hint}`, not a crash — see
 `docs/05-mcp-surface.md` Section 2.3), but the tool is not currently
 reachable as deployed; the fix is a one-line `GRANT EXECUTE ON FUNCTION
 sor.run_all_detectors(uuid) TO fde_agent;`, not a further ownership change.
+
+**3. Two failure classes only surface on the first CI run a repo ever gets —
+both hit this repo the day it went public.** (a) `uv sync` installs workspace
+members **editable by default**: the builder stage's venv contains a `.pth`
+pointer back into `/app/packages/*/src`, not the package itself, so a
+two-stage Dockerfile whose runtime stage copies only `.venv` produces an
+image where `import fde_mcp` raises `ModuleNotFoundError`. The `RUN python -c
+"import …"` sanity check in each Dockerfile caught it at build time (its
+whole job); the fix is `--no-editable` on the final `uv sync`, which installs
+workspace members as real site-packages wheels. Verified locally by syncing
+into a scratch venv and importing from `/` with the sources unreachable.
+(b) TRL's `GRPOConfig` (a `transformers.TrainingArguments` subclass)
+validates `bf16=True` against the **actual host hardware at construction
+time** — it raised in `__post_init__` on GitHub's CPU-only runners while
+passing on the Apple Silicon dev machine. Config-assembly tests must pin
+`bf16=False` (or `use_cpu=True`) explicitly; the profile's `bf16=True`
+default is correct for real GPU training and unchanged. Neither failure was
+reachable before publication because CI had never executed the image builds
+or the `train-tests` job against non-local hardware.
 
 ---
 

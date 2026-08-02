@@ -35,8 +35,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY packages/fde-mcp/src packages/fde-mcp/src
 COPY README.md ./
 
+# --no-editable: the runtime stage copies ONLY .venv, so workspace members
+# must be real site-packages installs, not .pth pointers back into /app/packages.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package fde-mcp
+    uv sync --frozen --no-dev --no-editable --package fde-mcp
 
 FROM --platform=linux/arm64 python:${PYTHON_VERSION}-slim-bookworm AS runtime
 

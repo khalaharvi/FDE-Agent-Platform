@@ -250,9 +250,13 @@ def test_build_qa_grpo_dataset_lifts_reference_response_to_columns(tmp_path: Any
 
 
 def test_build_grpo_config_maps_profile_fields_and_reward_weights() -> None:
+    # bf16=False, unlike the profile default: GRPOConfig is a TrainingArguments
+    # subclass that validates bf16 against the ACTUAL hardware at construction,
+    # and CI runners are CPU-only. The mapping is what's under test, not the
+    # accelerator; bf16 pass-through is asserted explicitly below.
     pytest.importorskip("trl")
     profile = train.GRPOProfile(
-        output_dir="out/grpo", num_generations=4, beta=0.02, learning_rate=3e-6, seed=7
+        output_dir="out/grpo", num_generations=4, beta=0.02, learning_rate=3e-6, seed=7, bf16=False
     )
     config = train.build_grpo_config(profile, [0.45, 0.4, 0.15])
     assert config.num_generations == 4
@@ -260,6 +264,7 @@ def test_build_grpo_config_maps_profile_fields_and_reward_weights() -> None:
     assert config.learning_rate == pytest.approx(3e-6)
     assert config.seed == 7
     assert config.reward_weights == [0.45, 0.4, 0.15]
+    assert config.bf16 is False
 
 
 def test_episode_reward_funcs_track_default_weights_exactly() -> None:

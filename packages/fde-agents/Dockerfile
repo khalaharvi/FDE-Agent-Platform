@@ -58,8 +58,10 @@ COPY packages/fde-mcp/src    packages/fde-mcp/src
 COPY packages/fde-agents/src packages/fde-agents/src
 COPY README.md ./
 
+# --no-editable: the runtime stage copies ONLY .venv, so workspace members
+# must be real site-packages installs, not .pth pointers back into /app/packages.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package fde-agents
+    uv sync --frozen --no-dev --no-editable --package fde-agents
 
 # ---------------------------------------------------------------------
 # Stage 2 -- runtime. No uv, no compilers, no build cache.
