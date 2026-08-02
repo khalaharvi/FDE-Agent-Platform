@@ -8,6 +8,21 @@ tracking table) until the first production deployment freezes the schema.
 ## [Unreleased]
 
 ### Added
+- **Open-source readiness**: `LICENSE` (Apache-2.0) + `NOTICE`, `SECURITY.md`
+  (vuln reporting scoped to the four-layer invariant), `CONTRIBUTING.md`,
+  `CODE_OF_CONDUCT.md`, issue/PR templates, per-package license metadata.
+- **Model presets — the budget dial**: `FDE_MODEL_PRESET` ∈
+  {`premium`, `balanced`, `budget`} maps each agent to a model tier
+  (`MODEL_PRESETS` in `fde_agents/common/config.py`); explicit
+  `FDE_MODEL_ID` always wins; `fde-agents-deploy runtimes --model-preset`
+  bakes the resolution into each runtime's env so the proposal audit trail
+  records exactly the model that authored it. Cost table in README
+  "Choosing models".
+- **Local-first onboarding**: `docker-compose.yml` (CI's exact pgvector
+  image, port 55432) and `fde-gate-dev` — the review console served
+  locally through the same `lambda_handler` the deployed Lambda runs
+  (principal synthesized from `FDE_GATE_DEV_PRINCIPAL`; refuses to start
+  anonymous). README quick start rewritten as the clone-and-run journey.
 - **Gate service + prod-ops console** (`packages/fde-gate`): Lambda + API Gateway
   review queue, proposal decisions/edits/merge, workflow publish + runner with
   human steps in the same queue, deploy CLI. The first way to call

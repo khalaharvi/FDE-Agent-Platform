@@ -99,35 +99,80 @@ model grading itself.
 
 ---
 
-## Quick start
+## Quick start (clone → running locally, no AWS account needed)
+
+Everything through step 4 runs entirely on your machine — the database, all
+545 tests, the MCP server, the training pipeline, and the drift detectors.
+AWS enters only at step 5.
 
 ```bash
 # 0. Toolchain (uv is the only prerequisite; it manages Python itself)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --all-packages --frozen
 
-# 1. Database
-createdb fde && ./db/rebuild.sh fde     # 15 migrations + 25 smoke tests
+# 1. Database — the same pgvector image CI uses, on port 55432 so it never
+#    collides with a Postgres you already run
+docker compose up -d db
+export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
+./db/rebuild.sh fde                     # 15 migrations + 25 smoke tests
+export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
+#    (already running Postgres with pgvector >= 0.8? skip compose:
+#     createdb fde && ./db/rebuild.sh fde && export FDE_DB_DSN=postgresql:///fde)
 
-# 2. Everything else
-export FDE_DB_DSN="postgresql:///fde"
+# 2. Prove it works
 uv run pytest packages                  # 545 tests against live Postgres
 uv run ruff check packages && uv run mypy   # strict, all four production packages
 
 # 3. Run the MCP server locally over stdio
 FDE_MCP_TRANSPORT=stdio uv run fde-mcp
 
-# 4. Training pipeline
-uv run fde-training export-sft --stats
+# 4. Local, AWS-free pipelines
+uv run fde-training export-sft --stats                 # training data from gate outcomes
+uv run fde-sor replay --help                           # drift ingestion from a JSONL export
+uv run fde-training seed-eval-queries --dry-run \
+  --file packages/fde-training/fixtures/eval_queries.jsonl
 
-# 5. Deploy (needs AWS credentials)
+# 4.5 The product itself: the review console, in your browser, no AWS —
+#     the same lambda_handler the deployed console runs (queue is empty
+#     until a reviewer is registered and an agent proposes; see docs/10)
+FDE_GATE_DEV_PRINCIPAL=sme@example.com uv run fde-gate-dev   # -> http://127.0.0.1:8787/ui
+
+# 5. Deploy (needs AWS credentials; pick a model tier first — see below)
 uv run fde-agents-deploy codezip --agents engagement --code-bucket <bucket>
-uv run fde-agents-deploy runtimes --agents engagement --role-arn <arn> --artifact-mode code
+uv run fde-agents-deploy runtimes --agents engagement --role-arn <arn> \
+  --artifact-mode code --model-preset balanced
 
 # 6. Build an image (ARM64 is mandatory for the container path)
 docker buildx build --platform linux/arm64 --build-arg AGENT=engagement \
   -f packages/fde-agents/Dockerfile -t $ECR/fde-engagement:$TAG --push .
 ```
+
+## Choosing models (the budget dial)
+
+Model choice is the dominant variable cost, so it is configuration, not
+code: `FDE_MODEL_PRESET` (or `fde-agents-deploy runtimes --model-preset`)
+selects a tier, and an explicit `FDE_MODEL_ID` always wins over any preset.
+Presets are defined in one place —
+`packages/fde-agents/src/fde_agents/common/config.py` (`MODEL_PRESETS`).
+
+| Preset | Engagement / Workflow | Development | ~Inference cost* |
+|---|---|---|---|
+| `premium` (default) | Claude Sonnet 4.5 | Claude Sonnet 4.5 | ~$350/mo |
+| `balanced` | GLM-4.7 | Claude Sonnet 4.5 | ~$125/mo |
+| `budget` | GLM-4.7 | GLM-4.7 | ~$60/mo |
+
+*Order-of-magnitude, one active engagement (~200 sessions × ~500k tokens),
+Bedrock on-demand list prices, before prompt caching (−75% on cached reads)
+and batch-tier discounts. Re-derive against current pricing for a real budget.
+
+Why cheap models are unusually safe here: every agent write passes the same
+human gates and fail-closed validation regardless of which model proposed
+it — sloppiness lands in a review queue, not in the graph, and each
+reviewer correction becomes SFT training data. Two rules the presets
+encode: small non-agentic models never drive the 21-tool loop (route them
+to triage/formatting only), and a cheaper *judge* is a separate, measured
+decision — `fde-training rival-grader calibrate` must show Cohen's kappa
+≥ 0.78 before any judge's verdicts are trusted as an RL reward.
 
 **Two prerequisites that are not negotiable.** pgvector **≥ 0.8.0**. `db/001` refuses to
 install below it. On older versions, filtered ANN queries silently return incomplete

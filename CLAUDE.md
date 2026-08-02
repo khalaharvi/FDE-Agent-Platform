@@ -61,6 +61,14 @@ PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 - Servers (`fde-mcp`, `fde-embedder`) are env-configured; their `--help` is
   hand-rolled in `__main__.py` / `embedder_worker.py` — keep it working, it
   is the first command a new developer types.
+- Model selection is config, not code: `FDE_MODEL_ID` > `FDE_MODEL_PRESET`
+  (premium/balanced/budget, per-agent map in `fde_agents/common/config.py`)
+  > `DEFAULT_MODEL_ID`. The deploy CLI bakes presets into per-runtime env so
+  the proposal audit trail records the authoring model exactly.
+- `fde-gate-dev` serves the review console locally through the real
+  `lambda_handler` (principal from `FDE_GATE_DEV_PRINCIPAL`; refuses
+  anonymous). It shares the handler's module-level event loop — tests that
+  touch it must drain the DB pool on THAT loop (see test_devserver.py).
 
 ## AWS honesty rule
 

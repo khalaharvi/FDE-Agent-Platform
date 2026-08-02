@@ -3,6 +3,7 @@ name = "fde-mcp"
 version = "0.1.0"
 description = "MCP server exposing the FDE knowledge graph as typed tools"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
   "mcp>=1.27",
   "psycopg[binary,pool]>=3.2",

@@ -48,6 +48,85 @@ from fde_mcp.config import get_settings
 # the MCP server (which never calls a model itself) needs an opinion on.
 DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
+# ---------------------------------------------------------------------
+# Model presets -- `FDE_MODEL_PRESET`, the budget dial.
+#
+# Resolution order for the model an agent process actually calls:
+#   explicit `FDE_MODEL_ID`  >  the preset's entry for this agent  >
+#   `DEFAULT_MODEL_ID`. Decide-for-me with an escape hatch, in that order.
+# The deploy CLI (`fde-agents-deploy runtimes --model-preset ...`) resolves
+# a preset to a concrete per-runtime `FDE_MODEL_ID` at provisioning time,
+# which keeps the audit-trail property above intact: the model id recorded
+# on a proposal is always the model id that authored it.
+#
+# Why these tiers (cost math in README "Choosing models"): every write an
+# agent produces still passes the same human gates and fail-closed
+# validation, which makes this platform unusually tolerant of cheaper
+# models -- sloppiness lands in a review queue, not in the graph. The
+# shipped prompts were tuned against Claude; the open-weight rows follow
+# Bedrock's published `zai.*` naming but have NOT been exercised from this
+# repo (README "Status and honesty") -- verify with
+# `aws bedrock list-foundation-models` before budgeting around them. A
+# cheaper JUDGE for the rival grader is a separate decision with its own
+# measured gate: `fde-training rival-grader calibrate` must show
+# kappa >= 0.78 first (docs/06 section 6).
+# ---------------------------------------------------------------------
+MODEL_PRESETS: dict[str, dict[str, str]] = {
+    # All-Claude. What the shipped prompts were tuned against.
+    "premium": {
+        "engagement": DEFAULT_MODEL_ID,
+        "workflow": DEFAULT_MODEL_ID,
+        "development": DEFAULT_MODEL_ID,
+    },
+    # Tiered-conservative: agentic open-weight model on the two
+    # propose-and-gate agents; Claude stays on codegen (scaffolds ship as
+    # reviewable packages, but generated code quality is worth the spend).
+    "balanced": {
+        "engagement": "zai.glm-4.7",
+        "workflow": "zai.glm-4.7",
+        "development": DEFAULT_MODEL_ID,
+    },
+    # Tiered-aggressive: open-weight everywhere. Cheapest defensible mix --
+    # small models stay OUT of the 21-tool loop entirely; this dial selects
+    # among capable agentic models, it never degrades below them.
+    "budget": {
+        "engagement": "zai.glm-4.7",
+        "workflow": "zai.glm-4.7",
+        "development": "zai.glm-4.7",
+    },
+}
+
+
+def resolve_model_id(agent_key: str) -> str:
+    """The model this agent process should call, per the resolution order
+    documented on `MODEL_PRESETS`. Fails loudly on an unknown preset name
+    or an agent missing from a preset -- a typo here silently selects a
+    differently-priced model otherwise, which is exactly the failure a
+    budget dial must not have.
+    """
+    explicit = get_settings().agent.model_id
+    if explicit:
+        return explicit
+    preset_name = os.environ.get("FDE_MODEL_PRESET")
+    if not preset_name:
+        return DEFAULT_MODEL_ID
+    preset = MODEL_PRESETS.get(preset_name)
+    if preset is None:
+        msg = (
+            f"FDE_MODEL_PRESET={preset_name!r} is not a preset; choose one of "
+            f"{sorted(MODEL_PRESETS)} or set FDE_MODEL_ID explicitly"
+        )
+        raise ValueError(msg)
+    model_id = preset.get(agent_key)
+    if model_id is None:
+        msg = (
+            f"model preset {preset_name!r} has no entry for agent {agent_key!r}; "
+            f"known agents: {sorted(preset)}"
+        )
+        raise ValueError(msg)
+    return model_id
+
+
 # AgentCore's own ceilings this platform is built against (see hitl.py's
 # module docstring): a 15-minute idle-ping reap (made irrelevant during a
 # gate wait because `add_async_task` keeps ping `HEALTHY_BUSY` for its
@@ -141,11 +220,13 @@ class AgentProcessSettings:
     everything `common/runtime.py` needs beyond what `fde_mcp.config`
     already provides.
 
+    The model id is NOT a field here: it is per-agent (presets map each
+    agent to its own model), so `common/runtime.py` resolves it at turn
+    start via `resolve_model_id(agent_key)` -- one call feeding both the
+    trace session's audit column and the `BedrockModel` actually invoked,
+    so the two can never disagree.
+
     Attributes:
-        model_id: `FDE_MODEL_ID`, via `fde_mcp.config`'s
-            `AgentSettings.model_id`, defaulting to `DEFAULT_MODEL_ID` when
-            unset (see that constant's comment for why the default lives
-            here, not there).
         agent_qualifier: `FDE_AGENT_QUALIFIER`. AgentCore Runtime version
             qualifier, recorded on the trace session for audit.
         gate_wait_timeout_s: `FDE_GATE_WAIT_TIMEOUT_S`, default 1200 (20
@@ -165,7 +246,6 @@ class AgentProcessSettings:
             fallback instead.
     """
 
-    model_id: str
     agent_qualifier: str | None
     gate_wait_timeout_s: float
     scaffold_output_dir: str | None
@@ -174,7 +254,6 @@ class AgentProcessSettings:
     @classmethod
     def from_env(cls) -> AgentProcessSettings:
         return cls(
-            model_id=get_settings().agent.model_id or DEFAULT_MODEL_ID,
             agent_qualifier=_env_opt_str("FDE_AGENT_QUALIFIER"),
             gate_wait_timeout_s=_env_float("FDE_GATE_WAIT_TIMEOUT_S", DEFAULT_GATE_WAIT_TIMEOUT_S),
             scaffold_output_dir=_env_opt_str("FDE_SCAFFOLD_OUTPUT_DIR"),

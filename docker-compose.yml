@@ -1,0 +1,30 @@
+# Local database for development -- the exact image CI uses, so "works on
+# my machine" and "works in CI" are the same claim. pgvector >= 0.8.0 is a
+# correctness requirement (below it, filtered ANN queries silently return
+# incomplete results -- see README "prerequisites").
+#
+#   docker compose up -d db
+#   export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
+#   ./db/rebuild.sh fde
+#   export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
+#
+# Port 55432 (not 5432) so this never collides with a Postgres you already
+# run locally. Data persists in the named volume; `docker compose down -v`
+# resets it (cheap -- db/rebuild.sh recreates everything from scratch).
+services:
+  db:
+    image: pgvector/pgvector:0.8.0-pg16
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - fde-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  fde-pgdata:

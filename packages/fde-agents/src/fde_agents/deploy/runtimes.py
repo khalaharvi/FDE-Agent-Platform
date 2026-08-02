@@ -38,6 +38,7 @@ from typing import Any
 
 import boto3
 
+from fde_agents.common.config import DEFAULT_MODEL_ID, MODEL_PRESETS
 from fde_mcp.logging import get_logger
 
 log = get_logger(__name__)
@@ -100,10 +101,23 @@ def _authorizer_configuration(args: argparse.Namespace) -> dict[str, Any] | None
     }
 
 
+def _resolved_model_id(agent_name: str, args: argparse.Namespace) -> str:
+    """Same resolution order as the runtime's own config.resolve_model_id:
+    explicit --model-id / FDE_MODEL_ID > --model-preset per agent >
+    DEFAULT_MODEL_ID. Resolved HERE so every provisioned runtime carries a
+    concrete FDE_MODEL_ID and the audit trail records exactly what runs.
+    """
+    if args.model_id:
+        return str(args.model_id)
+    if args.model_preset:
+        return MODEL_PRESETS[args.model_preset][agent_name]
+    return DEFAULT_MODEL_ID
+
+
 def _environment_variables(agent_name: str, args: argparse.Namespace) -> dict[str, str]:
     env = {
         "FDE_AGENT_NAME": agent_name,
-        "FDE_MODEL_ID": args.model_id,
+        "FDE_MODEL_ID": _resolved_model_id(agent_name, args),
     }
     if args.gateway_url:
         env["FDE_GATEWAY_URL"] = args.gateway_url
@@ -179,7 +193,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--region", dest="aws_region", default=os.environ.get("AWS_REGION"))
     p.add_argument(
         "--model-id",
-        default=os.environ.get("FDE_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
+        default=os.environ.get("FDE_MODEL_ID"),
+        help="explicit Bedrock model id for ALL agents; wins over --model-preset "
+        "(same resolution order the runtime itself uses)",
+    )
+    p.add_argument(
+        "--model-preset",
+        choices=sorted(MODEL_PRESETS),
+        default=os.environ.get("FDE_MODEL_PRESET"),
+        help="per-agent model tier (see common/config.py MODEL_PRESETS and the "
+        "README cost table); resolved to a concrete FDE_MODEL_ID per runtime here, "
+        "at provisioning time",
     )
     p.add_argument("--gateway-url", default=os.environ.get("FDE_GATEWAY_URL"))
     p.add_argument("--db-secret-arn", default=os.environ.get("FDE_DB_SECRET_ARN"))

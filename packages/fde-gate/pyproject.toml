@@ -18,6 +18,7 @@ name = "fde-gate"
 version = "0.1.0"
 description = "Gate service + prod-ops console: review queue, merge, workflow runner (Lambda + API GW)"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
   # db.tool_transaction, config.DatabaseSettings, logging. Same reuse the
   # fde-training member makes of the same three modules.
@@ -33,6 +34,7 @@ dependencies = [
 
 [project.scripts]
 fde-gate-deploy = "fde_gate.deploy.cli:main"
+fde-gate-dev = "fde_gate.devserver:main"
 
 [build-system]
 requires = ["hatchling"]

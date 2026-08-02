@@ -25,6 +25,11 @@ description = "Forward-deployed-engineering agent platform on Amazon Bedrock Age
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
+authors = [{ name = "Krishna Halaharvi" }]
+
+[project.urls]
+Repository = "https://github.com/khalaharvi/fde-platform"
+Changelog = "https://github.com/khalaharvi/fde-platform/blob/main/CHANGELOG.md"
 
 # The root is a workspace container, not an importable package.
 dependencies = []
