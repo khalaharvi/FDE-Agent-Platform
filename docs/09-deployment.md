@@ -179,7 +179,7 @@ The confused-deputy conditions are not optional.
 
 ### Permissions
 
-`agents/deploy/iam/runtime-permissions-policy.json`. Required:
+`packages/fde-agents/src/fde_agents/deploy/iam/runtime-permissions-policy.json`. Required:
 
 - `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:GetAuthorizationToken`
 - `logs:*` scoped to `/aws/bedrock-agentcore/runtimes/*`
@@ -298,7 +298,7 @@ Search once** or the GenAI dashboard has no data.
 Automatic: metrics for every resource type — session count, latency, duration, token
 usage, error rates. Spans and logs are automatic for Payments and Policy resources;
 Memory requires explicit enablement; **your own agent logic requires you to
-instrument it** with the OTEL SDK. `agents/common/tracing.py` does this.
+instrument it** with the OTEL SDK. `packages/fde-agents/src/fde_agents/common/tracing.py` does this.
 
 Model: Session → Trace → Span. `session_id` is the join key to `trn.trace_session`.
 

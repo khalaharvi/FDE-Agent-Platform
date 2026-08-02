@@ -3,7 +3,7 @@
 > *Agent that develops end-to-end workflow agents · Evals · Guardrails · Full tool-calling functionality*
 
 **Runtime name:** `fde_development`
-**Code:** `agents/development/`
+**Code:** `packages/fde-agents/src/fde_agents/development/`
 **Role in the graph:** meta. Consumes published workflows; emits deployable agent packages. Writes no graph facts at all.
 
 ---
@@ -164,7 +164,7 @@ before a human ever opens the package.
 ## 5. Guardrails
 
 > **Naming note.** The table below is the *design intent* for the guard set. The
-> shipped `agents/common/guardrails.py` implements the load-bearing subset under
+> shipped `packages/fde-agents/src/fde_agents/common/guardrails.py` implements the load-bearing subset under
 > its own names -- `no_person_name_in_role_label`, `no_unbound_step` /
 > `no_unbound_steps`, and `citation_required`, aggregated by `check_proposal_item`,
 > `check_workflow`, and `check_turn`. The remaining rows are specified here and

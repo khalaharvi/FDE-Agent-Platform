@@ -204,7 +204,7 @@ When a reviewer edits an item's payload rather than accepting or rejecting it,
 `proposal_item.original_payload` keeps the agent's version and `payload` holds the
 corrected one. That is a paired (wrong, right) example on identical input — a free
 preference pair for DPO, and the single highest-signal training data this platform
-produces. `training/export_sft.py --pairs` exports exactly these.
+produces. `packages/fde-training/src/fde_training/export_sft.py --pairs` exports exactly these.
 
 Design the review UI to make editing as easy as approving. Every edit is worth more
 than ten approvals.
@@ -234,7 +234,7 @@ So a human step must:
 2. **Never block the event loop.** The wait must run on a separate asyncio task or
    thread. If the approval poll blocks, `/ping` stops responding, and the session is
    torn down 15 minutes later with the operator's work in flight.
-   `agents/common/hitl.py` implements this correctly — read it before writing
+   `packages/fde-agents/src/fde_agents/common/hitl.py` implements this correctly — read it before writing
    another one.
 
 3. Complete the task on resolution *or* timeout:

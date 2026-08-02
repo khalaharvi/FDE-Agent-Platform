@@ -78,7 +78,7 @@ human review any other schema change would. Three things follow:
   over a long engagement, invent "process_step" alongside "activity" the
   first time the exact word doesn't feel right. A closed enum makes that a
   `CheckViolation`/`InvalidTextRepresentation` the model sees and self-corrects
-  from (`mcp/server.py`'s error boundary re-raises exactly these verbatim —
+  from (`packages/fde-mcp/src/fde_mcp/server.py`'s error boundary re-raises exactly these verbatim —
   see `docs/05-mcp-surface.md`), not a new de facto type nobody agreed to.
 - **Cross-engagement comparability.** Every engagement's graph speaks the same
   fifteen-and-fifteen vocabulary, so a retriever variant, a training example,
@@ -416,7 +416,7 @@ than `ef_search`, which is a pure runtime knob. Tune the cheap knob first.
 ### 6.3 `ef_search`, the 40–200 band, and the sequential-scan cliff
 
 `kg.tune_session()` (`db/008`) sets three session GUCs and is called once per
-pooled connection by `mcp/db.py`'s `configure` callback:
+pooled connection by `packages/fde-mcp/src/fde_mcp/db.py`'s `configure` callback:
 
 ```sql
 CREATE FUNCTION kg.tune_session(p_ef_search int DEFAULT 100,
@@ -434,7 +434,7 @@ entirely for a sequential scan on filtered queries — this is a **cliff**, not
 a gradual slope: latency observed elsewhere jumping from ~2.5ms to ~365ms at
 the crossover, not a smooth curve you can back off from once you notice.
 `kg.tune_session` refuses out-of-band values outright rather than clamping
-them, and `mcp/db.py` deliberately lets that exception surface at pool-open
+them, and `packages/fde-mcp/src/fde_mcp/db.py` deliberately lets that exception surface at pool-open
 time rather than catching it — a misconfigured deployment should fail loudly
 at startup, not silently serve degraded retrieval for months.
 
@@ -487,7 +487,7 @@ There is no plan warning for this — `EXPLAIN` just shows a `Seq Scan` where
 you expected an `Index Scan`, and correctness is unaffected (you get the
 right answer, slowly). This is exactly why every `kg.ann_*` function lives in
 `db/008_retrieval.sql` and nothing hand-writes an ANN query at a call site:
-one file gets the cast right, once, and `mcp/server.py` never constructs raw
+one file gets the cast right, once, and `packages/fde-mcp/src/fde_mcp/server.py` never constructs raw
 vector SQL.
 
 ### 6.6 Partial indexes per node type as a *true* pre-filter
@@ -634,10 +634,10 @@ Reasoning:
   `search_document`/`search_query` split *can* outperform a symmetric model
   on pure query-vs-document retrieval, but it adds an operational sharp edge:
   get `input_type` backwards on either side and recall quietly drops with no
-  error (`mcp/embeddings.py`'s own docstring flags this explicitly). Titan
+  error (`packages/fde-mcp/src/fde_mcp/embeddings.py`'s own docstring flags this explicitly). Titan
   has no such failure mode to get wrong, at the cost of not exploiting the
   asymmetry if it would have helped.
-- **`mcp/embeddings.py` already threads `input_type` through unconditionally**
+- **`packages/fde-mcp/src/fde_mcp/embeddings.py` already threads `input_type` through unconditionally**
   (`kg_search` calls `embed(..., input_type="search_query")`;
   `embedder_worker.py` calls `embed(..., input_type="search_document")`) —
   Titan silently ignores it. This means switching `FDE_EMBED_MODEL_ID` to a
@@ -659,7 +659,7 @@ Reasoning:
 
 1. Set `FDE_EMBED_MODEL_ID` (and `FDE_EMBED_DIMENSIONS` if it changes — it
    cannot exceed 1024 without a `kg.embedding` domain migration) for
-   `mcp/server.py` and every `embedder_worker.py` process.
+   `packages/fde-mcp/src/fde_mcp/server.py` and every `embedder_worker.py` process.
 2. Backfill: `INSERT INTO kg.embed_queue (engagement_id, subject_kind,
    subject_id) SELECT engagement_id, 'node', node_id FROM kg.node_current`
    (and the edge equivalent) for every row you want re-embedded under the new
@@ -683,7 +683,7 @@ Reasoning:
    the edge equivalent). `ALTER TYPE ... ADD VALUE` cannot run inside the
    same transaction as code that uses the new value, so this is its own
    migration file, applied and committed before anything references it.
-2. Update the Engagement Agent's prompt (`agents/engagement/prompt.py`) —
+2. Update the Engagement Agent's prompt (`packages/fde-agents/src/fde_agents/engagement/prompt.py`) —
    the ontology is stated in full, inline, in the system prompt, not by
    reference to the schema.
 3. Decide which HNSW partial index (if any) the new type should get its own
@@ -719,6 +719,6 @@ memory budget if run concurrently with others.
 | `kg.embed_queue` backlog depth & age | A stuck embedder means new facts are invisible to `kg_search` even though they're merged | `SELECT count(*), min(enqueued_at) FROM kg.embed_queue WHERE completed_at IS NULL` |
 | `kg.embed_queue.attempts` near `MAX_ATTEMPTS` | A verbalisation or Bedrock error that keeps failing the same row | `WHERE attempts >= 4` |
 | Index churn since last REINDEX | The 30% line in Section 6.8 | closed-out row count vs index's row count at last build |
-| `ef_search`-band violations | Someone bypassed `kg.tune_session`'s guard, or a config drifted | should be structurally impossible given `mcp/db.py`'s pool `configure` callback — alert if it ever happens |
+| `ef_search`-band violations | Someone bypassed `kg.tune_session`'s guard, or a config drifted | should be structurally impossible given `packages/fde-mcp/src/fde_mcp/db.py`'s pool `configure` callback — alert if it ever happens |
 | p50/p95 `kg_search` latency vs the `ef_search=200` cliff | Approaching the sequential-scan cliff before it's hit in production | `trn.trace_step.retrieval->>'latency_ms'` for `tool_name='kg_search'` |
 | `evidence_strength` distribution near 0.65 | How often gate policy 6 is firing, and whether the SME quorum burden is calibrated correctly | `kg.evidence` joined against `hitl.proposal_gate` |

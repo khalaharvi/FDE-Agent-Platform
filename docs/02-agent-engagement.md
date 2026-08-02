@@ -3,7 +3,7 @@
 > *Assistant for on-site deployment · Workflow mapping · Bottleneck detection · AI opportunity scoring*
 
 **Runtime name:** `fde_engagement`
-**Code:** `agents/engagement/`
+**Code:** `packages/fde-agents/src/fde_agents/engagement/`
 **Role in the graph:** the only producer of new graph facts. Produces *proposals*, never writes.
 
 ---
@@ -105,7 +105,7 @@ reviewed and never reaches a workflow) is silent and corrosive.
 
 ## 4. System prompt — design notes
 
-Full text: `agents/engagement/prompt.py`. The parts that carry weight:
+Full text: `packages/fde-agents/src/fde_agents/engagement/prompt.py`. The parts that carry weight:
 
 **The closed ontology is stated in full, inline.** All 15 node types and 15 edge
 types with one-line definitions. Not a reference to a schema file — the model needs
@@ -145,7 +145,7 @@ evidence strength below 0.65.
 
 **PII boundary.** The graph models **roles, not people**. `role` nodes carry job
 titles; `kg.node`'s CHECK constraint requires `attributes->>'is_role_title'`, and
-`agents/common/guardrails.py` runs a name heuristic over role labels. The prompt
+`packages/fde-agents/src/fde_agents/common/guardrails.py` runs a name heuristic over role labels. The prompt
 states this as a rule about the business, not a compliance footnote: *"'Deal Desk
 Analyst' is a role. 'Priya, who does deal desk' is a person. Model the former."*
 
@@ -174,7 +174,7 @@ exactly the things it should not.
 composite = sum(score_i * weight_i)          # 1.0 .. 5.0
 ```
 
-Weights live in `OpportunityScore._WEIGHTS` (`agents/common/models.py`) and sum to
+Weights live in `OpportunityScore._WEIGHTS` (`packages/fde-agents/src/fde_agents/common/models.py`) and sum to
 1.0. The arithmetic is deterministic and recomputable by a reviewer from the six
 stored dimension scores -- only the 1-5 judgements are the model's.
 
@@ -211,9 +211,9 @@ sentence is usually the most valuable output of the whole engagement.
 
 ## 6. Guardrails
 
-`agents/common/guardrails.py`. Each returns a structured violation; none raise.
+`packages/fde-agents/src/fde_agents/common/guardrails.py`. Each returns a structured violation; none raise.
 > **Naming note.** The table below is the *design intent* for the guard set. The
-> shipped `agents/common/guardrails.py` implements the load-bearing subset under
+> shipped `packages/fde-agents/src/fde_agents/common/guardrails.py` implements the load-bearing subset under
 > its own names -- `no_person_name_in_role_label`, `no_unbound_step` /
 > `no_unbound_steps`, and `citation_required`, aggregated by `check_proposal_item`,
 > `check_workflow`, and `check_turn`. The remaining rows are specified here and

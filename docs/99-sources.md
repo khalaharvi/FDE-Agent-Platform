@@ -76,10 +76,10 @@ guard (`>= 0.8.0`) is satisfied with headroom.
 | Titan Text Embeddings v2 model card (dimensions 256/512/1024, `normalize` parameter, 8K token context) | https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-titan-text-embeddings-v2.html |
 | Cohere Embed v4 on Bedrock model parameters (dimensions 256/512/1024/1536, `input_type` asymmetric parameter, output formats) | https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-embed-v4.html |
 
-`mcp/embeddings.py`'s request/response shapes for both families (Titan's
+`packages/fde-mcp/src/fde_mcp/embeddings.py`'s request/response shapes for both families (Titan's
 single-item `invoke_model` body, Cohere's up-to-96-item batch body with
 `input_type`/`embedding_types`/`output_dimension`) are written directly
-against these model-card documented shapes. As `mcp/README.md` states
+against these model-card documented shapes. As `packages/fde-mcp/README.md` states
 plainly, this code path has **not** been exercised against a live Bedrock
 endpoint in this environment (no AWS credentials/network egress to
 `bedrock-runtime` available here) — see Section 6.
@@ -223,7 +223,7 @@ edge_current`, `sor.observation`, etc.), which a migration owner that
 created those objects has automatically, but a `SECURITY DEFINER` owner
 installed after the fact would need granted explicitly. Two related,
 already-noted-in-repo but worth restating findings surfaced during the same
-investigation: `mcp/README.md`'s "Known limitations" section, which
+investigation: `packages/fde-mcp/README.md`'s "Known limitations" section, which
 describes this matview-ownership problem as still unresolved "for ANY role,
 including fde_ingest," is **stale** relative to the `SECURITY DEFINER` fix
 now present in the shipped `007_drift.sql` — verified live, `fde_ingest`
@@ -248,11 +248,11 @@ now fixed. Recorded because the *class* of error is instructive.
 |---|---|---|
 | `fde_agent` lacked `EXECUTE` on `sor.run_all_detectors` | `drift_scan` failed silently inside the tool's generic error boundary -- the autonomous monitoring loop was monitoring nothing | granted in `db/011`; verified with `has_function_privilege` |
 | Reward-weight table in `docs/06-training.md` | 5 of 8 weights disagreed with `DEFAULT_WEIGHTS`, including which term dominates | table regenerated from the code; `r_grounded` 0.30 > `r_outcome` 0.25 |
-| Opportunity rubric in `docs/02-agent-engagement.md` | weights, band names, and override logic all disagreed with `OpportunityScore` | rewritten from `agents/common/models.py` |
+| Opportunity rubric in `docs/02-agent-engagement.md` | weights, band names, and override logic all disagreed with `OpportunityScore` | rewritten from `packages/fde-agents/src/fde_agents/common/models.py` |
 | Gate-policy numbering | `db/010`'s comments numbered 1-7 for 8 rows (rule 3 is two INSERTs), so doc references were off by one | comments renumbered to match `policy_id`; doc references corrected |
 | "13 migrations" in README | there are 12 | corrected |
 | Guardrail tables in `docs/02/03/04` | named 19 guards; 4 exist under those names | tables kept as design intent, with an explicit note naming what is actually shipped |
-| `mcp/README.md` "Known limitations" | claimed the matview-ownership issue was unfixed | superseded by `SECURITY DEFINER` on `sor.run_all_detectors`; see §7 |
+| `packages/fde-mcp/README.md` "Known limitations" | claimed the matview-ownership issue was unfixed | superseded by `SECURITY DEFINER` on `sor.run_all_detectors`; see §7 |
 
 ### Sources for numbers cited in `docs/09-deployment.md`
 

@@ -20,7 +20,7 @@ doing the work. Nobody has to run a labelling project.
 
 The edited case is the valuable one. It is a (rejected, chosen) pair on identical
 input, which is exactly the shape DPO wants, and it comes for free from a reviewer
-doing their job properly. `training/export_sft.py --pairs` emits it.
+doing their job properly. `packages/fde-training/src/fde_training/export_sft.py --pairs` emits it.
 
 The last row matters as much as the others. If you train on rubber stamps you are
 training on noise that is *correlated with reviewer fatigue*, which is worse than
@@ -56,7 +56,7 @@ implements it structurally via delta-tokenization: tokenize the running conversa
 with `add_generation_prompt=True` and `False`, diff the token ids, and only the
 delta gets a loss mask of 1.
 
-`training/export_sft.py` **validates** the mask and fails loudly rather than
+`packages/fde-training/src/fde_training/export_sft.py` **validates** the mask and fails loudly rather than
 warning. A silent mask bug costs you a full training run and you will not find out
 until eval.
 
@@ -113,16 +113,21 @@ converters are where masking bugs live.
 TRL: `SFTConfig(assistant_only_loss=True)` plus a chat template annotated with
 `{% generation %}...{% endgeneration %}` around assistant spans. TRL auto-patches
 templates for a handful of known models; for anything else you supply it —
-`training/chat_template.jinja` is the one shipped here.
+`packages/fde-training/src/fde_training/chat_template.jinja` is the one shipped here.
 
 `DataCollatorForCompletionOnlyLM` is the older string-match mechanism. It breaks on
 multi-turn tool traces, where multiple assistant turns interleave with tool turns
 and there is no single response template to match on. Do not use it here.
 
-`training/sft_config.py` ships `verify_masking(dataset, tokenizer)`, which decodes a
-sample and asserts every token with `label != -100` falls inside an assistant span.
-Run it. Look at the output. It prints the decoded example with masked tokens visibly
-marked, and thirty seconds of reading it is worth more than any unit test.
+`packages/fde-training/src/fde_training/sft_config.py` ships `verify_masking(dataset, tokenizer)`, which
+verifies in two phases: first at message granularity (every trainable message's
+rendered span is marked `{% generation %}`), then at token granularity — it
+tokenizes the rendered text with `return_offsets_mapping=True` (fast tokenizer
+required) and fails if any token inside a generation span belongs to a message
+the export marked non-trainable. Tokens straddling a span boundary are counted
+and reported, not fatal. Run it. Look at the output. It prints the decoded
+example with masked tokens visibly marked, and thirty seconds of reading it is
+worth more than any unit test.
 
 ### Packing must be off
 
@@ -133,7 +138,8 @@ and it is not negotiable.
 
 ### LoRA vs full fine-tune
 
-LoRA (r=32, alpha=64, targeting attention + MLP projections, lr 1e-4) is right for
+LoRA (r=16, alpha=32 — the shipped defaults in `sft_config.py`, targeting
+attention + MLP projections, lr 1e-4) is right for
 teaching tool-call *syntax and format* on top of a capable base. Cheap, fast to
 iterate, and composes well with vLLM/SGLang colocated inference during any
 subsequent RL.
@@ -149,11 +155,15 @@ confirm before you build a release process around it.)
 
 ### Trace generation when you do not have 350 traces
 
-`training/generate_traces.py` does rejection sampling (STaR-style): sample N
+`packages/fde-training/src/fde_training/generate_traces.py` does rejection sampling (STaR-style): sample N
 trajectories from a strong teacher against the **live environment**, keep only those
 that (a) reach the gold answer, (b) have every tool call schema-valid, and (c) are
-fully grounded. In this repo's fixture run it kept 4 of 16 — a ~25% survival rate,
-which is normal and is the point.
+fully grounded. Survival rates around 25% are normal and are the point — most
+teacher trajectories fail at least one of the three checks. (The exact count
+varies run to run: ANN retrieval under `relaxed_order` is not tie-stable across
+environments, so this document deliberately does not pin one. The seeded
+fixture in `packages/fde-training/fixtures/eval_queries.jsonl` is asserted in
+tests to produce at least one accept and at least one reject.)
 
 ---
 
@@ -192,7 +202,7 @@ reward possible.
 
 ### Reward composition
 
-`training/grpo_rewards.py`. Weights are a starting point, not a law.
+`packages/fde-training/src/fde_training/rewards/`. Weights are a starting point, not a law.
 
 | Term | Weight | What it does |
 |---|---|---|
@@ -205,7 +215,7 @@ reward possible.
 | `r_citation` | 0.05 | provenance cited in the required format |
 | `r_cost` | 0.05 | tokens and DB time, weighted low so it never dominates |
 
-Source of truth is `DEFAULT_WEIGHTS` in `training/grpo_rewards.py`; the weights sum
+Source of truth is `DEFAULT_WEIGHTS` in `packages/fde-training/src/fde_training/rewards/`; the weights sum
 to 1.0 and this table is checked against it in CI.
 
 Design notes worth defending:
@@ -255,7 +265,7 @@ retreat rather than a failure.
 
 ### The environment must be the production environment
 
-`training/rollout_env.py` runs the **same** `kg.hybrid_search` against the **same**
+`packages/fde-training/src/fde_training/rollout_env.py` runs the **same** `kg.hybrid_search` against the **same**
 Postgres, through a read-only `fde_rl_rollout` role, pinning a commit at `reset()`
 so an episode is reproducible.
 
@@ -346,7 +356,7 @@ compound across thousands of gradient steps.
 ### Leaderboard
 
 ```
-$ python -m training.rival_grader leaderboard
+$ uv run fde-training rival-grader leaderboard
 name                strength   elo    wins  losses  ties
 rrf-k60-2hop           1.847  1606      64      18     4
 high-recall-ef200      1.102  1517      41      35     6
@@ -388,7 +398,7 @@ Supported base models today:
 | `openai.gpt-oss-20b` | us-west-2 |
 | `qwen.qwen3-32b` | us-west-2 |
 
-`training/bedrock_rft.py` builds the job; `training/lambda_grader.py` is the actual
+`packages/fde-training/src/fde_training/bedrock_rft.py` builds the job; `packages/fde-training/src/fde_training/lambda_grader.py` is the actual
 Lambda handler implementing the composite reward.
 
 **The constraint that decides it:** three fixed base models. CMI (bring-your-own

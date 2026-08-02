@@ -1,9 +1,9 @@
 # The MCP Surface
 
-`mcp/server.py` is the only way any agent touches the database. This
+`packages/fde-mcp/src/fde_mcp/server.py` is the only way any agent touches the database. This
 document is the tool contract, the deployment shapes, and the security model
 around it. Everything below is read directly from the shipped code
-(`mcp/server.py`, `mcp/db.py`, `mcp/embeddings.py`, `mcp/README.md`) — tool
+(`packages/fde-mcp/src/fde_mcp/server.py`, `packages/fde-mcp/src/fde_mcp/db.py`, `packages/fde-mcp/src/fde_mcp/embeddings.py`, `packages/fde-mcp/README.md`) — tool
 names, argument types, and defaults are exact, not paraphrased.
 
 ---
@@ -35,7 +35,7 @@ actually hold, rather than being an aspiration in a comment.
 
 ## 2. Tool reference
 
-18 tools total: 9 read, 3 proposal, 3 drift, 3 workflow (`mcp/README.md`).
+18 tools total: 9 read, 3 proposal, 3 drift, 3 workflow (`packages/fde-mcp/README.md`).
 
 ### 2.1 Read tools
 
@@ -253,7 +253,7 @@ about because there are two distinct issues layered here:*
    pre-PG17). `sor.run_all_detectors` is `SECURITY DEFINER` specifically to
    close this (Section 8) — verified live: calling it as `fde_ingest` (which
    does have `EXECUTE`) against the deployed schema (pgvector 0.8.2 / PG
-   16.14) succeeds and returns a real per-detector count JSON. **`mcp/
+   16.14) succeeds and returns a real per-detector count JSON. **`packages/fde-mcp/src/fde_mcp/
    README.md`'s "Known limitations" section, which describes this as broken
    "for ANY role, including fde_ingest," is stale** — it predates (or was
    never updated after) the `SECURITY DEFINER` fix now present in
@@ -335,7 +335,7 @@ which is a distinct AgentCore-level session concept — see
 reference).
 
 **When this is right:** a single dedicated agent, local development, and (per
-`mcp/README.md`) this platform's own test suite. Simpler operationally — no
+`packages/fde-mcp/README.md`) this platform's own test suite. Simpler operationally — no
 Gateway to provision — at the cost of one deployed copy of the MCP server per
 agent runtime rather than one shared copy.
 
@@ -347,7 +347,7 @@ client, or for an in-process Gateway target that spawns it as a subprocess.
 
 ## 4. Deployment shape B: behind AgentCore Gateway
 
-`agents/deploy/create_gateway.py` provisions a Gateway with `protocolType=
+`packages/fde-agents/src/fde_agents/deploy/gateway.py` provisions a Gateway with `protocolType=
 'MCP'` and:
 
 ```python
@@ -443,7 +443,7 @@ substrate ends up quietly empty.
 
 `server.py` does **not** create the `trn.trace_session` row — that's expected
 to happen before the first tool call, from whatever orchestrates the agent
-run (`agents/common/tracing.py`'s `start_session`, which pins `base_commit_id`
+run (`packages/fde-agents/src/fde_agents/common/tracing.py`'s `start_session`, which pins `base_commit_id`
 from `kg_head_commit` at that moment).
 
 The `retrieval` JSON populated per tool: `kg_search` reports `rrf_top` (the
@@ -457,7 +457,7 @@ function read to compute retrieval-quality signals per turn.
 
 ## 6. Connection pooling and `kg.tune_session` on checkout
 
-`mcp/db.py` calls `kg.tune_session(KG_EF_SEARCH, KG_ITERATIVE_SCAN,
+`packages/fde-mcp/src/fde_mcp/db.py` calls `kg.tune_session(KG_EF_SEARCH, KG_ITERATIVE_SCAN,
 KG_MAX_SCAN_TUPLES)` once per **new physical connection**, via the
 `AsyncConnectionPool`'s `configure` callback — not once per tool call. This
 is a correctness requirement, not a performance tweak, for exactly the reason

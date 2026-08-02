@@ -4,7 +4,7 @@
 > *Plus: authors faithful workflows from the current graph, and autonomously monitors drift against the system of record.*
 
 **Runtime name:** `fde_workflow`
-**Code:** `agents/workflow/`
+**Code:** `packages/fde-agents/src/fde_agents/workflow/`
 **Role in the graph:** reader and author. Pins a commit, authors against it, watches reality diverge from it.
 
 ---
@@ -235,7 +235,7 @@ the *reasoning* from prior triages.
 ## 6. Guardrails
 
 > **Naming note.** The table below is the *design intent* for the guard set. The
-> shipped `agents/common/guardrails.py` implements the load-bearing subset under
+> shipped `packages/fde-agents/src/fde_agents/common/guardrails.py` implements the load-bearing subset under
 > its own names -- `no_person_name_in_role_label`, `no_unbound_step` /
 > `no_unbound_steps`, and `citation_required`, aggregated by `check_proposal_item`,
 > `check_workflow`, and `check_turn`. The remaining rows are specified here and
