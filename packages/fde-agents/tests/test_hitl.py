@@ -15,7 +15,7 @@ import asyncio
 from typing import Any
 
 import pytest
-from conftest import FakeAsyncTaskApp, FakeMcpClient, make_tool_result
+from agent_fakes import FakeAsyncTaskApp, FakeMcpClient, make_tool_result
 
 from fde_agents.common import hitl
 

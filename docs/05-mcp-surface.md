@@ -35,7 +35,7 @@ actually hold, rather than being an aspiration in a comment.
 
 ## 2. Tool reference
 
-18 tools total: 9 read, 3 proposal, 3 drift, 3 workflow (`packages/fde-mcp/README.md`).
+21 tools total: 9 read, 3 proposal, 3 drift, 3 workflow, 3 evidence (`packages/fde-mcp/README.md`).
 
 ### 2.1 Read tools
 
@@ -375,7 +375,7 @@ built-in `x_amz_bedrock_agentcore_search` tool) narrow an agent's visible
 tool list by semantic relevance to the current task, rather than requiring
 every tool name to be hard-coded into the agent's own tool list. This is
 useful headroom for when the platform's tool surface grows past what fits
-comfortably in one system prompt's tool section — at 18 tools today, semantic
+comfortably in one system prompt's tool section — at 21 tools today, semantic
 search is not load-bearing, but the Gateway is provisioned with it on from
 the start so growth doesn't require a re-provision.
 
@@ -407,7 +407,7 @@ runtimes from day one).
   no credentials.
 - **Relevant limits** (see `docs/99-sources.md` for sourcing): 100 targets
   per gateway, 1000 tools per target, 6MB tool payload, 15-minute gateway
-  timeout. At one `mcpServer` target (18 tools) plus one `lambda` target (1
+  timeout. At one `mcpServer` target (21 tools) plus one `lambda` target (1
   tool today), this platform is nowhere near any of these ceilings; they
   matter if the batch-Lambda escape hatch grows into many narrow tools rather
   than staying a small, deliberately underused hatch.

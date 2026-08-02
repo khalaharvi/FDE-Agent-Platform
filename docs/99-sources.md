@@ -254,6 +254,23 @@ now fixed. Recorded because the *class* of error is instructive.
 | Guardrail tables in `docs/02/03/04` | named 19 guards; 4 exist under those names | tables kept as design intent, with an explicit note naming what is actually shipped |
 | `packages/fde-mcp/README.md` "Known limitations" | claimed the matview-ownership issue was unfixed | superseded by `SECURITY DEFINER` on `sor.run_all_detectors`; see §7 |
 
+A second pass (the completion build that added migrations 013–015, `fde-gate`,
+and `fde-sor`) found and fixed the following. Same table, same reason: the
+class of error is instructive.
+
+| Finding | Was | Now |
+|---|---|---|
+| `hitl.merge_proposal` stale-pin housekeeping | raw INSERT into `sor.drift_signal` with no `ON CONFLICT`; the SECOND merge in any engagement with a published stale-pinned workflow aborted on `drift_signal_dedup_uq` — reproduced against migrations 001–012 alone | `db/005` uses `sor.record_drift`'s upsert semantics; smoke TEST 18 exercises a second merge |
+| `fde_gate_service` trn access | `db/011` granted trn *table* privileges but `db/010` never granted `USAGE ON SCHEMA trn` — the training-label write failed at runtime for the one role meant to write it | `GRANT USAGE ON SCHEMA trn` in `db/013`, with a regression test |
+| Workflow publishing | no role held `UPDATE wf.workflow` — publishing was impossible for every role, by accident rather than design | `wf.publish_workflow` (`SECURITY DEFINER`, calls `wf.assert_faithful`), granted to `fde_gate_service` alone; two new CI denials pin the boundary |
+| Rival-grader embeddings | `default_embed_fn()` silently returned the deterministic FAKE embedder for tournaments and RFT datasets — leaderboards ranked retrieval over noise | factory deleted; explicit `--embed {bedrock,fake}`; the fake is never a silent default |
+| Empty-transcript reward | an episode that did nothing scored 0.85 through `compose_rewards` (every term vacuously satisfied) — in RL, payment for stopping | empty transcripts score 0.0 and bypass the composite |
+| `usable_as_rl_reward` band | code accepted `0.60 ≤ κ ≤ 0.82`, green-lighting the band `docs/06` explicitly calls unusable as an RL reward | `κ ≥ 0.78` and position-bias < 0.15, matching the docs; `test_docs_sync.py` pins both directions |
+| Commit pinning in rollouts | `rollout_env` docstring claimed `dependency_closure`/`impact_radius` honoured `p_as_of`; the SQL wrappers were 3-arg and read `now()` | 4-arg overloads in `db/015`; rollout calls them with the pinned `sealed_at`; smoke TEST 25 |
+| `fde-training --help` | crashed with `TypeError` — unescaped `%` (`{% generation %}`) in an argparse help string | escaped; present since the flag was added |
+| `test_drift_tools.py` scan test | accepted both a success and an error result — could not fail, hiding exactly the silent-monitoring regression it existed to catch | asserts success unconditionally against the shipped schema |
+| Deploy-surface naming | CLI built image `fde-{agent}-agent`; CI/Dockerfile/README build `fde-{agent}`; README's quick-start flags didn't parse; stdio defaults pointed at a pre-workspace `/app/mcp/server.py` | all reconciled to the built names and real flags; `codezip` packaging now exists |
+
 ### Sources for numbers cited in `docs/09-deployment.md`
 
 Added here because the exhaustive-sourcing claim above requires it:

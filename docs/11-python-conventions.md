@@ -26,7 +26,7 @@ so a `pyproject.toml` change cannot land without a regenerated lockfile.
 
 ---
 
-## 2. Why three packages
+## 2. Why five packages
 
 The split is along **deployment boundaries**, not along what feels related.
 
@@ -35,6 +35,8 @@ The split is along **deployment boundaries**, not along what feels related.
 | `fde-mcp` | its own service (ECS/Fargate) or in-runtime | holds the DB credentials; smallest and most security-sensitive dependency set |
 | `fde-agents` | three AgentCore runtimes | depends on `fde-mcp` for the tracing path, not for tools (those arrive over MCP) |
 | `fde-training` | offline, SageMaker | heavy ML stack that must **never** reach an agent image |
+| `fde-gate` | one Lambda behind API Gateway | the human surface; runs as `fde_gate_service`/`fde_prodops`, the only roles that can merge and run — those credentials never share an artifact with agent code |
+| `fde-sor` | Lambdas (EventBridge/SQS) or EKS CronJobs | SoR adapters run as `fde_ingest` with per-customer source credentials; separate blast radius and lifecycle from everything else |
 
 That last row is the one that earns the structure. `torch`, `trl`, `peft`,
 `transformers` live in `fde-training`'s optional `train` extra. `fde-agents`
@@ -151,7 +153,7 @@ policy for a world it will never see.
 **Tools are split by concern**, not held in one file:
 `tools/{graph,proposals,drift,workflow}.py`, with `tools/_base.py` holding the
 error boundary, JSON coercion, and trace emission. `server.py` builds the
-FastMCP instance and calls `register_all()`. The 18 tools and their docstrings
+FastMCP instance and calls `register_all()`. The 21 tools and their docstrings
 are unchanged from before the split — **the docstrings are the model-facing
 tool descriptions**, so they are a tuned deliverable, not commentary. Edit them
 the way you would edit a prompt.

@@ -20,19 +20,18 @@ async def test_drift_list_empty_is_fine(seed: dict[str, Any]) -> None:
     assert result["signals"] == []
 
 
-async def test_drift_scan_fails_gracefully_not_loudly(seed: dict[str, Any]) -> None:
-    """sor.run_all_detectors() REFRESHes a materialized view CONCURRENTLY,
-    which requires matview ownership Postgres 16 has no way to grant --
-    verified directly against fde_ingest, the intended role, not just
-    fde_agent. drift_scan must not crash the server for this; it returns a
-    structured error instead (see docs/08-drift-monitor.md's "Known
-    limitations" section).
+async def test_drift_scan_succeeds_as_fde_agent(seed: dict[str, Any]) -> None:
+    """sor.run_all_detectors() is SECURITY DEFINER precisely so the matview
+    REFRESH CONCURRENTLY ownership requirement is satisfied regardless of the
+    calling role, and db/011 grants fde_agent EXECUTE on it (docs/99-sources.md
+    §7/§8 record both fixes). Against the shipped schema this call therefore
+    MUST succeed -- an earlier version of this test accepted an error branch
+    too, which made it impossible to fail and hid exactly the silent-monitoring
+    regression it exists to catch.
     """
     result = await drift.drift_scan(engagement_id=seed["engagement_id"])
-    if "error" in result:
-        assert "hint" in result
-    else:
-        assert "summary" in result  # in case a future environment grants ownership
+    assert "error" not in result, result
+    assert "summary" in result
 
 
 async def test_drift_triage_rejects_resolved_state(seed: dict[str, Any]) -> None:

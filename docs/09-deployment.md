@@ -275,14 +275,15 @@ Covered in depth in `docs/07-hitl-gates.md` §6. The deployment-relevant summary
 
 ## 7. Scheduled work
 
-| Job | Cadence | Mechanism |
-|---|---|---|
-| Drift scan | 6 h | EventBridge → Lambda → `invoke_agent_runtime(fde_workflow, monitor_drift)` |
-| Embedder worker | continuous | ECS service draining `kg.embed_queue` |
-| SoR adapter poll | per `sor.adapter.poll_cron` | EventBridge → Lambda |
-| Proposal expiry sweep | 1 h | Lambda → mark expired, notify |
-| Judge calibration | weekly | SageMaker Processing → `trn.judge_kappa` |
-| `REINDEX` check | monthly | Lambda → alert if churn > 30% |
+| Job | Cadence | Mechanism | Provisioned by |
+|---|---|---|---|
+| Drift scan | 6 h | EventBridge → `fde-sor-drift-scan` Lambda → `sor.run_all_detectors` per active engagement (agent-free; the Workflow Agent's `monitor_drift` triages on top) | `fde-sor deploy lambdas` (or `infra/k8s/cronjob-drift-scan.yaml`) |
+| Embedder worker | continuous | service draining `kg.embed_queue` (`fde-embedder` console script; runs wherever the MCP service runs) | container per `packages/fde-mcp/Dockerfile` |
+| SoR adapter poll | per `sor.adapter.poll_cron` | EventBridge Scheduler → `fde-sor-poll` Lambda, one schedule per adapter | `fde-sor deploy sync-schedules` (or `infra/k8s/cronjob-poll.yaml`) |
+| Proposal expiry sweep | 1 h | EventBridge → gate-service Lambda (`fde.gate.expiry` → `hitl.expire_proposals()`) | `fde-gate-deploy schedule` |
+| Runner tick | 1 min | EventBridge → gate-service Lambda (`fde.gate.tick` → timeout sweep + advance idle runs) | `fde-gate-deploy schedule` |
+| Judge calibration | weekly | SageMaker Processing → `trn.judge_kappa` | not provisioned here (operator-run: `fde-training rival-grader calibrate`) |
+| `REINDEX` check | monthly | Lambda → alert if churn > 30% | not provisioned here |
 
 Six hours for drift is a starting point. Tune from `sor.drift_signal` arrival rate:
 if consecutive scans mostly produce `occurrences` increments rather than new
@@ -348,26 +349,27 @@ answer a 2-node question costs real money at volume.
 
 ## 10. CI/CD
 
+The authoritative pipeline is `.github/workflows/ci.yml`; the sketch below
+names its actual jobs:
+
 ```yaml
-on: [pull_request]
+on: [pull_request, push (main), workflow_dispatch]
 jobs:
-  db:
-    # postgres:16 service + pgvector 0.8.2 built with OPTFLAGS=""
-    steps:
-      - run: ./db/rebuild.sh fde_ci        # migrations + 16 smoke tests
-  code:
-    steps:
-      - run: python -m pytest mcp/test_server.py -q
-      - run: python -m pytest training/test_grpo_rewards.py -q
-      - run: python -m py_compile $(git ls-files '*.py')
-  agents:
-    steps:
-      - run: docker buildx build --platform linux/arm64 agents/engagement
-      # ... workflow, development
-  deploy:            # main only, manual approval
-    steps:
-      - run: python agents/deploy/create_runtimes.py --tag ${{ github.sha }}
-      - run: python -m pytest tests/smoke_deployed.py
+  static:       # ruff check + format, mypy --strict on the four production
+                # packages (fde-mcp, fde-agents, fde-gate, fde-sor), uv lock --check
+  database:     # pgvector/pgvector:0.8.0-pg16 service; ./db/rebuild.sh fde
+                # (15 migrations + 25 smoke tests), then the EIGHT privilege
+                # denials asserted (agents cannot write/merge/publish/label)
+  tests:        # same DB image; uv run pytest packages --cov
+  train-tests:  # uv sync --extra train --frozen; trainer-config, token-level
+                # masking, and docs<->code sync tests (own job: the extra
+                # reshapes the venv)
+  images:       # docker buildx, linux/arm64, five images:
+                # fde-mcp, fde-{engagement,workflow,development}, fde-sor
+  deploy:       # main/dispatch only; environment: production (required
+                # reviewers); skips cleanly when AWS secrets are absent.
+                # codezip x3 -> runtimes --update -> deploy-grader --update
+                # -> pytest tests/smoke_deployed.py (live probes)
 ```
 
 **Build pgvector with `OPTFLAGS=""`.** The default `-march=native` produces a binary

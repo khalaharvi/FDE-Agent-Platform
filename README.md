@@ -28,22 +28,27 @@ thing improve rather than just run.
 
 ```
 fde-platform/
-├── pyproject.toml       uv workspace root: 3 members, ruff + mypy config
+├── pyproject.toml       uv workspace root: 5 members, ruff + mypy config
 ├── uv.lock              committed; every build is --frozen
-├── docs/                12 documents — the blueprints. START HERE.
-├── db/                  12 migrations + a 16-test smoke suite
+├── docs/                13 documents — the blueprints. START HERE.
+├── db/                  15 migrations + a 25-test smoke suite
 ├── packages/
-│   ├── fde-mcp/         MCP server: config, db, embeddings, tools/{graph,proposals,drift,workflow}
-│   ├── fde-agents/      3 AgentCore runtimes over one shared common/runtime.py, + deploy CLI
-│   └── fde-training/    SFT export, rewards/ package, rollout env, rival graders
+│   ├── fde-mcp/         MCP server: 21 tools (graph, proposals, drift, workflow, evidence), embedder worker
+│   ├── fde-agents/      3 AgentCore runtimes over one shared common/runtime.py, + deploy CLI (codezip/runtimes/gateway/memory)
+│   ├── fde-training/    SFT export + trainers, rewards/ package, rollout env, rival graders, RFT path
+│   ├── fde-gate/        gate service Lambda: review console, merge, workflow publish + runner
+│   └── fde-sor/         SoR adapters (rest_poll/event_stream/db_cdc/replay), drift-scan, backfill
+├── infra/k8s/           EKS manifests for the fde-sor jobs (kagent-compatible)
 ├── diagrams/            6 self-contained HTML diagrams, light + dark
-└── .github/workflows/   CI: static → database → tests → ARM64 image builds
+└── .github/workflows/   CI: static → database → tests → train-tests → ARM64 images → gated deploy
 ```
 
-**Gates, all green:** `ruff check` + `ruff format --check` across 78 files ·
-`mypy --strict` on `fde-mcp` and `fde-agents` (39 source files, 0 issues) ·
-`uv lock --check` · 16 SQL smoke tests on a clean rebuild · **190 Python tests** ·
-six database invariant attempts, all correctly denied.
+**Gates, all green:** `ruff check` + `ruff format --check` across 152 files ·
+`mypy --strict` on `fde-mcp`, `fde-agents`, `fde-gate`, `fde-sor` (78 source
+files, 0 issues) · `uv lock --check` · 25 SQL smoke tests on a clean rebuild ·
+**545 Python tests against live Postgres** (555 collected; the 10 skips are
+heavy-ML and CDC gates with their own CI job / marker) · eight database
+invariant attempts, all correctly denied.
 
 ---
 
@@ -102,12 +107,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync --all-packages --frozen
 
 # 1. Database
-createdb fde && ./db/rebuild.sh fde     # 12 migrations + 16 smoke tests
+createdb fde && ./db/rebuild.sh fde     # 15 migrations + 25 smoke tests
 
 # 2. Everything else
 export FDE_DB_DSN="postgresql:///fde"
-uv run pytest packages                  # 190 tests
-uv run ruff check packages && uv run mypy packages/fde-mcp/src packages/fde-agents/src
+uv run pytest packages                  # 545 tests against live Postgres
+uv run ruff check packages && uv run mypy   # strict, all four production packages
 
 # 3. Run the MCP server locally over stdio
 FDE_MCP_TRANSPORT=stdio uv run fde-mcp
@@ -187,11 +192,14 @@ Self-contained HTML, light and dark mode, no network required.
 
 ## Status and honesty
 
-**Validated here:** all 12 migrations apply cleanly in order on an empty database;
-16 end-to-end smoke tests pass (including the fail-closed and unauthorised-approval
-cases); 27 MCP server tests pass against live Postgres; 50 reward-function tests
-pass; every Python file compiles; all six diagrams screenshot-verified in both
-colour schemes.
+**Validated here:** all 15 migrations apply cleanly in order on an empty database;
+25 end-to-end smoke tests pass (including the fail-closed and unauthorised-approval
+cases, the review→edit→merge→label chain, workflow publish/run/human-response,
+chunk-grant boundaries, observation dedup, and as-of traversal); 545 Python tests
+pass against live Postgres (fde-mcp 66 · fde-agents 92 · fde-training 174 ·
+fde-gate 44 · fde-sor 169; the training suite reaches 183 with the `train` extra
+installed, exercised in its own CI job); eight privilege-denial invariants hold;
+all six diagrams screenshot-verified in both colour schemes.
 
 **Not validated here:** anything requiring live AWS credentials — Bedrock model and
 embedding calls, AgentCore control-plane and data-plane calls, Gateway and Memory
@@ -199,7 +207,13 @@ provisioning, and Bedrock RFT submission. Those are written against the verified
 shapes documented in `docs/99-sources.md` but have not been executed.
 
 **Four real bugs were found and fixed while building this**, all recorded in
-`docs/99-sources.md` §7:
+`docs/99-sources.md` §7 — and the completion pass that added the gate service,
+the SoR adapters, and the trainers found ten more (a merge that aborted on its
+own drift housekeeping the second time it ran, a schema-USAGE grant gap on the
+one role meant to write training labels, a reward function that paid an RL
+policy 0.85 for doing nothing, tournaments silently ranking retrieval over
+fake embeddings, and more), all recorded with the same candour in
+`docs/99-sources.md` §8:
 
 - `merge_proposal` stamped `valid_from` with `clock_timestamp()` while reads used
   transaction time — a read-your-own-write failure where `kg.traverse` silently

@@ -15,8 +15,8 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from agent_fakes import FakeAsyncTaskApp, FakeMcpClient, make_tool_result
 from bedrock_agentcore.runtime import PingStatus
-from conftest import FakeAsyncTaskApp, FakeMcpClient, make_tool_result
 
 from fde_agents.common import runtime as rt
 from fde_agents.common.runtime import AgentRuntimeConfig, StreamEvent, create_app, run_agent_task
