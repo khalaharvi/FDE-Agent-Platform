@@ -1,0 +1,84 @@
+{
+  "_comment": "Permissions policy for the FDE agent runtime execution role. Attach in addition to runtime-trust-policy.json (which is the AssumeRolePolicyDocument, not a permissions policy). Every statement here is scoped as tightly as the underlying AgentCore/CloudWatch/Bedrock/RDS APIs allow -- this role must never be able to do more than 'run this one agent, log it, get invoked, call the model, and reach its own DB secret / IAM DB auth'. It has NO Postgres grants baked in here because DB authorization is enforced at the SQL layer (SET LOCAL ROLE fde_agent, see mcp/db.py) -- this policy only needs to get the runtime to a place where it CAN open a DB connection (Secrets Manager or IAM DB auth token), not to decide what that connection may do once open.",
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECRPullForContainerArtifact",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": "arn:aws:ecr:${AWS_REGION}:${AWS_ACCOUNT_ID}:repository/fde-*-agent"
+    },
+    {
+      "Sid": "ECRAuthToken",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "RuntimeLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:${AWS_REGION}:${AWS_ACCOUNT_ID}:log-group:/aws/bedrock-agentcore/runtimes/*"
+    },
+    {
+      "Sid": "XRayTracing",
+      "Effect": "Allow",
+      "Action": [
+        "xray:PutTraceSegments",
+        "xray:PutTelemetryRecords",
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchMetricsScopedToAgentCoreNamespace",
+      "Effect": "Allow",
+      "Action": "cloudwatch:PutMetricData",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "cloudwatch:namespace": "bedrock-agentcore"
+        }
+      }
+    },
+    {
+      "Sid": "WorkloadIdentityTokenForGatewayAndMemory",
+      "Effect": "Allow",
+      "Action": "bedrock-agentcore:GetWorkloadAccessToken*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "InvokeTheModel",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:${AWS_REGION}::foundation-model/*",
+        "arn:aws:bedrock:${AWS_REGION}:${AWS_ACCOUNT_ID}:inference-profile/*"
+      ]
+    },
+    {
+      "Sid": "ReadTheDbSecret",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "${FDE_DB_SECRET_ARN}"
+    },
+    {
+      "Sid": "IamDbAuthFallback",
+      "Effect": "Allow",
+      "Action": "rds-db:connect",
+      "Resource": "arn:aws:rds-db:${AWS_REGION}:${AWS_ACCOUNT_ID}:dbuser:${DB_RESOURCE_ID}/fde_agent"
+    }
+  ]
+}

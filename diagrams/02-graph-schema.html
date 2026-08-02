@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FDE Agent Platform — Knowledge Graph Core ERD</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.14); --border-strong:rgba(11,11,11,0.34);
+    --blue:#2a78d6; --orange:#eb6834; --aqua:#1baf7a; --yellow:#eda100; --magenta:#e87ba4;
+    --green:#008300; --violet:#4a3aa7; --red:#e34948; --critical:#d03b3b; --good:#0ca30c;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:where(:not([data-theme="light"])){
+      color-scheme: dark;
+      --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#a8a69f;
+      --grid:#2c2c2a; --axis:#4a4a47; --border:rgba(255,255,255,0.16); --border-strong:rgba(255,255,255,0.38);
+      --blue:#3987e5; --orange:#d95926; --aqua:#199e70; --yellow:#c98500; --magenta:#d55181;
+      --green:#3fbf3f; --violet:#9085e9; --red:#e66767; --critical:#e66767; --good:#3fbf3f;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#a8a69f;
+    --grid:#2c2c2a; --axis:#4a4a47; --border:rgba(255,255,255,0.16); --border-strong:rgba(255,255,255,0.38);
+    --blue:#3987e5; --orange:#d95926; --aqua:#199e70; --yellow:#c98500; --magenta:#d55181;
+    --green:#3fbf3f; --violet:#9085e9; --red:#e66767; --critical:#e66767; --good:#3fbf3f;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--page); color:var(--ink); font-family: system-ui,-apple-system,"Segoe UI",sans-serif; padding:28px 32px 60px;}
+  header{max-width:1400px; margin:0 auto 18px;}
+  h1{font-size:22px; margin:0 0 6px; letter-spacing:-0.01em;}
+  .caption{color:var(--ink-2); font-size:14.5px; max-width:1020px; line-height:1.5;}
+  .wrap{max-width:1400px; margin:0 auto;}
+
+  .surprises{display:flex; gap:14px; margin:16px 0 26px;}
+  .surprise{flex:1; padding:12px 14px; border-radius:9px; border:1.5px solid var(--violet);
+    background: color-mix(in srgb, var(--violet) 10%, var(--surface)); font-size:13px; line-height:1.5;}
+  .surprise b{display:block; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--violet); margin-bottom:4px;}
+
+  .canvas{position:relative;}
+  .grid{display:grid; grid-template-columns: 250px 250px 250px 250px; gap:26px 22px;}
+
+  .ent{border-radius:10px; border:1.6px solid var(--cat, var(--aqua)); background:var(--surface); overflow:hidden;
+       box-shadow:0 1px 2px rgba(0,0,0,.04);}
+  .ent > .hd{background: color-mix(in srgb, var(--cat, var(--aqua)) 22%, var(--surface)); padding:8px 11px; border-bottom:1.5px solid var(--cat, var(--aqua));}
+  .ent > .hd .schema{font-size:9.5px; font-weight:800; letter-spacing:.06em; color:var(--cat, var(--aqua)); text-transform:uppercase;}
+  .ent > .hd .name{font-family: ui-monospace,"SF Mono",Consolas,monospace; font-size:14px; font-weight:700;}
+  .ent .rows{padding:4px 0;}
+  .col{display:flex; align-items:baseline; gap:6px; padding:3px 11px; font-size:11.3px; line-height:1.35;}
+  .col .tag{flex:0 0 auto; font-size:8.6px; font-weight:800; padding:1px 4px; border-radius:4px; letter-spacing:.03em;}
+  .col .cname{font-family: ui-monospace,"SF Mono",Consolas,monospace; font-weight:600; white-space:nowrap;}
+  .col .ctype{color:var(--muted); font-size:9.8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .col .cnote{color:var(--ink-2); font-size:9.8px; margin-left:auto; text-align:right;}
+  .tag.pk{background:var(--ink); color:var(--surface);}
+  .tag.fk{background:transparent; border:1.3px solid var(--blue); color:var(--blue);}
+  .tag.bt{background:transparent; border:1.3px solid var(--violet); color:var(--violet);}
+  .tag.soft{background:transparent; border:1.3px solid var(--magenta); color:var(--magenta);}
+  .tag.uk{background:transparent; border:1.3px solid var(--muted); color:var(--muted);}
+  .col.hl{background: color-mix(in srgb, var(--violet) 8%, transparent);}
+  .col.softhl{background: color-mix(in srgb, var(--magenta) 8%, transparent);}
+  .divider{height:1px; background:var(--border); margin:4px 0;}
+  .foot{padding:6px 11px 9px; font-size:9.8px; color:var(--ink-2); line-height:1.4; border-top:1px dashed var(--border);}
+  .foot b{color:var(--ink);}
+
+  .kg{--cat:var(--aqua);}
+
+  svg.overlay{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible;}
+  .conn{fill:none; stroke-width:1.7;}
+  .conn.fk-l{stroke:var(--blue);}
+  .conn.soft-l{stroke:var(--magenta); stroke-dasharray:2 4;}
+  .conn.key-l{stroke:var(--violet); stroke-width:2.6;}
+  .conn.self-l{stroke:var(--muted); stroke-dasharray:4 3;}
+  .connlabel{font-size:9.8px; fill:var(--ink-2); font-family: system-ui, sans-serif;}
+  .connlabel-bg{fill:var(--page); opacity:.95;}
+  .connlabel.strong{fill:var(--violet); font-weight:700;}
+
+  .legend{max-width:1400px; margin:26px auto 0; display:flex; flex-wrap:wrap; gap:14px 22px; padding:14px 16px;
+    border:1px solid var(--border); border-radius:10px; background:var(--surface); font-size:11.5px; color:var(--ink-2);}
+  .legend .item{display:flex; align-items:center; gap:7px;}
+  .legend .tag{font-size:8.6px; font-weight:800; padding:1px 4px; border-radius:4px;}
+</style>
+</head>
+<body>
+<div class="viz-root">
+<header>
+  <h1>FDE Agent Platform — Knowledge Graph Core (ERD)</h1>
+  <div class="caption">
+    The eight tables that make up the bitemporal graph store: commits, nodes, edges, their
+    embeddings, and the source/chunk/evidence chain that grounds every fact. <b>Take-away:</b>
+    nothing is ever updated in place — every change closes a row (<code>valid_to</code>) and
+    inserts a new one under a new commit — and two design choices here surprise almost
+    everyone the first time they read this schema (below).
+  </div>
+</header>
+
+<div class="wrap">
+<div class="surprises">
+  <div class="surprise">
+    <b>Surprise 1 — identity vs. version</b>
+    <code>kg.edge.src_key</code> / <code>dst_key</code> point at <code>kg.node.node_key</code> —
+    the stable identity across versions — never at <code>node_id</code>, which identifies one
+    specific version. A node can be re-versioned (new <code>node_id</code>) without rewriting a
+    single edge that points at it.
+  </div>
+  <div class="surprise">
+    <b>Surprise 2 — the HNSW indexes are partial</b>
+    Every vector index on <code>node_embedding</code> / <code>edge_embedding</code> / <code>chunk</code>
+    is built <code>WHERE is_current</code> (node embeddings are further partitioned per
+    <code>node_type</code>). Retired versions never enter the index — history accumulates without
+    growing it — and a trigger keeps <code>is_current</code> in sync when a version is closed out.
+  </div>
+</div>
+
+<div class="canvas" id="canvas">
+  <div class="grid">
+
+    <div class="ent kg" id="source" style="grid-column:1; grid-row:1;">
+      <div class="hd"><div class="schema">kg</div><div class="name">source</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK</span><span class="cname">source_id</span><span class="ctype">bigint</span></div>
+        <div class="col"><span class="cname">engagement_id</span><span class="ctype">uuid</span></div>
+        <div class="col"><span class="cname">source_kind</span><span class="ctype">interview | sop | sor …</span></div>
+        <div class="col"><span class="cname">title, uri</span><span class="ctype">text</span></div>
+        <div class="col"><span class="cname">captured_at</span><span class="ctype">timestamptz</span></div>
+        <div class="col"><span class="cname">checksum</span><span class="ctype">sha256</span></div>
+      </div>
+      <div class="foot">One row per raw artifact: interview, SOP, system export, SoR telemetry.</div>
+    </div>
+
+    <div class="ent kg" id="commit" style="grid-column:3; grid-row:1;">
+      <div class="hd"><div class="schema">kg — the version spine</div><div class="name">commit</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK</span><span class="cname">commit_id</span><span class="ctype">bigint</span></div>
+        <div class="col"><span class="tag uk">UK</span><span class="cname">commit_uuid</span><span class="ctype">uuid</span></div>
+        <div class="col"><span class="tag fk">FK</span><span class="cname">parent_id</span><span class="cnote">→ commit.commit_id (self)</span></div>
+        <div class="col"><span class="cname">engagement_id</span><span class="ctype">uuid</span></div>
+        <div class="col"><span class="cname">status</span><span class="ctype">open | sealed | reverted</span></div>
+        <div class="col"><span class="cname">sealed_by, sealed_at</span></div>
+        <div class="col"><span class="cname">content_digest</span><span class="ctype">text</span></div>
+      </div>
+      <div class="foot">Only <b>hitl.merge_proposal</b> ever creates one. Chains via <code>parent_id</code> — that chain is the audit trail.</div>
+    </div>
+
+    <div class="ent kg" id="node" style="grid-column:2; grid-row:2;">
+      <div class="hd"><div class="schema">kg</div><div class="name">node</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK</span><span class="cname">node_id</span><span class="cnote">this version</span></div>
+        <div class="col softhl"><span class="tag soft">KEY</span><span class="cname">node_key</span><span class="cnote">stable identity</span></div>
+        <div class="col"><span class="cname">node_type</span><span class="ctype">15 types, closed</span></div>
+        <div class="col"><span class="cname">label, summary</span></div>
+        <div class="divider"></div>
+        <div class="col hl"><span class="tag bt">VT</span><span class="cname">valid_from / valid_to</span></div>
+        <div class="col hl"><span class="tag bt">TT</span><span class="cname">tx_from / tx_to</span></div>
+        <div class="divider"></div>
+        <div class="col"><span class="tag fk">FK</span><span class="cname">commit_id</span><span class="cnote">→ commit</span></div>
+        <div class="col"><span class="tag fk">FK</span><span class="cname">superseded_by</span><span class="cnote">→ node.node_id (self)</span></div>
+        <div class="col"><span class="cname">confidence</span><span class="ctype">real 0–1</span></div>
+      </div>
+      <div class="foot">Exactly one live row per <code>(engagement_id, node_key)</code> — enforced by a partial unique index <code>WHERE valid_to IS NULL AND tx_to IS NULL</code>.</div>
+    </div>
+
+    <div class="ent kg" id="edge" style="grid-column:3; grid-row:2;">
+      <div class="hd"><div class="schema">kg</div><div class="name">edge</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK</span><span class="cname">edge_id</span><span class="cnote">this version</span></div>
+        <div class="col softhl"><span class="tag soft">KEY</span><span class="cname">edge_key</span><span class="cnote">src|type|dst</span></div>
+        <div class="col softhl"><span class="tag soft">★</span><span class="cname">src_key, dst_key</span><span class="cnote">→ node_key, NOT node_id</span></div>
+        <div class="col"><span class="cname">edge_type</span><span class="ctype">15 types, closed</span></div>
+        <div class="divider"></div>
+        <div class="col hl"><span class="tag bt">VT</span><span class="cname">valid_from / valid_to</span></div>
+        <div class="col hl"><span class="tag bt">TT</span><span class="cname">tx_from / tx_to</span></div>
+        <div class="divider"></div>
+        <div class="col"><span class="tag fk">FK</span><span class="cname">commit_id</span><span class="cnote">→ commit</span></div>
+        <div class="col"><span class="cname">human_confirmed</span><span class="ctype">bool — set by merge</span></div>
+        <div class="col"><span class="cname">confidence, weight</span></div>
+      </div>
+      <div class="foot">Re-versioning the node at either end never touches this row — that is the point of keying on <code>node_key</code>.</div>
+    </div>
+
+    <div class="ent kg" id="nodeembed" style="grid-column:2; grid-row:3;">
+      <div class="hd"><div class="schema">kg</div><div class="name">node_embedding</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK/FK</span><span class="cname">node_id</span><span class="cnote">→ node.node_id</span></div>
+        <div class="col"><span class="cname">node_type</span><span class="cnote">denormalised for partial idx</span></div>
+        <div class="col"><span class="cname">embed_text</span><span class="ctype">text, kept for re-embed</span></div>
+        <div class="col"><span class="cname">embedding</span><span class="ctype">vector(1024)</span></div>
+        <div class="col hl"><span class="tag bt">★</span><span class="cname">is_current</span><span class="cnote">drives partial HNSW</span></div>
+      </div>
+      <div class="foot">HNSW index: <code>(embedding::halfvec(1024))</code>, per <code>node_type</code>, <code>WHERE is_current</code>.</div>
+    </div>
+
+    <div class="ent kg" id="edgeembed" style="grid-column:3; grid-row:3;">
+      <div class="hd"><div class="schema">kg</div><div class="name">edge_embedding</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK/FK</span><span class="cname">edge_id</span><span class="cnote">→ edge.edge_id</span></div>
+        <div class="col"><span class="cname">edge_type</span></div>
+        <div class="col"><span class="cname">embed_text</span><span class="ctype">the VERBALISED relation</span></div>
+        <div class="col"><span class="cname">embedding</span><span class="ctype">vector(1024)</span></div>
+        <div class="col hl"><span class="tag bt">★</span><span class="cname">is_current</span><span class="cnote">drives partial HNSW</span></div>
+      </div>
+      <div class="foot">"Sales Rep hands off Quote Approval to Deal Desk when discount &gt; 20%" — not the bare edge type.</div>
+    </div>
+
+    <div class="ent kg" id="chunk" style="grid-column:1; grid-row:2;">
+      <div class="hd"><div class="schema">kg</div><div class="name">chunk</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK</span><span class="cname">chunk_id</span></div>
+        <div class="col"><span class="tag fk">FK</span><span class="cname">source_id</span><span class="cnote">→ source</span></div>
+        <div class="col"><span class="cname">ordinal, content</span></div>
+        <div class="col softhl"><span class="tag soft">soft</span><span class="cname">anchor_keys</span><span class="ctype">text[] → node/edge key</span></div>
+        <div class="col"><span class="cname">embedding</span><span class="ctype">vector(1024), nullable</span></div>
+      </div>
+      <div class="foot">The raw text layer — evidence chunks, embedded separately from nodes/edges (see caption).</div>
+    </div>
+
+    <div class="ent kg" id="evidence" style="grid-column:1 / span 2; grid-row:4;">
+      <div class="hd"><div class="schema">kg</div><div class="name">evidence</div></div>
+      <div class="rows">
+        <div class="col"><span class="tag pk">PK</span><span class="cname">evidence_id</span></div>
+        <div class="col"><span class="cname">subject_kind</span><span class="ctype">'node' | 'edge'</span></div>
+        <div class="col softhl"><span class="tag soft">soft</span><span class="cname">subject_key</span><span class="cnote">→ node_key or edge_key</span></div>
+        <div class="col"><span class="tag fk">FK</span><span class="cname">source_id</span><span class="cnote">→ source</span></div>
+        <div class="col"><span class="cname">extraction_method, confidence</span></div>
+      </div>
+      <div class="foot"><code>kg.evidence_strength()</code> noisy-ORs confidence across corroborating sources — two 0.7 sources beat one 0.9.</div>
+    </div>
+
+    <div class="ent kg" id="proposal-note" style="grid-column:3 / span 2; grid-row:4; border-style:dashed;">
+      <div class="hd"><div class="schema">not in this schema — see diagram 4</div><div class="name" style="font-size:12.5px;">hitl.proposal_item</div></div>
+      <div class="rows">
+        <div class="col"><span class="cname">payload</span><span class="cnote">desired end state of a node/edge row</span></div>
+        <div class="col"><span class="cname">source_ids</span><span class="cnote">required non-empty before submit</span></div>
+      </div>
+      <div class="foot">The <i>only</i> way a row ever reaches <code>kg.node</code>/<code>kg.edge</code>/<code>kg.evidence</code> — never a direct INSERT.</div>
+    </div>
+
+  </div>
+  <svg class="overlay" id="overlay"></svg>
+</div>
+</div>
+
+<div class="legend">
+  <div class="item"><span class="tag pk" style="background:var(--ink); color:var(--surface);">PK</span> primary key</div>
+  <div class="item"><span class="tag fk" style="border:1.3px solid var(--blue); color:var(--blue);">FK</span> foreign key (hard constraint)</div>
+  <div class="item"><span class="tag bt" style="border:1.3px solid var(--violet); color:var(--violet);">VT/TT</span> bitemporal column</div>
+  <div class="item"><span class="tag soft" style="border:1.3px solid var(--magenta); color:var(--magenta);">soft</span> key reference, not a DB-level FK</div>
+  <div class="item">★ one of the two "surprises" called out above</div>
+  <div class="item"><span style="display:inline-block;width:20px;height:0;border-top:2.6px solid var(--violet);"></span> node_key identity relationship</div>
+  <div class="item"><span style="display:inline-block;width:20px;height:0;border-top:1.7px solid var(--blue);"></span> FK relationship</div>
+  <div class="item"><span style="display:inline-block;width:20px;height:0;border-top:1.7px dashed var(--magenta);"></span> soft-key relationship</div>
+</div>
+
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('canvas');
+  const svg = document.getElementById('overlay');
+  const NS = 'http://www.w3.org/2000/svg';
+
+  function rectOf(id){
+    const el = document.getElementById(id);
+    const r = el.getBoundingClientRect();
+    const c = canvas.getBoundingClientRect();
+    return {left:r.left-c.left,right:r.right-c.left,top:r.top-c.top,bottom:r.bottom-c.top,
+            cx:(r.left+r.right)/2-c.left, cy:(r.top+r.bottom)/2-c.top};
+  }
+  function pt(rect, side, biasFrac){
+    const bf = biasFrac===undefined?0.5:biasFrac;
+    if(side==='top') return {x:rect.left+(rect.right-rect.left)*bf, y:rect.top};
+    if(side==='bottom') return {x:rect.left+(rect.right-rect.left)*bf, y:rect.bottom};
+    if(side==='left') return {x:rect.left, y:rect.top+(rect.bottom-rect.top)*bf};
+    if(side==='right') return {x:rect.right, y:rect.top+(rect.bottom-rect.top)*bf};
+    return {x:rect.cx,y:rect.cy};
+  }
+  function ensureMarker(){
+    let defs = svg.querySelector('defs');
+    if(!defs){ defs=document.createElementNS(NS,'defs'); svg.appendChild(defs); }
+    ['blue','violet','magenta','muted'].forEach(name=>{
+      const id='arrow-'+name;
+      if(defs.querySelector('#'+id)) return;
+      const m=document.createElementNS(NS,'marker');
+      m.setAttribute('id',id); m.setAttribute('viewBox','0 0 10 10');
+      m.setAttribute('refX','8'); m.setAttribute('refY','5');
+      m.setAttribute('markerWidth','7'); m.setAttribute('markerHeight','7');
+      m.setAttribute('orient','auto-start-reverse');
+      const p=document.createElementNS(NS,'path');
+      p.setAttribute('d','M 0 0 L 10 5 L 0 10 z');
+      p.setAttribute('fill', getComputedStyle(document.documentElement).getPropertyValue('--'+name)||'#888');
+      m.appendChild(p); defs.appendChild(m);
+    });
+  }
+  function labelAt(x,y,text,cls){
+    const g=document.createElementNS(NS,'g');
+    const t=document.createElementNS(NS,'text');
+    t.setAttribute('class','connlabel '+(cls||''));
+    t.setAttribute('x',x); t.setAttribute('y',y); t.setAttribute('text-anchor','middle');
+    t.textContent=text; g.appendChild(t); svg.appendChild(g);
+    requestAnimationFrame(()=>{
+      try{
+        const bbox=t.getBBox();
+        const rect=document.createElementNS(NS,'rect');
+        rect.setAttribute('class','connlabel-bg');
+        rect.setAttribute('x',bbox.x-3); rect.setAttribute('y',bbox.y-1.5);
+        rect.setAttribute('width',bbox.width+6); rect.setAttribute('height',bbox.height+3);
+        rect.setAttribute('rx',3); g.insertBefore(rect,t);
+      }catch(e){}
+    });
+  }
+  function draw(a,b,opts){
+    opts=opts||{};
+    const p1=pt(rectOf(a.id),a.side,a.bias), p2=pt(rectOf(b.id),b.side,b.bias);
+    const midx=(p1.x+p2.x)/2, midy=(p1.y+p2.y)/2;
+    const bend=opts.bend||0;
+    const path=document.createElementNS(NS,'path');
+    path.setAttribute('d', `M ${p1.x} ${p1.y} Q ${midx+bend} ${midy+bend} ${p2.x} ${p2.y}`);
+    path.setAttribute('class','conn '+(opts.cls||'fk-l'));
+    path.setAttribute('marker-end','url(#arrow-'+(opts.color||'blue')+')');
+    svg.appendChild(path);
+    if(opts.label) labelAt(midx+bend, midy+bend-5, opts.label, opts.labelCls);
+  }
+  function drawVia(a,b,waypoints,opts){
+    opts=opts||{};
+    const p1=pt(rectOf(a.id),a.side,a.bias), p2=pt(rectOf(b.id),b.side,b.bias);
+    const pts=[p1,...waypoints,p2];
+    const d='M '+pts.map(p=>`${p.x} ${p.y}`).join(' L ');
+    const path=document.createElementNS(NS,'path');
+    path.setAttribute('d',d);
+    path.setAttribute('class','conn '+(opts.cls||'fk-l'));
+    path.setAttribute('marker-end','url(#arrow-'+(opts.color||'blue')+')');
+    svg.appendChild(path);
+    if(opts.label){ const m=pts[Math.floor(pts.length/2)]; labelAt(m.x,m.y-6,opts.label,opts.labelCls); }
+  }
+
+  function render(){
+    svg.innerHTML=''; ensureMarker();
+
+    draw({id:'commit',side:'left'},{id:'node',side:'top', bias:0.75},{color:'blue',cls:'fk-l', label:'commit_id'});
+    draw({id:'commit',side:'bottom'},{id:'edge',side:'top', bias:0.35},{color:'blue',cls:'fk-l', label:'commit_id'});
+
+    // The headline relationship: edge.src_key/dst_key -> node.node_key.
+    // Routed up into the blank grid cell above `node` (column 2, row 1 has
+    // no card) so the label never sits on top of either table's own rows.
+    { const rn = rectOf('node'), re = rectOf('edge'), rc = rectOf('commit');
+      const p1 = pt(rn,'top',0.5), p2 = pt(re,'top',0.5);
+      const safeY = (rc.bottom + p1.y) / 2;
+      drawVia({id:'node',side:'top',bias:0.5},{id:'edge',side:'top',bias:0.5},
+        [{x:p1.x,y:safeY},{x:p2.x,y:safeY}],
+        {color:'violet', cls:'key-l', label:'src_key / dst_key → node_key (not node_id)', labelCls:'strong'});
+    }
+
+    draw({id:'node',side:'bottom'},{id:'nodeembed',side:'top'},{color:'blue',cls:'fk-l'});
+    draw({id:'edge',side:'bottom'},{id:'edgeembed',side:'top'},{color:'blue',cls:'fk-l'});
+
+    draw({id:'source',side:'bottom'},{id:'chunk',side:'top'},{color:'blue',cls:'fk-l', label:'source_id'});
+    drawVia({id:'source',side:'right'},{id:'evidence',side:'top', bias:0.15},
+      [{x: (rectOf('source').right+rectOf('commit').left)/2, y: rectOf('source').bottom+40}],
+      {color:'blue', cls:'fk-l', label:'source_id'});
+
+    // node/edge -> evidence.subject_key: routed straight down the column
+    // gutters (safe whitespace between grid columns) so neither line crosses
+    // the node_embedding / edge_embedding cards sitting in row 3.
+    { const rn = rectOf('node'), rne = rectOf('nodeembed'), rev = rectOf('evidence');
+      const safeY = (rne.bottom + rev.top) / 2;
+      const p1x = rn.left + 6;
+      drawVia({id:'node',side:'left',bias:0.85},{id:'evidence',side:'top',bias:0.35},
+        [{x:p1x,y:safeY},{x:pt(rev,'top',0.35).x,y:safeY}],
+        {color:'magenta', cls:'soft-l', label:'subject_key'});
+    }
+    { const re = rectOf('edge'), ree = rectOf('edgeembed'), rev = rectOf('evidence');
+      const safeY = (ree.bottom + rev.top) / 2;
+      const p1x = re.left - 6;
+      drawVia({id:'edge',side:'left',bias:0.85},{id:'evidence',side:'top',bias:0.9},
+        [{x:p1x,y:safeY},{x:pt(rev,'top',0.9).x,y:safeY}],
+        {color:'magenta', cls:'soft-l', label:'subject_key'});
+    }
+    draw({id:'chunk',side:'bottom'},{id:'evidence',side:'left'},{color:'magenta',cls:'soft-l', label:'anchor_keys[]'});
+
+    draw({id:'evidence',side:'right'},{id:'proposal-note',side:'left'},{color:'muted',cls:'self-l'});
+  }
+  render();
+  window.addEventListener('resize', ()=>{ clearTimeout(window.__t); window.__t=setTimeout(render,120); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FDE Agent Platform — System Topology</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.14); --border-strong:rgba(11,11,11,0.34);
+    --blue:#2a78d6; --orange:#eb6834; --aqua:#1baf7a; --yellow:#eda100; --magenta:#e87ba4;
+    --green:#008300; --violet:#4a3aa7; --red:#e34948; --critical:#d03b3b; --good:#0ca30c;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:where(:not([data-theme="light"])){
+      color-scheme: dark;
+      --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#a8a69f;
+      --grid:#2c2c2a; --axis:#4a4a47; --border:rgba(255,255,255,0.16); --border-strong:rgba(255,255,255,0.38);
+      --blue:#3987e5; --orange:#d95926; --aqua:#199e70; --yellow:#c98500; --magenta:#d55181;
+      --green:#3fbf3f; --violet:#9085e9; --red:#e66767; --critical:#e66767; --good:#3fbf3f;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#a8a69f;
+    --grid:#2c2c2a; --axis:#4a4a47; --border:rgba(255,255,255,0.16); --border-strong:rgba(255,255,255,0.38);
+    --blue:#3987e5; --orange:#d95926; --aqua:#199e70; --yellow:#c98500; --magenta:#d55181;
+    --green:#3fbf3f; --violet:#9085e9; --red:#e66767; --critical:#e66767; --good:#3fbf3f;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--page); color:var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding:28px 32px 60px;
+  }
+  header{max-width:1400px; margin:0 auto 18px;}
+  h1{font-size:22px; margin:0 0 6px; letter-spacing:-0.01em;}
+  .caption{color:var(--ink-2); font-size:14.5px; max-width:980px; line-height:1.5;}
+  .invariant{
+    max-width:1400px; margin:16px auto 22px; padding:12px 16px; border-radius:8px;
+    background:color-mix(in srgb, var(--critical) 10%, var(--surface));
+    border:1.5px solid var(--critical); font-size:13.5px; line-height:1.5;
+  }
+  .invariant b{color:var(--ink);}
+  .wrap{max-width:1400px; margin:0 auto;}
+  .canvas{position:relative; display:flex; gap:28px; align-items:stretch;}
+  .aws{
+    flex:1 1 auto; position:relative; border:2px dashed var(--border-strong); border-radius:14px;
+    padding:34px 18px 18px; background: color-mix(in srgb, var(--ink) 2%, var(--surface));
+  }
+  .aws > .boundary-label{
+    position:absolute; top:-13px; left:20px; background:var(--page); padding:0 10px;
+    font-size:12px; font-weight:700; letter-spacing:.04em; color:var(--ink-2); text-transform:uppercase;
+  }
+  .agentcore{
+    position:relative; border:1.5px dashed var(--border-strong); border-radius:12px;
+    padding:26px 14px 16px; margin-bottom:30px;
+    background: color-mix(in srgb, var(--yellow) 5%, var(--surface));
+  }
+  .agentcore > .boundary-label{
+    position:absolute; top:-11px; left:16px; background:
+      color-mix(in srgb, var(--yellow) 5%, var(--page));
+    padding:0 8px; font-size:11px; font-weight:700; color:var(--ink-2); text-transform:uppercase; letter-spacing:.04em;
+  }
+  .row{display:flex; gap:14px; margin-bottom:26px; align-items:stretch;}
+  .row:last-child{margin-bottom:0;}
+  .col{display:flex; flex-direction:column; gap:14px; flex:1;}
+  .card{
+    border-radius:10px; border:1.6px solid var(--cat, var(--axis)); padding:10px 12px;
+    background: color-mix(in srgb, var(--cat, var(--axis)) 12%, var(--surface));
+    flex:1; position:relative; min-width:0;
+  }
+  .card .kicker{font-size:9.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--cat, var(--ink-2)); margin-bottom:3px;}
+  .card .title{font-size:13px; font-weight:700; color:var(--ink); margin-bottom:3px; line-height:1.25;}
+  .card .sub{font-size:11px; color:var(--ink-2); line-height:1.4;}
+  .card .mono{font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size:10.3px; color:var(--ink-2);}
+
+  .agent{--cat:var(--blue);}
+  .human{--cat:var(--orange);}
+  .data{--cat:var(--aqua);}
+  .det{--cat:var(--violet);}
+  .infra{--cat:var(--yellow);}
+  .external{--cat:var(--magenta);}
+  .ml{--cat:var(--green);}
+
+  .chiprow{display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;}
+  .chip{
+    flex:1; min-width:90px; border-radius:7px; border:1.3px solid var(--cat, var(--axis));
+    background: color-mix(in srgb, var(--cat, var(--axis)) 16%, var(--surface));
+    padding:6px 8px; font-size:10.5px; line-height:1.35;
+  }
+  .chip b{display:block; font-size:11px; margin-bottom:1px;}
+
+  .schemas{display:flex; gap:7px; margin-top:8px;}
+  .schema{
+    flex:1; text-align:center; border-radius:7px; border:1.3px solid var(--aqua);
+    background: color-mix(in srgb, var(--aqua) 18%, var(--surface));
+    padding:7px 4px; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size:11.5px; font-weight:700;
+  }
+  .schema span{display:block; font-family: system-ui, sans-serif; font-weight:400; font-size:9px; color:var(--ink-2); margin-top:2px;}
+
+  .note{font-size:10.3px; color:var(--ink-2); margin-top:8px; line-height:1.45; border-top:1px dashed var(--border); padding-top:6px;}
+  .note b{color:var(--ink);}
+  .lock{font-size:10px;}
+
+  .external-col{width:250px; display:flex; flex-direction:column; justify-content:space-between; gap:14px;}
+  .external-col .card{flex:none;}
+
+  svg.overlay{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible;}
+  .conn{fill:none; stroke-width:1.6;}
+  .conn.infra-l{stroke:var(--muted);}
+  .conn.det-l{stroke:var(--violet);}
+  .conn.data-l{stroke:var(--aqua);}
+  .conn.ml-l{stroke:var(--green);}
+  .conn.human-l{stroke:var(--orange);}
+  .conn.auth-l{stroke:var(--critical); stroke-dasharray:5 4;}
+  .conn.ext-l{stroke:var(--magenta); stroke-dasharray:2 4;}
+  .connlabel{font-size:9.6px; fill:var(--ink-2); font-family: system-ui, sans-serif;}
+  .connlabel-bg{fill:var(--page); opacity:.92;}
+
+  .legend{
+    max-width:1400px; margin:22px auto 0; display:flex; flex-wrap:wrap; gap:16px 22px;
+    padding:14px 16px; border:1px solid var(--border); border-radius:10px; background:var(--surface);
+    font-size:11.5px; color:var(--ink-2);
+  }
+  .legend .item{display:flex; align-items:center; gap:7px;}
+  .legend .swatch{width:13px; height:13px; border-radius:4px; border:1.6px solid var(--cat);
+    background:color-mix(in srgb, var(--cat) 20%, var(--surface));}
+  .legend .lineswatch{width:22px; height:0; border-top:2px solid var(--cat); }
+  .legend .lineswatch.dash{border-top-style:dashed;}
+</style>
+</head>
+<body>
+<div class="viz-root">
+<header>
+  <h1>FDE Agent Platform — AWS Deployment Topology</h1>
+  <div class="caption">
+    One AWS account hosts three AgentCore agent runtimes, a shared MCP Gateway, one Aurora
+    Postgres instance holding all five schemas, and the supporting services around them.
+    <b>Take-away:</b> every arrow that ends inside Aurora either carries read-only traffic or
+    is a narrowly-scoped, audited write path — no agent runtime has a direct write route to
+    <code>kg.node</code>/<code>kg.edge</code>/<code>kg.commit</code>. The only door in is the
+    Gate Service Lambda calling the <code>SECURITY DEFINER</code> function
+    <code>hitl.merge_proposal</code>, and only after a human has cleared the required gates.
+  </div>
+</header>
+
+<div class="invariant">
+  <b>The one invariant this diagram exists to prove:</b> agents propose, humans dispose — only
+  <code>hitl.merge_proposal</code> writes the graph. Trace the violet lines: they are the only
+  paths that touch a write.
+</div>
+
+<div class="wrap">
+<div class="canvas" id="canvas">
+
+  <div class="aws" id="aws">
+    <div class="boundary-label">AWS Account / VPC — us-west-2</div>
+
+    <div class="agentcore" id="agentcore">
+      <div class="boundary-label">Bedrock AgentCore</div>
+
+      <div class="row">
+        <div class="card agent" id="rt-engagement">
+          <div class="kicker">AgentCore Runtime</div>
+          <div class="title">fde&#8209;engagement</div>
+          <div class="sub">On-site interviews, process mapping, opportunity scoring. Writer of proposals only — 1 microVM / session.</div>
+        </div>
+        <div class="card agent" id="rt-workflow">
+          <div class="kicker">AgentCore Runtime</div>
+          <div class="title">fde&#8209;workflow</div>
+          <div class="sub">Authors workflows pinned to a commit; triages drift signals into new proposals.</div>
+        </div>
+        <div class="card agent" id="rt-development">
+          <div class="kicker">AgentCore Runtime</div>
+          <div class="title">fde&#8209;development</div>
+          <div class="sub">Builds deployable agent packages from published workflows. Evals + guardrails.</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="card infra" id="gateway" style="flex:2.2;">
+          <div class="kicker">MCP Gateway</div>
+          <div class="title">Gateway — semantic tool search, CUSTOM_JWT inbound</div>
+          <div class="chiprow">
+            <div class="chip" id="tgt-kg"><b>kg&#8209;mcp&#8209;server</b>MCP server target</div>
+            <div class="chip" id="tgt-sor"><b>sor&#8209;adapters</b>Lambda target</div>
+            <div class="chip" id="tgt-gate"><b>gate&#8209;service</b>Lambda target</div>
+          </div>
+        </div>
+        <div class="col" style="flex:1;">
+          <div class="row" style="margin-bottom:0;">
+            <div class="card infra" id="cap-memory"><div class="kicker">Capability</div><div class="title">Memory</div><div class="sub">semantic + summary + userPreference</div></div>
+            <div class="card infra" id="cap-identity"><div class="kicker">Capability</div><div class="title">Identity</div><div class="sub">workload identity, OAuth vault</div></div>
+          </div>
+          <div class="row" style="margin-bottom:0;">
+            <div class="card infra" id="cap-observability"><div class="kicker">Capability</div><div class="title">Observability</div><div class="sub">session / trace / span</div></div>
+            <div class="card infra" id="cap-evaluations"><div class="kicker">Capability</div><div class="title">Evaluations</div><div class="sub">17 built-in + custom Lambda graders</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card infra" id="kgmcp" style="flex:1;">
+        <div class="kicker">ECS / Fargate</div>
+        <div class="title">KG MCP Server</div>
+        <div class="sub">Streamable HTTP :8080 — the only way any agent touches the database.</div>
+        <div class="mono" style="margin-top:6px;">kg_search · kg_traverse · kg_propose · kg_submit_proposal · drift_scan · wf_draft …</div>
+      </div>
+      <div class="card data" id="aurora" style="flex:1.7;">
+        <div class="kicker">Aurora PostgreSQL 16 · pgvector ≥0.8.0</div>
+        <div class="title">One database, five schemas</div>
+        <div class="schemas">
+          <div class="schema" id="s-kg">kg<span>graph, HNSW</span></div>
+          <div class="schema" id="s-hitl">hitl<span>gates, spine</span></div>
+          <div class="schema" id="s-wf">wf<span>workflows</span></div>
+          <div class="schema" id="s-sor">sor<span>drift</span></div>
+          <div class="schema" id="s-trn">trn<span>traces</span></div>
+        </div>
+        <div class="note"><b>fde_agent</b> role: SELECT-only on kg.node / kg.edge / kg.commit — INSERT/UPDATE/DELETE explicitly REVOKEd. <span class="lock">&#128274;</span> The only write path is <b>hitl.merge_proposal</b>, <code>SECURITY DEFINER</code>, EXECUTE revoked from PUBLIC.</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card det" id="gatesvc">
+        <div class="kicker">Lambda + API GW</div>
+        <div class="title">Gate Service</div>
+        <div class="sub">Only principal allowed to call <span class="mono">hitl.merge_proposal</span>. Re-checks quorum inside the merge transaction.</div>
+      </div>
+      <div class="card infra" id="embedder">
+        <div class="kicker">ECS worker</div>
+        <div class="title">Embedder Worker</div>
+        <div class="sub">Async — drains <span class="mono">kg.embed_queue</span>, writes node / edge embeddings. Never blocks a merge.</div>
+      </div>
+      <div class="card det" id="driftmon">
+        <div class="kicker">EventBridge (6h) → Lambda</div>
+        <div class="title">Drift Monitor</div>
+        <div class="sub">Invokes <span class="mono">fde-workflow</span> to run <span class="mono">sor.run_all_detectors</span>. Critical severity also fires SNS (not shown).</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="card ml" id="sagemaker">
+        <div class="kicker">SageMaker · Bedrock RFT</div>
+        <div class="title">Training: SFT / GRPO</div>
+        <div class="sub">Reads <span class="mono">trn.sft_export</span>; RL rollout hits the live graph via read-only role <span class="mono">fde_rl_rollout</span> (no <span class="mono">hitl.*</span> access).</div>
+      </div>
+      <div class="card human" id="prodops">
+        <div class="kicker">The human surface</div>
+        <div class="title">Prod-Ops Console</div>
+        <div class="sub">Review queue, per-item verdicts, workflow runs, drift triage. Every merge and every publish is a human click here.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="external-col">
+    <div class="card infra" id="cognito">
+      <div class="kicker">Identity Provider</div>
+      <div class="title">Cognito / OIDC</div>
+      <div class="sub">JWT discovery URL for Gateway's CUSTOM_JWT authorizer.</div>
+    </div>
+    <div class="card infra" id="cloudwatch">
+      <div class="kicker">Managed observability</div>
+      <div class="title">CloudWatch GenAI</div>
+      <div class="sub">Session / trace / span telemetry from every runtime.</div>
+    </div>
+    <div class="card external" id="sorsystems">
+      <div class="kicker">Systems of record</div>
+      <div class="title">Jira · Salesforce · ServiceNow · event streams</div>
+      <div class="sub">Adapter mapping authored by a human, never inferred — see diagram 5.</div>
+    </div>
+    <div class="card human" id="reviewers">
+      <div class="kicker">Outside the account</div>
+      <div class="title">Human Reviewers</div>
+      <div class="sub">SMEs, compliance, process owners. Distinct authorities per gate kind.</div>
+    </div>
+  </div>
+
+  <svg class="overlay" id="overlay"></svg>
+</div>
+</div>
+
+<div class="legend">
+  <div class="item"><span class="swatch" style="--cat:var(--blue)"></span> Agent runtime (AgentCore)</div>
+  <div class="item"><span class="swatch" style="--cat:var(--orange)"></span> Human / review surface</div>
+  <div class="item"><span class="swatch" style="--cat:var(--aqua)"></span> Data store (Aurora schema)</div>
+  <div class="item"><span class="swatch" style="--cat:var(--violet)"></span> Deterministic gate / drift logic</div>
+  <div class="item"><span class="swatch" style="--cat:var(--yellow)"></span> Managed AWS infra</div>
+  <div class="item"><span class="swatch" style="--cat:var(--magenta)"></span> External system</div>
+  <div class="item"><span class="swatch" style="--cat:var(--green)"></span> Training / ML</div>
+  <div class="item"><span class="lineswatch dash" style="--cat:var(--critical)"></span> Auth boundary crossing</div>
+  <div class="item">&#128274; = privilege boundary enforced by GRANT/REVOKE, not by convention</div>
+</div>
+
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('canvas');
+  const svg = document.getElementById('overlay');
+  const NS = 'http://www.w3.org/2000/svg';
+
+  function rectOf(id){
+    const el = document.getElementById(id);
+    const r = el.getBoundingClientRect();
+    const c = canvas.getBoundingClientRect();
+    return {
+      left:r.left-c.left, right:r.right-c.left, top:r.top-c.top, bottom:r.bottom-c.top,
+      cx:(r.left+r.right)/2-c.left, cy:(r.top+r.bottom)/2-c.top, w:r.width, h:r.height
+    };
+  }
+  function pt(rect, side){
+    if(side==='top') return {x:rect.cx, y:rect.top};
+    if(side==='bottom') return {x:rect.cx, y:rect.bottom};
+    if(side==='left') return {x:rect.left, y:rect.cy};
+    if(side==='right') return {x:rect.right, y:rect.cy};
+    return {x:rect.cx, y:rect.cy};
+  }
+
+  function ensureMarker(){
+    let defs = svg.querySelector('defs');
+    if(!defs){ defs = document.createElementNS(NS,'defs'); svg.appendChild(defs); }
+    ['muted','violet','aqua','green','orange','critical','magenta'].forEach(name=>{
+      const id = 'arrow-'+name;
+      if(defs.querySelector('#'+id)) return;
+      const m = document.createElementNS(NS,'marker');
+      m.setAttribute('id', id); m.setAttribute('viewBox','0 0 10 10');
+      m.setAttribute('refX','8'); m.setAttribute('refY','5');
+      m.setAttribute('markerWidth','7'); m.setAttribute('markerHeight','7');
+      m.setAttribute('orient','auto-start-reverse');
+      const p = document.createElementNS(NS,'path');
+      p.setAttribute('d','M 0 0 L 10 5 L 0 10 z');
+      p.setAttribute('fill', getComputedStyle(document.documentElement).getPropertyValue('--'+name) || '#888');
+      m.appendChild(p); defs.appendChild(m);
+    });
+  }
+
+  function labelAt(x, y, text, anchor){
+    const g = document.createElementNS(NS,'g');
+    const t = document.createElementNS(NS,'text');
+    t.setAttribute('class','connlabel');
+    t.setAttribute('x', x); t.setAttribute('y', y);
+    t.setAttribute('text-anchor', anchor||'middle');
+    t.textContent = text;
+    g.appendChild(t);
+    svg.appendChild(g);
+    requestAnimationFrame(()=>{
+      try{
+        const bbox = t.getBBox();
+        const rect = document.createElementNS(NS,'rect');
+        rect.setAttribute('class','connlabel-bg');
+        rect.setAttribute('x', bbox.x-3); rect.setAttribute('y', bbox.y-1.5);
+        rect.setAttribute('width', bbox.width+6); rect.setAttribute('height', bbox.height+3);
+        rect.setAttribute('rx', 3);
+        g.insertBefore(rect, t);
+      }catch(e){}
+    });
+  }
+
+  function strokePath(d, opts){
+    const path = document.createElementNS(NS,'path');
+    path.setAttribute('d', d);
+    path.setAttribute('class', 'conn ' + (opts.cls||'infra-l'));
+    path.setAttribute('marker-end', 'url(#arrow-' + (opts.color||'muted') + ')');
+    svg.appendChild(path);
+  }
+
+  function draw(a, b, opts){
+    opts = opts || {};
+    const ra = rectOf(a.id), rb = rectOf(b.id);
+    const p1 = pt(ra, a.side), p2 = pt(rb, b.side);
+    const midx = (p1.x+p2.x)/2, midy=(p1.y+p2.y)/2;
+    const bend = opts.bend || 0;
+    strokePath(`M ${p1.x} ${p1.y} Q ${midx+bend} ${midy+bend} ${p2.x} ${p2.y}`, opts);
+    if(opts.label){ labelAt(midx+bend, midy+bend-4, opts.label); }
+  }
+
+  // Orthogonal ("Manhattan") routing for long cross-diagram connectors that
+  // would otherwise cut diagonally through unrelated card text.
+  function drawOrth(a, b, opts){
+    opts = opts || {};
+    const ra = rectOf(a.id), rb = rectOf(b.id);
+    const p1 = pt(ra, a.side), p2 = pt(rb, b.side);
+    const y = opts.y;
+    const d = `M ${p1.x} ${p1.y} L ${p1.x} ${y} L ${p2.x} ${y} L ${p2.x} ${p2.y}`;
+    strokePath(d, opts);
+    if(opts.label) labelAt((p1.x+p2.x)/2, y-6, opts.label);
+  }
+
+  // Explicit waypoint routing for connectors that must dodge two or more
+  // clusters of cards (drawn as straight orthogonal segments).
+  function drawVia(a, b, waypoints, opts){
+    opts = opts || {};
+    const ra = rectOf(a.id), rb = rectOf(b.id);
+    const p1 = pt(ra, a.side), p2 = pt(rb, b.side);
+    const pts = [p1, ...waypoints, p2];
+    const d = 'M ' + pts.map(p=>`${p.x} ${p.y}`).join(' L ');
+    strokePath(d, opts);
+    if(opts.label){
+      const mid = pts[Math.floor(pts.length/2)];
+      labelAt(mid.x, mid.y-6, opts.label);
+    }
+  }
+
+  function render(){
+    svg.innerHTML='';
+    ensureMarker();
+
+    // Safe horizontal whitespace band between the AgentCore boundary and the
+    // KG-MCP/Aurora row below it -- used to route long connectors around
+    // card interiors instead of through their text.
+    const gapY = (rectOf('agentcore').bottom + rectOf('kgmcp').top) / 2;
+    const awsR = rectOf('aws');
+    const corridor1 = awsR.right + 9;   // sor-adapters -> external SoR systems
+    const corridor2 = awsR.right + 20;  // drift monitor -> fde-workflow
+    const topY = awsR.top - 14;
+
+    draw({id:'rt-engagement',side:'bottom'},{id:'gateway',side:'top'},{color:'muted',cls:'infra-l'});
+    draw({id:'rt-workflow',side:'bottom'},{id:'gateway',side:'top'},{color:'muted',cls:'infra-l'});
+    draw({id:'rt-development',side:'bottom'},{id:'gateway',side:'top'},{color:'muted',cls:'infra-l'});
+
+    draw({id:'tgt-kg',side:'bottom'},{id:'kgmcp',side:'top'},{color:'muted',cls:'infra-l'});
+
+    // gate-service target -> Gate Service Lambda: dip below the AgentCore
+    // boundary so the line never crosses the Aurora card's title text.
+    drawOrth({id:'tgt-gate',side:'bottom'},{id:'gatesvc',side:'top'},
+      {y:gapY, color:'violet', cls:'det-l'});
+
+    // sor-adapters target -> external SoR systems: drop to the safe band
+    // first, THEN travel right through the whitespace corridor outside the
+    // AWS boundary -- never through the capability chips (Memory/Identity/…)
+    // that sit geometrically in between.
+    { const r1 = rectOf('tgt-sor'), r2 = rectOf('sorsystems');
+      const p1 = pt(r1,'bottom'), p2 = pt(r2,'left');
+      drawVia({id:'tgt-sor',side:'bottom'},{id:'sorsystems',side:'left'},
+        [{x:p1.x,y:gapY},{x:corridor1,y:gapY},{x:corridor1,y:p2.y}],
+        {color:'magenta', cls:'ext-l'});
+    }
+
+    // Drift monitor invoking fde-workflow: out through the corridor, above
+    // the whole diagram, and back down into the runtime box -- avoids
+    // cutting through fde-development, which sits geometrically between them.
+    { const r1 = rectOf('driftmon'), r2 = rectOf('rt-workflow');
+      const p1 = pt(r1,'right'), p2 = pt(r2,'top');
+      drawVia({id:'driftmon',side:'right'},{id:'rt-workflow',side:'top'},
+        [{x:corridor2,y:p1.y},{x:corridor2,y:topY},{x:p2.x,y:topY}],
+        {color:'violet', cls:'det-l', label:'EventBridge (6h) → invoke_agent_runtime'});
+    }
+
+    draw({id:'kgmcp',side:'right'},{id:'aurora',side:'left'},{color:'aqua',cls:'data-l'});
+    draw({id:'gatesvc',side:'top'},{id:'aurora',side:'bottom'},{color:'violet',cls:'det-l', bend:-16});
+    draw({id:'embedder',side:'top'},{id:'aurora',side:'bottom'},{color:'muted',cls:'infra-l'});
+    draw({id:'driftmon',side:'top'},{id:'aurora',side:'bottom'},{color:'violet',cls:'det-l'});
+
+    draw({id:'aurora',side:'bottom'},{id:'sagemaker',side:'top'},{color:'green',cls:'ml-l'});
+    draw({id:'prodops',side:'top'},{id:'aurora',side:'bottom'},{color:'orange',cls:'human-l'});
+    draw({id:'reviewers',side:'left'},{id:'prodops',side:'right'},{color:'orange',cls:'human-l'});
+
+    // Cognito -> Gateway (CUSTOM_JWT): out the left edge into the corridor
+    // immediately (never down through CloudWatch/SoR below it in the same
+    // column), along the safe band, then up into the Gateway from below --
+    // never crosses the capability chips beside the Gateway.
+    { const r1 = rectOf('cognito'), r2 = rectOf('gateway');
+      const p1 = pt(r1,'left'), p2 = pt(r2,'bottom');
+      drawVia({id:'cognito',side:'left'},{id:'gateway',side:'bottom'},
+        [{x:corridor1,y:p1.y},{x:corridor1,y:gapY},{x:p2.x,y:gapY}],
+        {color:'critical', cls:'auth-l', label:'CUSTOM_JWT bearer'});
+    }
+    draw({id:'cap-observability',side:'right'},{id:'cloudwatch',side:'left'},{color:'muted',cls:'infra-l'});
+  }
+
+  render();
+  window.addEventListener('resize', ()=>{ clearTimeout(window.__t); window.__t=setTimeout(render,120); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,186 @@
+# =====================================================================
+# FDE Agent Platform -- uv workspace root.
+#
+# Three members, split along deployment boundaries rather than along
+# "things that feel related":
+#
+#   fde-mcp       -- runs as its own service (ECS/Fargate or in-runtime).
+#                    Its dependency set is the smallest and the most
+#                    security-sensitive: it holds the database credentials.
+#   fde-agents    -- three AgentCore runtimes. Depends on fde-mcp for the
+#                    tracing sidecar's raw_sql path, not for the tool surface
+#                    (that arrives over MCP).
+#   fde-training  -- offline. Heavy ML dependencies (torch/trl/peft) that must
+#                    NEVER end up in an agent container image; keeping them in
+#                    a separate member with its own optional-dependency group
+#                    is what guarantees that.
+#
+# The split is enforced, not conventional: `uv sync --package fde-agents`
+# cannot pull torch, because fde-agents does not depend on fde-training.
+# =====================================================================
+[project]
+name = "fde-platform"
+version = "0.1.0"
+description = "Forward-deployed-engineering agent platform on Amazon Bedrock AgentCore"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+
+# The root is a workspace container, not an importable package.
+dependencies = []
+
+[dependency-groups]
+# `uv sync` installs these by default; `uv sync --no-dev` (used in the
+# Dockerfiles) does not.
+dev = [
+  "ruff>=0.14",
+  "mypy>=1.18",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-cov>=6.0",
+  "types-boto3>=1.35",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+fde-mcp = { workspace = true }
+fde-agents = { workspace = true }
+fde-training = { workspace = true }
+
+[tool.uv]
+# Fail rather than silently resolving to a different set than uv.lock pins.
+# CI and the Dockerfiles both use --frozen; this makes local `uv run` agree.
+default-groups = ["dev"]
+
+# ---------------------------------------------------------------------
+# Ruff -- lint + format. One config for the whole workspace.
+# ---------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages/fde-mcp/src", "packages/fde-agents/src", "packages/fde-training/src"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",      # pycodestyle
+  "F",           # pyflakes
+  "I",           # isort
+  "N",           # pep8-naming
+  "UP",          # pyupgrade -- this is what enforces PEP 604 `X | None`
+  "B",           # bugbear
+  "A",           # builtin shadowing
+  "C4",          # comprehensions
+  "DTZ",         # naive datetimes -- everything here is timestamptz, enforce it
+  "T20",         # no print() in library code
+  "PT",          # pytest style
+  "RET",         # return simplification
+  "SIM",         # simplify
+  "TID",         # tidy imports
+  "PTH",         # pathlib over os.path
+  "PL",          # pylint subset
+  "RUF",         # ruff-specific
+  "ASYNC",       # async correctness -- blocking calls in async defs
+  "S",           # bandit security
+]
+ignore = [
+  "E501",        # line length is the formatter's job, not the linter's
+  "PLR0913",     # MCP tools legitimately have many keyword args
+  "PLR2004",     # magic values are readable in reward/threshold code
+  "S101",        # assert is fine in tests and in internal invariants
+  "RUF012",      # ClassVar annotations on pydantic model attrs are noise
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may print, use fixtures loosely, and hardcode credentials-shaped strings.
+"**/tests/**" = ["T20", "S105", "S106", "PLR0915"]
+"**/test_*.py" = ["T20", "S105", "S106", "PLR0915"]
+# CLI entrypoints are allowed to print -- that IS their output.
+"**/cli.py" = ["T20"]
+"**/__main__.py" = ["T20"]
+# Training scripts are operator-facing tools; printing is the interface.
+"packages/fde-training/src/**" = ["T20"]
+# Deploy scripts shell out and print progress.
+"packages/fde-agents/src/fde_agents/deploy/**" = ["T20", "S603", "S607"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fde_mcp", "fde_agents", "fde_training"]
+required-imports = ["from __future__ import annotations"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------------
+# mypy -- strict on the two packages that run in production.
+#
+# fde-training is deliberately NOT strict. It is research code whose shape
+# changes with every experiment, and pretending otherwise produces a large
+# number of `# type: ignore` comments that carry no information. Being
+# explicit about that boundary is more honest than a uniform setting nobody
+# actually holds to.
+# ---------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+no_implicit_reexport = true
+show_error_codes = true
+pretty = true
+files = ["packages/fde-mcp/src", "packages/fde-agents/src"]
+
+[[tool.mypy.overrides]]
+# Third-party packages without shipped stubs. Listing them explicitly rather
+# than setting a global ignore_missing_imports keeps a new untyped dependency
+# visible instead of silently absorbed.
+module = [
+  "bedrock_agentcore.*",
+  "strands.*",
+  "mcp.*",
+  "psycopg_pool.*",
+  "opentelemetry.*",
+  "structlog.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["fde_training.*"]
+strict = false
+disallow_untyped_defs = false
+
+# ---------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["packages/fde-mcp/tests", "packages/fde-agents/tests", "packages/fde-training/tests"]
+addopts = "-q --strict-markers --strict-config"
+markers = [
+  "requires_db: needs a live Postgres with the db/ migrations applied",
+  "requires_aws: needs live AWS credentials (skipped in CI)",
+]
+filterwarnings = [
+  "error",
+  "ignore::DeprecationWarning:botocore.*",
+  # bedrock_agentcore.runtime.context.RequestContext still uses a Pydantic
+  # v1-style `class Config`; the warning fires on import alone, before any
+  # of our code runs, so there is nothing for us to fix -- only to ignore.
+  "ignore::pydantic.PydanticDeprecatedSince20:bedrock_agentcore.*",
+]
+
+[tool.coverage.run]
+source = ["packages/fde-mcp/src", "packages/fde-agents/src"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+  "@overload",
+]

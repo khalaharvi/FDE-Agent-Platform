@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FDE Agent Platform — The Ontology</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.14); --border-strong:rgba(11,11,11,0.34);
+    --blue:#2a78d6; --orange:#eb6834; --aqua:#1baf7a; --yellow:#eda100; --magenta:#e87ba4;
+    --green:#008300; --violet:#4a3aa7; --red:#e34948; --critical:#d03b3b; --good:#0ca30c;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:where(:not([data-theme="light"])){
+      color-scheme: dark;
+      --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#a8a69f;
+      --grid:#2c2c2a; --axis:#4a4a47; --border:rgba(255,255,255,0.16); --border-strong:rgba(255,255,255,0.38);
+      --blue:#3987e5; --orange:#d95926; --aqua:#199e70; --yellow:#c98500; --magenta:#d55181;
+      --green:#3fbf3f; --violet:#9085e9; --red:#e66767; --critical:#e66767; --good:#3fbf3f;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --surface:#1a1a19; --page:#0d0d0d; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#a8a69f;
+    --grid:#2c2c2a; --axis:#4a4a47; --border:rgba(255,255,255,0.16); --border-strong:rgba(255,255,255,0.38);
+    --blue:#3987e5; --orange:#d95926; --aqua:#199e70; --yellow:#c98500; --magenta:#d55181;
+    --green:#3fbf3f; --violet:#9085e9; --red:#e66767; --critical:#e66767; --good:#3fbf3f;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--page); color:var(--ink); font-family: system-ui,-apple-system,"Segoe UI",sans-serif; padding:28px 32px 60px;}
+  header{max-width:1420px; margin:0 auto 14px;}
+  h1{font-size:22px; margin:0 0 6px; letter-spacing:-0.01em;}
+  .caption{color:var(--ink-2); font-size:14.5px; max-width:1080px; line-height:1.5;}
+  .wrap{max-width:1420px; margin:0 auto;}
+  h2{font-size:15px; margin:34px 0 4px; letter-spacing:.02em;}
+  .subcap{color:var(--ink-2); font-size:12.8px; margin-bottom:14px; max-width:1000px; line-height:1.5;}
+
+  .hubnote{max-width:1420px; margin:14px auto 0; padding:11px 14px; border-radius:9px; border:1.5px solid var(--blue);
+    background:color-mix(in srgb, var(--blue) 9%, var(--surface)); font-size:13px; line-height:1.5;}
+  .capnote{max-width:1420px; margin:10px auto 0; padding:11px 14px; border-radius:9px; border:1.5px solid var(--critical);
+    background:color-mix(in srgb, var(--critical) 8%, var(--surface)); font-size:13px; line-height:1.5;}
+
+  /* ---------- radial ontology ---------- */
+  .radial{position:relative; width:100%; height:960px; margin:10px auto 0;}
+  .hub{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:168px; height:168px; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; border:2.4px solid var(--blue); background:color-mix(in srgb, var(--blue) 20%, var(--surface));
+    font-weight:800; font-size:17px; z-index:4; padding:8px;
+  }
+  .hub .k{font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--blue); margin-bottom:4px;}
+  .hub .ex{font-weight:400; font-size:10px; color:var(--ink-2); margin-top:5px;}
+  .halo{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); border-radius:50%;
+    border:2px dashed var(--magenta); pointer-events:none; z-index:1;
+  }
+  .ntype{
+    position:absolute; width:150px; transform:translate(-50%,-50%); z-index:3;
+    border-radius:9px; border:1.6px solid var(--cat, var(--axis)); background:var(--surface);
+    padding:8px 10px; text-align:center; box-shadow:0 1px 2px rgba(0,0,0,.05);
+  }
+  .ntype .k{font-size:8.6px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--cat); margin-bottom:2px;}
+  .ntype .nm{font-weight:700; font-size:12.6px; font-family: ui-monospace,"SF Mono",Consolas,monospace;}
+  .ntype .ex{font-size:9.6px; color:var(--ink-2); margin-top:3px; line-height:1.3;}
+  .ntype.isolated{border-style:dashed; border-color:var(--critical);}
+  .ntype.isolated .k{color:var(--critical);}
+
+  .org{--cat:var(--orange);} .sysc{--cat:var(--yellow);} .gov{--cat:var(--violet);}
+  .flowc{--cat:var(--aqua);} .imp{--cat:var(--magenta);} .prov{--cat:var(--green);}
+
+  svg.overlay{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible;}
+  .edge{fill:none; stroke-width:1.7;}
+  .elabel{font-size:9.6px; fill:var(--ink-2); font-family: system-ui, sans-serif;}
+  .elabel-bg{fill:var(--page); opacity:.94;}
+  .elabel.strong{font-weight:700;}
+
+  /* ---------- worked example ---------- */
+  .flowwrap{display:flex; flex-direction:column; align-items:center; gap:52px; padding:26px 0 10px;}
+  .flow{position:relative; display:flex; gap:40px; align-items:center; justify-content:center;}
+  .fnode{
+    border-radius:10px; border:1.8px solid var(--cat, var(--axis)); background:color-mix(in srgb, var(--cat, var(--axis)) 13%, var(--surface));
+    padding:12px 14px; width:190px; text-align:left;
+  }
+  .fnode .k{font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:var(--cat); margin-bottom:3px;}
+  .fnode .nm{font-family: ui-monospace,"SF Mono",Consolas,monospace; font-weight:700; font-size:12.5px; margin-bottom:3px; overflow-wrap:break-word;}
+  .fnode .lbl{font-size:11.5px; color:var(--ink-2); line-height:1.35;}
+
+  .legend{max-width:1420px; margin:26px auto 0; display:flex; flex-wrap:wrap; gap:14px 22px; padding:14px 16px;
+    border:1px solid var(--border); border-radius:10px; background:var(--surface); font-size:11.5px; color:var(--ink-2);}
+  .legend .item{display:flex; align-items:center; gap:7px;}
+  .legend .sw{width:13px;height:13px;border-radius:4px;border:1.6px solid var(--cat);background:color-mix(in srgb, var(--cat) 20%, var(--surface));}
+</style>
+</head>
+<body>
+<div class="viz-root">
+<header>
+  <h1>FDE Agent Platform — The Ontology</h1>
+  <div class="caption">
+    Fifteen node types, fifteen edge types (<code>db/001_extensions_and_types.sql</code>), both closed
+    <code>ENUM</code>s — Postgres rejects an unlisted type before any application code runs.
+    <b>Take-away:</b> the ontology is not a flat mesh — <code>activity</code> is the hub that twelve
+    of the fifteen edge types touch directly, because "activity" is the unit of work everything else
+    (systems, artifacts, controls, metrics, tools, people) attaches to.
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hubnote">
+    <b>Reading this diagram:</b> every line is one edge type's legal <code>src → dst</code> pair,
+    colored by the node-type family it connects. Two edge types are universal and are shown as the
+    dashed halo instead of 15 individual spokes: <code>evidenced_by</code> (any node → <code>evidence_doc</code>)
+    and <code>supersedes</code> (any node type → a prior version of itself). Arrowheads show direction.
+  </div>
+  <div class="capnote">
+    <b>Also worth noticing:</b> <code>capability</code> has <i>no</i> dedicated structural edge in the
+    shipped ontology — scan the legal-pairs table in <code>docs/01-knowledge-graph.md</code> and it
+    never appears as a named <code>src</code>/<code>dst</code>. It connects to the rest of the graph
+    only through the two universal edges. Shown dashed, off to the side, below.
+  </div>
+
+  <div class="radial" id="radial">
+    <div class="hub" id="n-activity"><div class="k">Node type</div>activity<div class="ex">"Create Quote"</div></div>
+    <svg class="overlay" id="overlay"></svg>
+  </div>
+
+  <h2>Worked example — Quote-to-Cash (exactly as merged in <code>db/tests/smoke_test.sql</code>)</h2>
+  <div class="subcap">
+    Six node instances and the six edges the Engagement Agent proposed and a human gate merged —
+    the same scenario diagram 4 walks through the gate flow for. Compare each edge here against its
+    type in the radial diagram above: every one is a legal <code>src → dst</code> pair.
+  </div>
+  <div class="canvas2" id="canvas2" style="position:relative;">
+    <div class="flowwrap">
+      <div class="fnode flowc" id="f-quote2cash" style="width:220px;"><div class="k">process</div><div class="nm">proc.quote_to_cash</div><div class="lbl">Quote to Cash</div></div>
+      <div class="flow" id="flow">
+        <div class="fnode gov" id="f-threshold" style="width:200px;"><div class="k">control</div><div class="nm">ctl.discount_threshold_20</div><div class="lbl">20% Discount Threshold</div></div>
+        <div class="fnode flowc" id="f-createquote"><div class="k">activity</div><div class="nm">act.create_quote</div><div class="lbl">Create Quote</div></div>
+        <div class="fnode flowc" id="f-discountreview"><div class="k">activity</div><div class="nm">act.discount_review</div><div class="lbl">Discount Review</div></div>
+        <div class="fnode org" id="f-dealdesk"><div class="k">role</div><div class="nm">role.deal_desk</div><div class="lbl">Deal Desk Analyst</div></div>
+      </div>
+      <div class="fnode sysc" id="f-cpq" style="width:220px; margin-left:130px;"><div class="k">system</div><div class="nm">sys.cpq</div><div class="lbl">CPQ</div></div>
+    </div>
+    <svg class="overlay" id="overlay2"></svg>
+  </div>
+
+  <div class="legend">
+    <div class="item"><span class="sw" style="--cat:var(--blue)"></span> activity (the hub)</div>
+    <div class="item"><span class="sw" style="--cat:var(--orange)"></span> org / people</div>
+    <div class="item"><span class="sw" style="--cat:var(--yellow)"></span> systems</div>
+    <div class="item"><span class="sw" style="--cat:var(--violet)"></span> governance / output</div>
+    <div class="item"><span class="sw" style="--cat:var(--aqua)"></span> process flow</div>
+    <div class="item"><span class="sw" style="--cat:var(--magenta)"></span> improvement (pain/opportunity)</div>
+    <div class="item"><span class="sw" style="--cat:var(--green)"></span> provenance</div>
+    <div class="item"><span style="display:inline-block;width:20px;height:0;border-top:1.8px dashed var(--magenta);"></span> universal edge (evidenced_by / supersedes)</div>
+    <div class="item">dashed red border = no dedicated edge in the shipped ontology</div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const NS='http://www.w3.org/2000/svg';
+
+  // ---------------- radial ontology ----------------
+  const radial = document.getElementById('radial');
+  const overlay = document.getElementById('overlay');
+
+  const outer = [
+    {id:'process',    cat:'flowc', ex:'"Quote to Cash"'},
+    {id:'capability', cat:'gov',   ex:'"Pricing Governance"', isolated:true},
+    {id:'role',       cat:'org',   ex:'"Deal Desk Analyst"'},
+    {id:'org_unit',   cat:'org',   ex:'"Deal Desk" (team)'},
+    {id:'system',     cat:'sysc',  ex:'"CPQ"'},
+    {id:'system_object', cat:'sysc', ex:'"Quote" (in CPQ)'},
+    {id:'artifact',   cat:'flowc', ex:'"Signed Order Form"'},
+    {id:'decision',   cat:'gov',   ex:'"Discount tier routing"'},
+    {id:'control',    cat:'gov',   ex:'"20% Discount Threshold"'},
+    {id:'metric',     cat:'flowc', ex:'"Quote Cycle Time p95"'},
+    {id:'pain_point', cat:'imp',   ex:'"Deal Desk backlog"'},
+    {id:'opportunity',cat:'imp',   ex:'"Auto-approve <10%"'},
+    {id:'tool_binding', cat:'prov', ex:'"CPQ discount-check API"'},
+    {id:'evidence_doc', cat:'prov', ex:'"Discount Approval SOP v4"'},
+  ];
+
+  function idOf(t){ return 'n-'+t; }
+
+  function layoutRadial(){
+    const w = radial.clientWidth, h = radial.clientHeight;
+    const cx = w/2, cy = h/2;
+    const R = Math.min(w,h)/2 - 100;
+    outer.forEach((o,i)=>{
+      let el = document.getElementById(idOf(o.id));
+      if(!el){
+        el = document.createElement('div');
+        el.id = idOf(o.id);
+        el.className = 'ntype ' + o.cat + (o.isolated?' isolated':'');
+        el.innerHTML = `<div class="k">${o.isolated?'node type — isolated':'node type'}</div><div class="nm">${o.id}</div><div class="ex">${o.ex}</div>`;
+        radial.appendChild(el);
+      }
+      let angle, r;
+      if(o.id==='capability'){
+        // Placed off to the side, deliberately not on the main ring, to
+        // visually match the "no dedicated edge" callout above.
+        el.style.left = (cx - R - 70) + 'px';
+        el.style.top  = (cy - R + 30) + 'px';
+        return;
+      }
+      const ring = outer.filter(x=>x.id!=='capability');
+      const idx = ring.indexOf(o);
+      angle = -90 + idx*(360/ring.length);
+      r = R;
+      const rad = angle*Math.PI/180;
+      el.style.left = (cx + r*Math.cos(rad)) + 'px';
+      el.style.top  = (cy + r*Math.sin(rad)) + 'px';
+    });
+  }
+
+  function pt(rect, side, biasFrac){
+    const bf = biasFrac===undefined?0.5:biasFrac;
+    if(side==='top') return {x:rect.left+(rect.right-rect.left)*bf, y:rect.top};
+    if(side==='bottom') return {x:rect.left+(rect.right-rect.left)*bf, y:rect.bottom};
+    if(side==='left') return {x:rect.left, y:rect.top+(rect.bottom-rect.top)*bf};
+    if(side==='right') return {x:rect.right, y:rect.top+(rect.bottom-rect.top)*bf};
+    return {x:rect.cx,y:rect.cy};
+  }
+
+  function rectOf(id, container){
+    const el = document.getElementById(id);
+    const r = el.getBoundingClientRect();
+    const c = container.getBoundingClientRect();
+    return {left:r.left-c.left,right:r.right-c.left,top:r.top-c.top,bottom:r.bottom-c.top,
+            cx:(r.left+r.right)/2-c.left, cy:(r.top+r.bottom)/2-c.top, w:r.width, h:r.height};
+  }
+
+  function ensureMarker(svgEl, names, prefix){
+    prefix = prefix || 'arrow-';
+    let defs = svgEl.querySelector('defs');
+    if(!defs){ defs=document.createElementNS(NS,'defs'); svgEl.appendChild(defs); }
+    names.forEach(name=>{
+      const id=prefix+name;
+      if(defs.querySelector('#'+id)) return;
+      const m=document.createElementNS(NS,'marker');
+      m.setAttribute('id',id); m.setAttribute('viewBox','0 0 10 10');
+      m.setAttribute('refX','8'); m.setAttribute('refY','5');
+      m.setAttribute('markerWidth','6.4'); m.setAttribute('markerHeight','6.4');
+      m.setAttribute('orient','auto-start-reverse');
+      const p=document.createElementNS(NS,'path');
+      p.setAttribute('d','M 0 0 L 10 5 L 0 10 z');
+      p.setAttribute('fill', getComputedStyle(document.documentElement).getPropertyValue('--'+name)||'#888');
+      m.appendChild(p); defs.appendChild(m);
+    });
+  }
+
+  function edgeBetween(svgEl, container, aId, bId, opts){
+    opts = opts||{};
+    const ra = rectOf(aId, container), rb = rectOf(bId, container);
+    // shrink toward center so the line stops at the box edge, not center
+    function shrink(from, to, pad){
+      const dx=to.cx-from.cx, dy=to.cy-from.cy, d=Math.hypot(dx,dy)||1;
+      const fx = Math.max(from.w,from.h)/2 - 4;
+      return {x: from.cx + dx/d*fx, y: from.cy + dy/d*fx};
+    }
+    const p1 = shrink(ra, rb);
+    const p2 = shrink(rb, ra);
+    const bend = opts.bend||0;
+    const midx=(p1.x+p2.x)/2, midy=(p1.y+p2.y)/2;
+    const path=document.createElementNS(NS,'path');
+    path.setAttribute('d', `M ${p1.x} ${p1.y} Q ${midx+bend} ${midy+bend} ${p2.x} ${p2.y}`);
+    path.setAttribute('class','edge');
+    path.setAttribute('stroke', getComputedStyle(document.documentElement).getPropertyValue('--'+(opts.color||'muted')));
+    if(opts.dashed) path.setAttribute('stroke-dasharray','4 4');
+    if(opts.arrowEnd!==false) path.setAttribute('marker-end','url(#arrow-'+(opts.color||'muted')+')');
+    svgEl.appendChild(path);
+    if(opts.label){
+      const lx = midx+bend, ly = midy+bend;
+      const g=document.createElementNS(NS,'g');
+      const t=document.createElementNS(NS,'text');
+      t.setAttribute('class','elabel'+(opts.strong?' strong':'')); t.setAttribute('x',lx); t.setAttribute('y',ly);
+      t.setAttribute('text-anchor','middle'); t.textContent=opts.label;
+      g.appendChild(t); svgEl.appendChild(g);
+      requestAnimationFrame(()=>{
+        try{
+          const bbox=t.getBBox();
+          const rect=document.createElementNS(NS,'rect');
+          rect.setAttribute('class','elabel-bg');
+          rect.setAttribute('x',bbox.x-3); rect.setAttribute('y',bbox.y-1.5);
+          rect.setAttribute('width',bbox.width+6); rect.setAttribute('height',bbox.height+3);
+          rect.setAttribute('rx',3); g.insertBefore(rect,t);
+        }catch(e){}
+      });
+    }
+  }
+
+  function renderRadial(){
+    layoutRadial();
+    overlay.innerHTML='';
+    ensureMarker(overlay, ['blue','orange','yellow','violet','aqua','magenta','green','muted']);
+
+    // halo for the universal evidenced_by / supersedes edges
+    const w = radial.clientWidth, h = radial.clientHeight;
+    const R = Math.min(w,h)/2 - 100;
+    const halo = document.querySelector('.halo') || document.createElement('div');
+    halo.className='halo';
+    halo.style.width = (R*2+150)+'px'; halo.style.height=(R*2+150)+'px';
+    if(!halo.parentNode) radial.insertBefore(halo, radial.firstChild);
+
+    // spokes touching `activity`
+    edgeBetween(overlay,radial,'n-activity','n-process',{color:'aqua', label:'belongs_to'});
+    edgeBetween(overlay,radial,'n-role','n-activity',{color:'orange', label:'performs'});
+    edgeBetween(overlay,radial,'n-activity','n-artifact',{color:'aqua', bend:-14, label:'produces'});
+    edgeBetween(overlay,radial,'n-activity','n-artifact',{color:'aqua', bend:14, label:'consumes', arrowEnd:true});
+    edgeBetween(overlay,radial,'n-activity','n-system_object',{color:'yellow', label:'recorded_in'});
+    edgeBetween(overlay,radial,'n-activity','n-system',{color:'yellow', label:'depends_on'});
+    edgeBetween(overlay,radial,'n-activity','n-decision',{color:'violet', bend:-10, label:'gated_by'});
+    edgeBetween(overlay,radial,'n-activity','n-control',{color:'violet', label:'gated_by'});
+    edgeBetween(overlay,radial,'n-activity','n-metric',{color:'aqua', label:'measured_by'});
+    edgeBetween(overlay,radial,'n-pain_point','n-activity',{color:'magenta', label:'blocks'});
+    edgeBetween(overlay,radial,'n-activity','n-tool_binding',{color:'green', label:'automatable_by ★', strong:true});
+
+    // outer-to-outer (do not touch activity)
+    edgeBetween(overlay,radial,'n-role','n-org_unit',{color:'orange', label:'belongs_to'});
+    edgeBetween(overlay,radial,'n-process','n-metric',{color:'aqua', bend:40, label:'measured_by'});
+    edgeBetween(overlay,radial,'n-opportunity','n-pain_point',{color:'magenta', label:'addresses'});
+
+    // activity self-loop: precedes / hands_off_to / depends_on(activity->activity)
+    {
+      const ra = rectOf('n-activity', radial);
+      const path = document.createElementNS(NS,'path');
+      const x0 = ra.cx, y0 = ra.top;
+      const d = `M ${x0-30} ${y0+10} C ${x0-70} ${y0-70}, ${x0+70} ${y0-70}, ${x0+30} ${y0+10}`;
+      path.setAttribute('d', d);
+      path.setAttribute('class','edge');
+      path.setAttribute('stroke', getComputedStyle(document.documentElement).getPropertyValue('--blue'));
+      path.setAttribute('marker-end','url(#arrow-blue)');
+      overlay.appendChild(path);
+      const g=document.createElementNS(NS,'g');
+      const t=document.createElementNS(NS,'text');
+      t.setAttribute('class','elabel strong'); t.setAttribute('x',x0); t.setAttribute('y',y0-78);
+      t.setAttribute('text-anchor','middle'); t.textContent='precedes · hands_off_to · depends_on (activity ↔ activity)';
+      g.appendChild(t); overlay.appendChild(g);
+      requestAnimationFrame(()=>{
+        try{
+          const bbox=t.getBBox();
+          const rect=document.createElementNS(NS,'rect');
+          rect.setAttribute('class','elabel-bg');
+          rect.setAttribute('x',bbox.x-4); rect.setAttribute('y',bbox.y-2);
+          rect.setAttribute('width',bbox.width+8); rect.setAttribute('height',bbox.height+4);
+          rect.setAttribute('rx',3); g.insertBefore(rect,t);
+        }catch(e){}
+      });
+    }
+
+    // capability: only the universal edges reach it -- show as a short
+    // dashed stub into the halo rather than a spoke to a specific type.
+    {
+      const rc = rectOf('n-capability', radial);
+      const g=document.createElementNS(NS,'g');
+      const t=document.createElementNS(NS,'text');
+      t.setAttribute('class','elabel'); t.setAttribute('x',rc.cx); t.setAttribute('y',rc.bottom+16);
+      t.setAttribute('text-anchor','middle'); t.textContent='evidenced_by / supersedes only';
+      g.appendChild(t); overlay.appendChild(g);
+      requestAnimationFrame(()=>{
+        try{
+          const bbox=t.getBBox();
+          const rect=document.createElementNS(NS,'rect');
+          rect.setAttribute('class','elabel-bg');
+          rect.setAttribute('x',bbox.x-3); rect.setAttribute('y',bbox.y-1.5);
+          rect.setAttribute('width',bbox.width+6); rect.setAttribute('height',bbox.height+3);
+          rect.setAttribute('rx',3); g.insertBefore(rect,t);
+        }catch(e){}
+      });
+    }
+  }
+
+  renderRadial();
+  window.addEventListener('resize', ()=>{ clearTimeout(window.__t1); window.__t1=setTimeout(renderRadial,120); });
+
+  // ---------------- worked example flow ----------------
+  const canvas2 = document.getElementById('canvas2');
+  const overlay2 = document.getElementById('overlay2');
+
+  function rectOf2(id){ return rectOf(id, canvas2); }
+
+  function edge2(aId, aSide, bId, bSide, opts){
+    opts=opts||{};
+    const ra=rectOf2(aId), rb=rectOf2(bId);
+    const from = pt(ra, aSide, opts.aBias);
+    const to = pt(rb, bSide, opts.bBias);
+    const midx=(from.x+to.x)/2, midy=(from.y+to.y)/2;
+    const bend = opts.bend||0;
+    const path=document.createElementNS(NS,'path');
+    path.setAttribute('d', `M ${from.x} ${from.y} Q ${midx+bend} ${midy+bend} ${to.x} ${to.y}`);
+    path.setAttribute('class','edge');
+    path.setAttribute('stroke', getComputedStyle(document.documentElement).getPropertyValue('--'+(opts.color||'muted')));
+    path.setAttribute('marker-end','url(#arrow2-'+(opts.color||'muted')+')');
+    overlay2.appendChild(path);
+    if(opts.label){
+      const g=document.createElementNS(NS,'g');
+      const t=document.createElementNS(NS,'text');
+      t.setAttribute('class','elabel strong'); t.setAttribute('x',midx+bend); t.setAttribute('y',midy+bend-6);
+      t.setAttribute('text-anchor','middle'); t.textContent=opts.label;
+      g.appendChild(t); overlay2.appendChild(g);
+      requestAnimationFrame(()=>{
+        try{
+          const bbox=t.getBBox();
+          const rect=document.createElementNS(NS,'rect');
+          rect.setAttribute('class','elabel-bg');
+          rect.setAttribute('x',bbox.x-3); rect.setAttribute('y',bbox.y-1.5);
+          rect.setAttribute('width',bbox.width+6); rect.setAttribute('height',bbox.height+3);
+          rect.setAttribute('rx',3); g.insertBefore(rect,t);
+        }catch(e){}
+      });
+    }
+  }
+
+  function renderFlow(){
+    overlay2.innerHTML='';
+    ensureMarker(overlay2, ['aqua','orange','yellow','violet','muted'], 'arrow2-');
+    // Each relationship gets its own compass direction so nothing crosses:
+    // up to the process, left/right along the activity chain, down to CPQ.
+    edge2('f-createquote','top', 'f-quote2cash','bottom', {color:'aqua', aBias:0.5, bBias:0.3, label:'belongs_to'});
+    edge2('f-discountreview','top', 'f-quote2cash','bottom', {color:'aqua', bend:0, aBias:0.5, bBias:0.75, label:'belongs_to'});
+    edge2('f-createquote','right', 'f-discountreview','left', {color:'muted', label:'precedes'});
+    edge2('f-createquote','left', 'f-threshold','right', {color:'violet', label:'gated_by'});
+    edge2('f-discountreview','bottom', 'f-cpq','top', {color:'yellow', label:'depends_on'});
+    edge2('f-dealdesk','left', 'f-discountreview','right', {color:'orange', label:'performs'});
+  }
+  renderFlow();
+  window.addEventListener('resize', ()=>{ clearTimeout(window.__t2); window.__t2=setTimeout(renderFlow,120); });
+  // fix marker ids for overlay2 (reuse arrow- prefix but separate <defs>)
+})();
+</script>
+</body>
+</html>

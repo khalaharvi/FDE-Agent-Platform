@@ -1,0 +1,23 @@
+[project]
+name = "fde-mcp"
+version = "0.1.0"
+description = "MCP server exposing the FDE knowledge graph as typed tools"
+requires-python = ">=3.12"
+dependencies = [
+  "mcp>=1.27",
+  "psycopg[binary,pool]>=3.2",
+  "pydantic>=2.9",
+  "boto3>=1.35",
+  "structlog>=24.4",
+]
+
+[project.scripts]
+fde-mcp = "fde_mcp.__main__:main"
+fde-embedder = "fde_mcp.embedder_worker:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fde_mcp"]
