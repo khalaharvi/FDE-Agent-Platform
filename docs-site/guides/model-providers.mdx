@@ -1,0 +1,174 @@
+---
+title: "Bring your own model provider"
+description: "Run the whole propose → gate → merge flow on Anthropic, OpenAI, Gemini, or a local Ollama server — with no AWS account and no code changes."
+---
+
+Bedrock is the default and needs nothing new. This page is for the other
+path: authoring agent turns with the Anthropic API, OpenAI, Google Gemini, or
+any OpenAI-compatible endpoint — including a local Ollama or LM Studio server
+— and running the entire propose → gate → merge flow with zero AWS
+credentials.
+
+Nothing about that choice changes what the platform will accept. A proposal
+authored by a model running on your laptop goes through exactly the same
+human gates as a Bedrock-authored one, because the gates are database
+privileges rather than application logic. See [Human gates](/concepts/human-gates).
+
+<Warning>
+**Stub-tested, not live-validated.** Every non-Bedrock HTTP path — chat model
+construction and every embeddings provider — is exercised in CI against
+in-test HTTP stubs that verify request and response *shape*. None of it has
+run against a live Anthropic, OpenAI, Gemini, or third-party endpoint in this
+environment. This is the same honesty rule the project applies to Bedrock and
+AgentCore, and it is not weakened here: `fde-providers login` and `doctor`'s
+validation call are the first point any of this touches a real provider, and
+only when you run them with your own keys. See [Project status](/status).
+</Warning>
+
+## The provider matrix
+
+Five providers are selectable. Chat and embeddings are chosen independently,
+which matters more than it sounds — see the pairing rule below.
+
+| Provider | `FDE_MODEL_PROVIDER` | Chat | Embeddings | Credential |
+|---|---|---|---|---|
+| Bedrock | `bedrock` (default) | ✓ | ✓ Titan / Cohere | ambient AWS credential chain |
+| Anthropic API | `anthropic` | ✓ | ✗ none offered | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai` | ✓ | ✓ `text-embedding-3-small` / `-large` | `OPENAI_API_KEY` |
+| Google Gemini | `gemini` | ✓ | ✓ `gemini-embedding-001` | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) |
+| OpenAI-compatible | `openai-compat` | ✓ | ✓ if the server serves `/v1/embeddings` | `FDE_MODEL_API_KEY` (optional for local servers) |
+
+### The pairing rule
+
+Anthropic has no embeddings API, and neither do some `openai-compat`
+endpoints. So `FDE_MODEL_PROVIDER` and `FDE_EMBED_PROVIDER` are separate
+settings, and if your chat provider cannot embed you **must** name a
+different one for embeddings. Workable pairings: Anthropic chat with OpenAI
+embeddings, Gemini for both, or Bedrock for both — Bedrock being the only
+single-provider option today.
+
+This fails loudly rather than quietly. The preflight check names the exact
+`fde-providers login` command you are missing instead of falling back to
+anything.
+
+<Note>
+Embeddings must return **1024 dimensions**. That is a database constraint,
+not a preference: the vector column is a fixed `vector(1024)` domain, and
+every embeddings path validates the returned length against it and raises —
+naming the model and known-good alternatives — rather than truncating,
+padding, or silently degrading retrieval. Configure OpenAI with
+`dimensions=1024` and Gemini with `output_dimensionality=1024`. For a
+self-hosted server, `mxbai-embed-large`, `bge-m3`, and
+`snowflake-arctic-embed-l` are known-good 1024-dim choices.
+</Note>
+
+## Logging in
+
+`fde-providers` ships with the MCP server and keeps API keys in the OS
+keychain, so they never land in a config file you might commit.
+
+```bash
+uv run fde-providers login anthropic   # hidden prompt, validated before storing
+uv run fde-providers status            # one row per provider: source + validation
+```
+
+`login` makes one authenticated request against the provider before writing
+anything, so a bad key fails at login time rather than in the middle of an
+agent turn. `logout <provider>` removes a stored key, and
+`status --no-validate` skips the live check when you are offline.
+
+Environment variables always beat the keychain. That is the whole
+deploy story: a server or CI job sets `ANTHROPIC_API_KEY` (or the equivalent)
+and never touches a keychain, while a developer laptop runs `login` once and
+forgets about it. Bedrock has no key here at all — it uses the ambient AWS
+credential chain, and `status` reports whether one looks present.
+
+## A full run, no AWS account
+
+This is the exact sequence for an Anthropic-chat, OpenAI-embeddings run from
+a clean checkout. Get the database up first with the
+[quickstart](/quickstart), then:
+
+```bash
+export FDE_DB_DSN="<the DSN from the quickstart>"
+
+uv run fde-providers login anthropic
+uv run fde-providers login openai
+
+export FDE_MODEL_PROVIDER=anthropic FDE_MODEL_ID=claude-sonnet-5
+export FDE_EMBED_PROVIDER=openai FDE_EMBED_MODEL_ID=text-embedding-3-small
+
+uv run fde-agents-local doctor          # preflight before you spend a token
+uv run fde-agents-local engagement --task ingest_interview \
+  --engagement-id <id> --input '{"material": "..."}'
+
+FDE_GATE_DEV_PRINCIPAL=sme@example.com uv run fde-gate-dev   # → http://127.0.0.1:8787/ui
+```
+
+`doctor` runs five checks — database reachable, the chat provider's
+credential resolves and validates live, `FDE_MODEL_ID` resolves, the
+embeddings provider is configured, and a warning if `FDE_GATEWAY_URL` is set
+— printing `ok <name>` or `FAIL <name>: <problem>` for each. Run it before
+the agent, not after it fails.
+
+Two things that catch people out:
+
+- **`FDE_MODEL_ID` is required for every non-Bedrock chat provider.** The
+  presets on [Models and cost](/models-and-cost) name Bedrock model ids,
+  which mean nothing to Anthropic or OpenAI, so the resolver raises rather
+  than guessing.
+- **Leave `FDE_GATEWAY_URL` unset locally.** Unset, the local runner reaches
+  the same MCP tool surface a deployed runtime uses, over a stdio subprocess
+  — so your local task exercises the identical code path a production
+  invocation would.
+
+Available engagement tasks are `map_process`, `score_opportunities`,
+`detect_bottlenecks`, and `ingest_interview`; the `workflow` and
+`development` agents run the same way.
+
+## Talking to a local or self-hosted server
+
+`FDE_MODEL_PROVIDER=openai-compat` talks to anything that speaks the OpenAI
+chat-completions wire shape. Three named presets cover the common cases via
+`FDE_MODEL_COMPAT_PRESET`, and an explicit `FDE_MODEL_BASE_URL` always
+overrides the preset:
+
+| Preset | Base URL | Notes |
+|---|---|---|
+| `opencode-zen` | `https://opencode.ai/zen/v1` | hosted; chat-only, no embeddings |
+| `ollama` | `http://127.0.0.1:11434/v1` | local, keyless |
+| `lmstudio` | `http://127.0.0.1:1234/v1` | local, keyless |
+
+Keyless local servers work without logging in at all: when no credential
+resolves for `openai-compat`, the client sends the literal string `local` as
+the key, because these servers do not check it. A hosted compatible endpoint
+that does require a key still needs one, via `FDE_MODEL_API_KEY` or
+`fde-providers login openai-compat`.
+
+## Before you commit to a provider
+
+<Warning>
+**Switching embedding provider or model mid-graph strands your old vectors.**
+The database does not record which provider produced a vector. If you ingest
+under one embeddings provider and later switch to another, older rows are not
+re-embedded automatically and hybrid search will silently mix vector spaces —
+degrading results without erroring. Choose an embeddings provider and model
+*before* you ingest, or explicitly re-enqueue affected nodes, edges, and
+chunks through the embedder worker after a change.
+</Warning>
+
+One further scope limit, stated plainly: the offline training pipeline's
+judge and trace-generation paths remain **Bedrock-only**. Provider selection
+covers the three agent runtimes and the embedder, not training.
+
+## Next step
+
+Verify your configuration before writing anything to the graph:
+
+```bash
+uv run fde-agents-local doctor
+```
+
+Every check should print `ok`. When they do, walk
+[Your first merge](/first-merge) — the propose → gate → merge loop behaves
+identically no matter which provider authored the proposal.
