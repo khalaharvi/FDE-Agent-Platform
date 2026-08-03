@@ -215,7 +215,7 @@ been sitting untouched for multiple review cycles.
 | A run is stuck on a human step for a long time | Nobody has answered the question the step is asking | Find who the step is waiting on and get them to respond |
 | A run failed partway through | A downstream system was unreachable, or a precondition wasn't met | Read the step's error message; retry if it looks transient, escalate if not |
 | The review queue keeps growing | Not enough reviewer capacity, or gates are firing more often than expected | Report queue depth and median review time; this is a staffing/threshold conversation, not something to fix by rushing reviews |
-| A proposal has been sitting for days with no decision | Missing an authorized reviewer for one of its required gates, or it fell through the cracks | Check `docs/05-mcp-surface.md`'s `kg_proposal_status`-style report for which gate is still open and who's authorized to clear it; nudge them directly |
+| A proposal has been sitting for days with no decision | Missing an authorized reviewer for one of its required gates, or it fell through the cracks | The proposal page names who can clear each open gate; nudge them directly. If the answer is nobody, an administrator grants the authority at **Reviewers** (§8) |
 | A drift signal keeps reappearing every scan | It hasn't actually been resolved — its "occurrences" count is climbing | Don't dismiss it repeatedly; either fix the underlying map issue or escalate if it's a real operational problem |
 | Same drift signal, but severity keeps changing | The underlying rate is genuinely moving (getting better or worse over repeated scans) | This is expected behavior, not a bug — read the current detail, not just the severity label |
 | You approved something and it doesn't show up in the map yet | Normal — merged changes take a short time to become searchable | Wait a few minutes; if it's still missing after that, escalate |
@@ -244,3 +244,68 @@ Don't try to work around any of these — flag them immediately:
   name or email showing up somewhere the map should only have a role or job
   title) — this should never happen by design, and if it does, it's a bug
   worth reporting immediately, not something to quietly work around.
+
+---
+
+## 8. Managing the reviewer roster (administrators only)
+
+Everything on this page is done at **Reviewers** in the console
+(`/ui/reviewers`). The link only appears if you hold the **admin**
+authority; without it the page answers 403 and says so. This used to
+require an engineer with database access, which is why a reviewer joining a
+team could take a day.
+
+**What a reviewer is made of.** Two separate things, and confusing them is
+the most common support question:
+
+| Thing | What it means | Without it |
+|---|---|---|
+| The reviewer record | This person exists, identified by the `sub` their identity provider sends | Their decisions are refused: "not a registered reviewer" |
+| An authority | They may clear one gate kind on one engagement | They can read the queue and clear nothing |
+
+Adding someone is safe and reversible — a reviewer with no authority holds
+no power at all. The **authority** is the decision worth thinking about.
+
+**Onboarding a reviewer**
+
+1. Add them: principal (exactly the `sub` their IdP sends — an email-shaped
+   guess that doesn't match produces an account that can sign in and clear
+   nothing), display name, optional email.
+2. Grant each authority they need: pick the engagement, pick the gate kind
+   (`ontology`, `factual`, `control`, `automation` — `docs/07-hitl-gates.md`
+   explains what each one is asking), press Grant.
+3. Check the row shows the authorities you expect. That row is what the
+   review queue reads when it decides who can clear what.
+
+**Offboarding.** Press **Deactivate**. There is no delete, by design: gate
+decisions reference the reviewer, so removing the row would remove the
+record of who signed off on what. Deactivating is complete — an inactive
+reviewer cannot record decisions, stops counting toward any gate's quorum,
+and loses admin rights if they had them. Revoke individual authorities the
+same way when someone changes role but stays on the engagement.
+
+**Administrators.** "Make admin" grants the authority to administer this
+roster. Grant it sparingly: an administrator can appoint reviewers and
+therefore, indirectly, decide who approves changes to the graph. The
+console refuses to remove the last remaining administrator — if it let you,
+nobody could administer anything and recovery would mean hand-written SQL
+again.
+
+**Bootstrapping the first administrator.** Only an administrator can grant
+admin, so the first one on a new deployment cannot come from this page. An
+engineer grants it once, directly, against the database:
+
+```sql
+INSERT INTO hitl.reviewer (principal, display_name)
+VALUES ('<their-idp-sub>', '<their name>')
+ON CONFLICT (principal) DO NOTHING;
+
+INSERT INTO hitl.reviewer_admin (reviewer_id, granted_by)
+SELECT reviewer_id, 'bootstrap' FROM hitl.reviewer
+ WHERE principal = '<their-idp-sub>';
+```
+
+That is the whole of the one-time setup; every reviewer after that is added
+from the console. The demo seed (`./db/rebuild.sh <db> --with-demo`) does
+exactly this for `owner@example.com`, which is the principal to sign in as
+when evaluating the console locally.

@@ -1,0 +1,9 @@
+{% extends "base.html.j2" %}
+{% block title %}Not authorised{% endblock %}
+{% block content %}
+<h1>Not authorised</h1>
+{# The service's own message, which names what would fix it. A bare 403
+   leaves an operator unable to tell a missing grant from a broken page. #}
+<div class="banner error">{{ reason }}</div>
+<p><a href="/ui">Back to the review queue</a></p>
+{% endblock %}

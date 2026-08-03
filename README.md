@@ -11,7 +11,7 @@ agents and the graph.
 
 > **The invariant: agents propose. Humans dispose. Only `hitl.merge_proposal`
 > writes the graph** — enforced at four independent layers and asserted by
-> eight privilege-denial checks in CI.
+> twenty privilege-denial checks in CI.
 
 **Who this is for.** Forward-deployed and solutions engineers rebuilding the
 same engagement scaffolding for every client; platform leads who must answer
@@ -177,7 +177,7 @@ fde-platform/
 ├── pyproject.toml       uv workspace root: 5 members, ruff + mypy config
 ├── uv.lock              committed; every build is --frozen
 ├── docs/                14 documents — the blueprints
-├── db/                  15 migrations + a 25-test smoke suite
+├── db/                  16 migrations + a 25-test smoke suite
 ├── packages/
 │   ├── fde-mcp/         MCP server: 21 tools (graph, proposals, drift, workflow, evidence), embedder worker
 │   ├── fde-agents/      3 AgentCore runtimes over one shared common/runtime.py, + deploy CLI
@@ -189,10 +189,10 @@ fde-platform/
 └── .github/workflows/   CI: static → database → tests → train-tests → ARM64 images → gated deploy
 ```
 
-**Gates, all green:** `ruff check` (169 files) + `ruff format --check` (166) ·
-`mypy --strict` on the four production packages (83 files, 0 issues) ·
-`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 609 Python tests
-against live Postgres · eight privilege-denial invariants, all correctly denied.
+**Gates, all green:** `ruff check` (174 files) + `ruff format --check` (172) ·
+`mypy --strict` on the four production packages (85 files, 0 issues) ·
+`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 661 Python tests
+against live Postgres · twenty privilege-denial invariants, all correctly denied.
 
 </details>
 
@@ -308,10 +308,10 @@ model — the one to read if you read only one**), and
 
 | Claim | Evidence |
 |---|---|
-| 15 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate |
+| 16 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate |
 | 25 end-to-end smoke tests pass | incl. fail-closed submit, unauthorised approval, review→edit→merge→label, workflow publish/run/human-response, observation dedup, as-of traversal |
-| 609 Python tests, 599 of them in one run against live Postgres | fde-mcp 90 · fde-agents 117 · fde-training 183 · fde-gate 49 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
-| 8 privilege-denial invariants hold | asserted in CI, not trusted |
+| 661 Python tests, 651 of them in one run against live Postgres | fde-mcp 110 · fde-agents 117 · fde-training 183 · fde-gate 81 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
+| 20 privilege-denial invariants hold | asserted in CI, not trusted |
 | 6 diagrams screenshot-verified | both colour schemes |
 
 **Not validated here:** anything requiring live AWS credentials — Bedrock

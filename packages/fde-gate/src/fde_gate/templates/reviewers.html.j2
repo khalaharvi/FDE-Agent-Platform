@@ -1,0 +1,108 @@
+{% extends "base.html.j2" %}
+{% block title %}Reviewers{% endblock %}
+{% block content %}
+<h1>Reviewers</h1>
+<p class="muted">
+  Who may review, and which gate kinds they may clear on which engagement.
+  A reviewer with no authority can sign in and see the queue but cannot
+  clear anything &mdash; the authority is the privilege, not the account.
+  Removing someone is a deactivation: their past decisions stay attributed.
+</p>
+
+{# One datalist for every engagement the platform has seen, shared by every
+   row's grant form. Nobody types a uuid correctly from memory. #}
+<datalist id="engagements">
+  {% for e in engagements %}<option value="{{ e }}"></option>{% endfor %}
+</datalist>
+
+{% if not reviewers %}
+  <p class="empty">No reviewer is registered yet.</p>
+{% else %}
+<table>
+  <tr>
+    <th>Reviewer</th><th>Status</th><th>Live authorities</th><th>Grant</th>
+  </tr>
+  {% for r in reviewers %}
+  <tr>
+    <td>
+      {{ r.display_name }}
+      <div class="muted">{{ r.principal }}{% if r.email %} &middot; {{ r.email }}{% endif %}</div>
+    </td>
+    <td>
+      {% if r.is_active %}
+        <span class="pill">active</span>
+      {% else %}
+        <span class="pill overdue">deactivated</span>
+      {% endif %}
+      {% if r.is_admin %}
+        <span class="pill">admin</span>
+        <div class="muted">granted by {{ r.admin_granted_by }}</div>
+      {% endif %}
+      <form method="post" action="/ui/reviewers/{{ r.reviewer_id }}/active">
+        <input type="hidden" name="active" value="{{ 0 if r.is_active else 1 }}">
+        <button type="submit">{{ "Deactivate" if r.is_active else "Reactivate" }}</button>
+      </form>
+      <form method="post" action="/ui/reviewers/{{ r.reviewer_id }}/admin">
+        <input type="hidden" name="admin" value="{{ 0 if r.is_admin else 1 }}">
+        <button type="submit">{{ "Revoke admin" if r.is_admin else "Make admin" }}</button>
+      </form>
+    </td>
+    <td>
+      {% if not r.authorities %}
+        <span class="muted">none &mdash; cannot clear any gate</span>
+      {% else %}
+        {% for a in r.authorities %}
+        <form method="post" action="/ui/reviewers/{{ r.reviewer_id }}/authority">
+          <input type="hidden" name="action" value="revoke">
+          <input type="hidden" name="engagement_id" value="{{ a.engagement_id }}">
+          <input type="hidden" name="gate_kind" value="{{ a.gate_kind }}">
+          <span class="pill">{{ a.gate_kind }}</span>
+          <span class="muted">{{ a.engagement_id }} &middot; by {{ a.granted_by }}</span>
+          <button type="submit">Revoke</button>
+        </form>
+        {% endfor %}
+      {% endif %}
+    </td>
+    <td>
+      <form method="post" action="/ui/reviewers/{{ r.reviewer_id }}/authority">
+        <input type="hidden" name="action" value="grant">
+        <label>Engagement
+          <input type="text" name="engagement_id" list="engagements" size="34" required>
+        </label>
+        <label>Gate kind
+          <select name="gate_kind">
+            {% for k in gate_kinds %}<option value="{{ k }}">{{ k }}</option>{% endfor %}
+          </select>
+        </label>
+        <button type="submit">Grant</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<fieldset>
+  <legend>Add a reviewer</legend>
+  <form method="post" action="/ui/reviewers/add">
+    <label>Principal
+      {# The IdP subject, db/004:22 -- whatever arrives as the JWT `sub`.
+         Getting it wrong produces a reviewer who can sign in and match
+         nothing, so the placeholder shows the shape the demo seed uses. #}
+      <input type="text" name="principal" size="30" placeholder="sme@example.com" required>
+    </label>
+    <label>Display name
+      <input type="text" name="display_name" size="24" required>
+    </label>
+    <label>Email
+      <input type="text" name="email" size="24">
+    </label>
+    <button type="submit">Add</button>
+  </form>
+  <p class="muted">
+    The principal must be exactly the <code>sub</code> claim their identity
+    provider sends, or their decisions will be refused as
+    &ldquo;not a registered reviewer&rdquo;.
+  </p>
+</fieldset>
+{% endblock %}

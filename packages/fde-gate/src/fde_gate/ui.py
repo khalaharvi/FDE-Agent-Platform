@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import time
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -41,7 +42,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from fde_gate.http import GateError, Request, Response, pg_message
 from fde_gate.runner import advance, default_invoker
-from fde_gate.service import drift, proposals, runs, workflows
+from fde_gate.service import drift, proposals, reviewers, runs, workflows
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -79,17 +80,51 @@ def render(template: str, **context: Any) -> str:
     return _ENV.get_template(template).render(**context)
 
 
-def _page(request: Request, template: str, **context: Any) -> Response:
-    """Render a page with the chrome every template expects."""
+async def _page(request: Request, template: str, **context: Any) -> Response:
+    """Render a page with the chrome every template expects.
+
+    Async, and one query heavier than it looks, because `base.html.j2` shows
+    the Reviewers link only to administrators and every page extends it. The
+    alternative -- computing `is_admin` in the handlers that happen to need
+    it and defaulting it false elsewhere -- means an administrator can only
+    find the page from the page, which is not a link.
+
+    Nothing is authorised here. The flag decides what is DISPLAYED; every
+    reviewers.* function re-checks inside its own transaction, so a stale
+    link is a 403, not an action.
+    """
     return Response.html(
         render(
             template,
             principal=request.principal,
+            is_admin=await reviewers.is_admin(request.principal),
             error=request.query.get("error"),
             notice=request.query.get("notice"),
             rendered_at=time.time(),
             **context,
         )
+    )
+
+
+async def _forbidden(request: Request, exc: GateError) -> Response:
+    """A 403 an operator can read, for the console's HTML routes.
+
+    The router's default is the JSON error envelope, which is right for the
+    API and wrong for a browser: it renders as a wall of braces in place of
+    the page. Both GET and POST land here, so a form submitted from a page
+    that went stale answers with the same 403 as a direct request.
+    """
+    return Response.html(
+        render(
+            "not_authorized.html.j2",
+            principal=request.principal,
+            is_admin=False,
+            error=None,
+            notice=None,
+            rendered_at=time.time(),
+            reason=exc.message,
+        ),
+        status=exc.status,
     )
 
 
@@ -174,7 +209,7 @@ async def queue_page(request: Request) -> Response:
     """The operator's home: proposals to review and steps waiting on a human."""
     queue = await proposals.list_queue(request.principal, mine=request.query.get("mine") == "1")
     awaiting = await runs.awaiting_steps(request.principal)
-    return _page(
+    return await _page(
         request,
         "queue.html.j2",
         proposals=queue["proposals"],
@@ -187,8 +222,8 @@ async def proposal_page(request: Request) -> Response:
     proposal_id = request.param_int("proposal_id")
     proposal = await proposals.get_proposal(proposal_id, request.principal)
     if "error" in proposal:
-        return _page(request, "not_found.html.j2", what=f"proposal {proposal_id}")
-    return _page(request, "proposal.html.j2", proposal=proposal)
+        return await _page(request, "not_found.html.j2", what=f"proposal {proposal_id}")
+    return await _page(request, "proposal.html.j2", proposal=proposal)
 
 
 async def decision_post(request: Request) -> Response:
@@ -242,7 +277,7 @@ async def merge_post(request: Request) -> Response:
 async def workflows_page(request: Request) -> Response:
     status = request.query.get("status", "published")
     listing = await workflows.list_workflows(status=None if status == "all" else status)
-    return _page(request, "workflows.html.j2", workflows=listing["workflows"], status=status)
+    return await _page(request, "workflows.html.j2", workflows=listing["workflows"], status=status)
 
 
 async def workflow_page(request: Request) -> Response:
@@ -255,8 +290,8 @@ async def workflow_page(request: Request) -> Response:
     workflow_id = request.param_int("workflow_id")
     playbook = await workflows.get_playbook(workflow_id)
     if "error" in playbook:
-        return _page(request, "not_found.html.j2", what=f"workflow {workflow_id}")
-    return _page(
+        return await _page(request, "not_found.html.j2", what=f"workflow {workflow_id}")
+    return await _page(
         request,
         "workflow.html.j2",
         workflow=playbook["workflow"],
@@ -286,7 +321,7 @@ async def runs_page(request: Request) -> Response:
     status = request.query.get("status")
     listing = await runs.list_runs(statuses=(status,) if status else None)
     published = await workflows.list_workflows(status="published")
-    return _page(
+    return await _page(
         request,
         "runs.html.j2",
         runs=listing["runs"],
@@ -299,8 +334,8 @@ async def run_page(request: Request) -> Response:
     run_id = request.param_int("run_id")
     run = await runs.get_run(run_id)
     if "error" in run:
-        return _page(request, "not_found.html.j2", what=f"run {run_id}")
-    return _page(request, "run.html.j2", run=run)
+        return await _page(request, "not_found.html.j2", what=f"run {run_id}")
+    return await _page(request, "run.html.j2", run=run)
 
 
 async def run_start_post(request: Request) -> Response:
@@ -363,7 +398,7 @@ async def cancel_post(request: Request) -> Response:
 async def drift_page(request: Request) -> Response:
     severity = request.query.get("severity")
     listing = await drift.list_signals(severity=severity)
-    return _page(request, "drift.html.j2", signals=listing["signals"], severity=severity)
+    return await _page(request, "drift.html.j2", signals=listing["signals"], severity=severity)
 
 
 async def triage_post(request: Request) -> Response:
@@ -380,8 +415,119 @@ async def triage_post(request: Request) -> Response:
     return _back("/ui/drift", notice=f"signal {signal_id} triaged")
 
 
+async def reviewers_page(request: Request) -> Response:
+    """The roster. Administrators only, checked in the service layer.
+
+    The guard is `reviewers.list_roster` refusing, not a branch here: the
+    same refusal then covers every POST below and anything else that ever
+    reads the roster, rather than being re-implemented per route.
+    """
+    try:
+        roster = await reviewers.list_roster(request.principal)
+    except GateError as exc:
+        if exc.status == HTTPStatus.FORBIDDEN:
+            return await _forbidden(request, exc)
+        raise
+    return await _page(
+        request,
+        "reviewers.html.j2",
+        reviewers=roster["reviewers"],
+        gate_kinds=roster["gate_kinds"],
+        engagements=roster["engagements"],
+    )
+
+
+async def reviewer_add_post(request: Request) -> Response:
+    try:
+        added = await reviewers.add_reviewer(
+            request.principal,
+            principal=request.field_str("principal"),
+            display_name=request.field_str("display_name"),
+            email=request.form.get("email") or None,
+        )
+    except GateError as exc:
+        if exc.status == HTTPStatus.FORBIDDEN:
+            return await _forbidden(request, exc)
+        return _back("/ui/reviewers", error=_message(exc))
+    except Exception as exc:  # rendered to the operator
+        return _back("/ui/reviewers", error=_message(exc))
+    reviewer = added["reviewer"] or {}
+    return _back("/ui/reviewers", notice=f"added {reviewer.get('principal')}")
+
+
+async def reviewer_active_post(request: Request) -> Response:
+    reviewer_id = request.param_int("reviewer_id")
+    active = request.field_str("active") == "1"
+    try:
+        await reviewers.set_active(request.principal, reviewer_id, active=active)
+    except GateError as exc:
+        if exc.status == HTTPStatus.FORBIDDEN:
+            return await _forbidden(request, exc)
+        return _back("/ui/reviewers", error=_message(exc))
+    except Exception as exc:  # rendered to the operator
+        return _back("/ui/reviewers", error=_message(exc))
+    return _back(
+        "/ui/reviewers",
+        notice=f"reviewer {reviewer_id} {'reactivated' if active else 'deactivated'}",
+    )
+
+
+async def reviewer_authority_post(request: Request) -> Response:
+    """Grant or revoke one gate authority. One route, because the form that
+    revokes and the form that grants differ only in a hidden field, and two
+    routes would be two places to forget the admin check."""
+    reviewer_id = request.param_int("reviewer_id")
+    verb = "changed"
+    try:
+        action = request.field_str("action")
+        engagement_id = request.field_str("engagement_id")
+        gate_kind = request.field_str("gate_kind")
+        # Spelled out rather than f"{action}ed", which produced "revokeed".
+        verb = "granted" if action == "grant" else "revoked"
+        if action == "grant":
+            await reviewers.grant_authority(
+                request.principal,
+                reviewer_id,
+                engagement_id=engagement_id,
+                gate_kind=gate_kind,
+            )
+        elif action == "revoke":
+            await reviewers.revoke_authority(
+                request.principal,
+                reviewer_id,
+                engagement_id=engagement_id,
+                gate_kind=gate_kind,
+            )
+        else:
+            raise GateError(HTTPStatus.BAD_REQUEST, f"unknown action {action!r}")
+    except GateError as exc:
+        if exc.status == HTTPStatus.FORBIDDEN:
+            return await _forbidden(request, exc)
+        return _back("/ui/reviewers", error=_message(exc))
+    except Exception as exc:  # rendered to the operator
+        return _back("/ui/reviewers", error=_message(exc))
+    return _back("/ui/reviewers", notice=f"{verb} {gate_kind} for reviewer {reviewer_id}")
+
+
+async def reviewer_admin_post(request: Request) -> Response:
+    reviewer_id = request.param_int("reviewer_id")
+    admin = request.field_str("admin") == "1"
+    try:
+        await reviewers.set_admin(request.principal, reviewer_id, admin=admin)
+    except GateError as exc:
+        if exc.status == HTTPStatus.FORBIDDEN:
+            return await _forbidden(request, exc)
+        return _back("/ui/reviewers", error=_message(exc))
+    except Exception as exc:  # rendered to the operator
+        return _back("/ui/reviewers", error=_message(exc))
+    return _back(
+        "/ui/reviewers",
+        notice=f"admin {'granted to' if admin else 'revoked from'} reviewer {reviewer_id}",
+    )
+
+
 def register(router: Router) -> None:
-    """Attach the console's 15 routes to the shared router."""
+    """Attach the console's 20 routes to the shared router."""
     router.get("/ui", queue_page)
     router.get("/ui/proposals/{proposal_id}", proposal_page)
     router.post("/ui/proposals/{proposal_id}/decision", decision_post)
@@ -400,3 +546,9 @@ def register(router: Router) -> None:
 
     router.get("/ui/drift", drift_page)
     router.post("/ui/drift/{signal_id}/triage", triage_post)
+
+    router.get("/ui/reviewers", reviewers_page)
+    router.post("/ui/reviewers/add", reviewer_add_post)
+    router.post("/ui/reviewers/{reviewer_id}/active", reviewer_active_post)
+    router.post("/ui/reviewers/{reviewer_id}/authority", reviewer_authority_post)
+    router.post("/ui/reviewers/{reviewer_id}/admin", reviewer_admin_post)
