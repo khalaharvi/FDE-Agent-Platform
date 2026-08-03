@@ -67,16 +67,20 @@ jobs:
       - name: migrations + 25 smoke tests
         run: ./db/rebuild.sh fde
       - name: core invariants must hold
-        # These twenty statements MUST all fail. If any succeeds, an agent
-        # can write the graph, publish a workflow, label its own training
-        # data, or appoint its own reviewer, and the platform's central
+        # These twenty-five statements MUST all fail. If any succeeds, an
+        # agent can write the graph, publish a workflow, label its own
+        # training data, appoint its own reviewer, or rewrite the evidence a
+        # reviewer checked a proposal against, and the platform's central
         # guarantee is gone. Asserted here rather than trusted.
         #
         # The first eight are the original set and are not to be edited --
-        # they are the four-layer invariant itself. The twelve below them
+        # they are the four-layer invariant itself. The twelve after them
         # guard the reviewer roster (db/016): the console may administer it,
         # nothing else may touch it, and even the console may only write the
-        # columns db/016 names.
+        # columns db/016 names. The last five guard evidence intake
+        # (db/017), which gave the console INSERT on three kg tables: the
+        # grant must not have widened into UPDATE, DELETE, the graph
+        # tables, or a second role.
         run: |
           set -u
           fail=0
@@ -118,6 +122,30 @@ jobs:
           # granting a different one) or a reviewer's display name.
           assert_denied fde_gate_service "UPDATE hitl.reviewer_authority SET gate_kind = 'factual';"
           assert_denied fde_gate_service "UPDATE hitl.reviewer SET display_name = 'x';"
+
+          # db/017 lets the console accept a pasted transcript: INSERT on
+          # kg.source, kg.chunk and kg.embed_queue, and nothing else. Chunks
+          # are the verbatim evidence a reviewer reads to check a proposal,
+          # so a console that could rewrite or delete one could rewrite the
+          # justification for a claim a human already agreed to -- and a
+          # source row is INSERT-only because re-ingest is a new version,
+          # which is only an audit trail if the old one cannot be edited.
+          # The fourth line is the important one: the write reaches evidence
+          # tables and stops there. hitl.merge_proposal remains the only
+          # path by which anything in this platform writes the graph.
+          assert_denied fde_gate_service "UPDATE kg.chunk SET content = 'x';"
+          assert_denied fde_gate_service "DELETE FROM kg.chunk;"
+          assert_denied fde_gate_service "UPDATE kg.source SET title = 'x';"
+          # These two are `SELECT ... WHERE false` rather than VALUES, and the
+          # difference decides whether they test anything. A literal VALUES row
+          # has to name a commit_id and a source_id, which do not exist -- so it
+          # fails on a foreign key EVEN FOR THE OWNER, and assert_denied would
+          # keep printing "ok" after a widened grant had already broken the
+          # invariant. Selecting zero rows from the table itself inserts nothing,
+          # succeeds trivially wherever the privilege is held, and can therefore
+          # fail for exactly one reason.
+          assert_denied fde_gate_service "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) SELECT engagement_id,node_key,node_type,label,commit_id FROM kg.node WHERE false;"
+          assert_denied fde_prodops "INSERT INTO kg.chunk (engagement_id,source_id,ordinal,content) SELECT engagement_id,source_id,ordinal,content FROM kg.chunk WHERE false;"
           exit $fail
 
   # -------------------------------------------------------------------

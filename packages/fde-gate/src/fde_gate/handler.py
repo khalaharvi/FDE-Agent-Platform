@@ -43,6 +43,7 @@ from fde_gate.http import (
     Request,
     Response,
     Router,
+    error_response,
     parse_apigw_event,
     to_apigw_response,
 )
@@ -400,7 +401,18 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     request_context = event.get("requestContext")
     if isinstance(request_context, dict) and "http" in request_context:
-        request = parse_apigw_event(event)
+        # Parsing happens BEFORE any route is matched, so it sits outside the
+        # router's error contract and its refusals had nowhere to go: a
+        # non-UTF-8 upload or a malformed body raised out of the handler, and
+        # the operator got a bare 502 from API Gateway (a dropped connection
+        # on the dev server) instead of the sentence naming what to do. The
+        # message is the whole point of refusing, so it is mapped here the
+        # same way the router maps a handler's.
+        try:
+            request = parse_apigw_event(event)
+        except GateError as exc:
+            log.info("gate_unparseable_request", status=exc.status, message=exc.message)
+            return to_apigw_response(error_response(exc))
         response = _LOOP.run_until_complete(ROUTER.dispatch(request))
         log.info(
             "gate_request",

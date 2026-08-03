@@ -115,6 +115,130 @@ def test_form_body_parsing() -> None:
     assert request.field_str("decision") == "approve"
 
 
+def _multipart(
+    parts: list[tuple[str, str | None, bytes]], boundary: str = "----pytestBoundary"
+) -> bytes:
+    """Build a multipart/form-data body the way a browser would.
+
+    Parts are (field name, filename or None, raw bytes). Written by hand
+    rather than with `email.mime` so the bytes under test are the bytes a
+    browser actually sends -- CRLF line endings included, which is the detail
+    a parser gets wrong.
+    """
+    chunks: list[bytes] = []
+    for name, filename, content in parts:
+        disposition = f'form-data; name="{name}"'
+        if filename is not None:
+            disposition += f'; filename="{filename}"'
+        headers = f"--{boundary}\r\nContent-Disposition: {disposition}\r\n"
+        if filename is not None:
+            headers += "Content-Type: text/plain\r\n"
+        chunks.append(headers.encode("utf-8") + b"\r\n" + content + b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode())
+    return b"".join(chunks)
+
+
+def _multipart_event(body: bytes, boundary: str = "----pytestBoundary") -> dict[str, Any]:
+    """An event carrying a multipart body, base64-encoded as API Gateway sends it.
+
+    Built directly rather than through `_event`, which takes `str` -- a
+    multipart body is bytes, and the whole point of some of these cases is a
+    part that is not decodable text.
+    """
+    return {
+        "version": "2.0",
+        "rawPath": "/ui/sources/preview",
+        "headers": {"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        "requestContext": {"http": {"method": "POST", "path": "/ui/sources/preview"}},
+        "isBase64Encoded": True,
+        "body": base64.b64encode(body).decode("ascii"),
+    }
+
+
+def test_multipart_form_splits_fields_from_files() -> None:
+    """The New source page posts a form and a file in one request."""
+    body = _multipart(
+        [
+            ("title", None, b"RevOps interview"),
+            ("source_kind", None, b"interview"),
+            ("file", "transcript.txt", b"Dana said the quota is wrong."),
+        ]
+    )
+    request = parse_apigw_event(_multipart_event(body))
+    assert request.form["title"] == "RevOps interview"
+    assert request.form["source_kind"] == "interview"
+    assert request.files["file"].filename == "transcript.txt"
+    assert request.files["file"].content == "Dana said the quota is wrong."
+
+
+def test_multipart_untouched_file_input_is_not_an_upload() -> None:
+    """A browser posts an empty part for a file input nobody chose a file in.
+
+    It must not arrive as an empty upload, or "paste box only" becomes
+    indistinguishable from "uploaded an empty file" and the handler that
+    refuses both at once refuses everything.
+    """
+    body = _multipart([("text", None, b"pasted transcript"), ("file", "", b"")])
+    request = parse_apigw_event(_multipart_event(body))
+    assert request.form["text"] == "pasted transcript"
+    assert request.files == {}
+
+
+def test_multipart_rejects_a_file_that_is_not_utf8_text() -> None:
+    """A PDF dragged into the upload box is refused by name, not stored as mojibake."""
+    body = _multipart([("file", "scan.pdf", b"%PDF-1.4\x00\xff\xfe binary \x80\x81")])
+    with pytest.raises(GateError) as excinfo:
+        parse_apigw_event(_multipart_event(body))
+    assert excinfo.value.status == HTTPStatus.BAD_REQUEST
+    assert "scan.pdf" in excinfo.value.message
+    assert ".md" in excinfo.value.message
+
+
+def test_multipart_survives_a_file_containing_its_own_boundary_text() -> None:
+    """The transcript mentions the boundary string; the parser is not fooled."""
+    body = _multipart(
+        [("file", "t.md", b"They said ----pytestBoundary was the code word.\r\nThen left.")]
+    )
+    request = parse_apigw_event(_multipart_event(body))
+    assert "code word" in request.files["file"].content
+    assert "Then left." in request.files["file"].content
+
+
+def test_a_parse_refusal_reaches_the_wire_as_a_400_with_its_message() -> None:
+    """Through lambda_handler, not the parser: the message has to survive.
+
+    Parsing runs before any route is matched, so it sits outside the router's
+    error contract. The refusals it raises -- a PDF in the upload box, a
+    mismatched boundary, a malformed JSON body -- are worth nothing if they
+    leave the handler as an exception, because API Gateway turns that into a
+    bare 502 and the operator learns only that something broke.
+    """
+    from fde_gate.handler import lambda_handler  # noqa: PLC0415 -- see test_devserver
+
+    body = _multipart([("file", "scan.pdf", b"%PDF-1.4\x00\xff\xfe binary \x80\x81")])
+    result = lambda_handler(_multipart_event(body), None)
+
+    assert result["statusCode"] == HTTPStatus.BAD_REQUEST
+    assert "scan.pdf" in result["body"]
+    assert ".md" in result["body"]
+
+
+def test_a_malformed_json_body_also_reaches_the_wire_as_a_400() -> None:
+    """The same escape existed for JSON and was never caught.
+
+    `test_malformed_json_body_is_a_400_not_a_500` asserts the parser raises
+    the right thing; nothing asserted the handler did anything sensible with
+    it. It did not -- the GateError escaped. Same fix covers both.
+    """
+    from fde_gate.handler import lambda_handler  # noqa: PLC0415
+
+    event = _event("POST", "/api/items/1", body="{not json")
+    result = lambda_handler(event, None)
+
+    assert result["statusCode"] == HTTPStatus.BAD_REQUEST
+    assert "not valid JSON" in result["body"]
+
+
 def test_base64_encoded_body_is_decoded() -> None:
     request = parse_apigw_event(
         _event("POST", "/api/items/1", body=json.dumps({"payload": {"a": 1}}), base64_encoded=True)

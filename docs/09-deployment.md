@@ -358,7 +358,7 @@ jobs:
   static:       # ruff check + format, mypy --strict on the four production
                 # packages (fde-mcp, fde-agents, fde-gate, fde-sor), uv lock --check
   database:     # pgvector/pgvector:0.8.0-pg16 service; ./db/rebuild.sh fde
-                # (16 migrations + 25 smoke tests), then the TWENTY privilege
+                # (17 migrations + 25 smoke tests), then the TWENTY-FIVE privilege
                 # denials asserted (agents cannot write/merge/publish/label,
                 # and cannot appoint their own reviewer)
   tests:        # same DB image; uv run pytest packages --cov

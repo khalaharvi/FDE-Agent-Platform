@@ -1,0 +1,92 @@
+{% extends "base.html.j2" %}
+{% block title %}Preview: {{ preview.title }}{% endblock %}
+{% block content %}
+<h1>Preview</h1>
+<p class="muted">
+  Nothing has been saved yet. This is exactly what will be stored if you
+  confirm &mdash; the same splitter and the same anchor matching run again on
+  the same text.
+</p>
+
+{% if preview.duplicate_of %}
+<div class="banner notice">
+  This exact text is already registered as
+  <a href="/ui/sources/{{ preview.duplicate_of.source_id }}">source
+  {{ preview.duplicate_of.source_id }}</a> ({{ preview.duplicate_of.title }}).
+  Saving again will reuse that source rather than storing a second copy.
+</div>
+{% endif %}
+
+<h2>{{ preview.title }}</h2>
+<p>
+  <span class="pill">{{ preview.source_kind }}</span>
+  <span class="pill">{{ preview.chunks|length }} {{ preview.chunks|length|plural("chunk") }}</span>
+  <span class="pill{% if coverage.anchored == 0 %} overdue{% endif %}">
+    {{ coverage.percent }}% anchored
+  </span>
+  <span class="muted">
+    {# Past tense, deliberately: "0 of 1 passage match" and "1 of 2 passages
+       matches" are both wrong, and the number in front is what an operator
+       is reading anyway. #}
+    {{ coverage.anchored }} of {{ coverage.total }} {{ coverage.total|plural("passage") }}
+    matched one of the {{ preview.live_node_count }}
+    {{ preview.live_node_count|plural("node") }} currently live on this engagement.
+  </span>
+</p>
+
+{% if coverage.anchored == 0 %}
+<div class="banner warn">
+  <strong>No passage in this document matches anything in the graph yet.</strong>
+  <p>{{ dark_consequence }}</p>
+  <p><strong>What to do:</strong> {{ dark_next_step }}</p>
+  <p class="muted">
+    You can still save it &mdash; and usually should. An interview normally
+    arrives before the nodes it is evidence for exist, which is why the
+    re-ingest step exists rather than a refusal here.
+  </p>
+</div>
+{% elif coverage.dark > 0 %}
+<div class="banner warn">
+  <strong>{{ coverage.dark }} of {{ coverage.total }}
+  {{ coverage.total|plural("passage") }} will be invisible to search.</strong>
+  <p>{{ dark_consequence }}</p>
+  <p><strong>What to do:</strong> {{ dark_next_step }}</p>
+</div>
+{% endif %}
+
+<h2>How it will be split</h2>
+<table>
+  <tr><th>#</th><th>Anchors</th><th>Passage</th></tr>
+  {% for chunk in preview.chunks %}
+  <tr>
+    <td>{{ chunk.ordinal }}</td>
+    <td>
+      {% if chunk.anchor_keys %}
+        {% for key in chunk.anchor_keys %}<span class="pill">{{ key }}</span> {% endfor %}
+      {% else %}
+        <span class="pill overdue">dark</span>
+      {% endif %}
+    </td>
+    <td>
+      <div class="muted">{{ chunk.content|length }} characters</div>
+      <pre>{{ chunk.content[:400] }}{% if chunk.content|length > 400 %}…{% endif %}</pre>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{# Every field travels forward so the commit re-derives the chunks from the
+   same input. The console holds no session state (see ui.py), and the
+   chunker is deterministic, so re-running it is what makes a stateless
+   preview an accurate promise rather than an estimate. #}
+<form method="post" action="/ui/sources">
+  <input type="hidden" name="engagement_id" value="{{ preview.engagement_id }}">
+  <input type="hidden" name="title" value="{{ preview.title }}">
+  <input type="hidden" name="source_kind" value="{{ preview.source_kind }}">
+  <input type="hidden" name="captured_at" value="{{ preview.captured_at }}">
+  {% if filename %}<input type="hidden" name="filename" value="{{ filename }}">{% endif %}
+  <textarea name="text" hidden>{{ preview_text }}</textarea>
+  <button type="submit">Save this source</button>
+  <a href="/ui/sources/new" class="muted">Start over</a>
+</form>
+{% endblock %}

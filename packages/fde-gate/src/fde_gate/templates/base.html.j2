@@ -37,6 +37,13 @@
     .banner { padding: .6rem 1rem; border-radius: 4px; margin: .75rem 0; }
     .banner.error { background: #d3202020; border: 1px solid #d32020aa; }
     .banner.notice { background: #20a05020; border: 1px solid #20a050aa; }
+    /* Louder than a notice, and not an error: nothing has failed when a
+       source ingests with no anchors -- it is just about to be useless, and
+       the operator has one thing to do about it. A thick left rule is what
+       makes it read as blocking without lying about a failure. */
+    .banner.warn { background: #e8930020; border: 1px solid #e89300aa;
+                   border-left-width: 5px; }
+    .banner.warn p { margin: .4rem 0 0; }
     .pill { display: inline-block; padding: .05rem .45rem; border-radius: 999px;
             border: 1px solid #8886; font-size: .78rem; }
     .muted { opacity: .65; }
@@ -50,6 +57,7 @@
   <strong>FDE prod-ops</strong>
   <nav>
     <a href="/ui">Review queue</a>
+    <a href="/ui/sources">Sources</a>
     <a href="/ui/workflows">Workflows</a>
     <a href="/ui/runs">Runs</a>
     <a href="/ui/drift">Drift</a>

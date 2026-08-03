@@ -46,6 +46,8 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from email import policy
+from email.parser import BytesParser
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qsl
@@ -66,11 +68,27 @@ __all__ = [
     "Request",
     "Response",
     "Router",
+    "Upload",
     "as_conflict",
     "parse_apigw_event",
     "pg_message",
     "to_apigw_response",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class Upload:
+    """One file part of a multipart form, already decoded as text.
+
+    Text, not bytes, because the only upload this console accepts is a
+    transcript or an SOP -- `.txt` and `.md`. A part that is not valid UTF-8
+    is rejected at parse time with a message saying so, rather than being
+    stored as replacement characters that reach a reviewer as mojibake in the
+    evidence they are meant to be checking a proposal against.
+    """
+
+    filename: str
+    content: str
 
 
 class GateError(Exception):
@@ -98,8 +116,13 @@ class Request:
         query: Flattened query string. Repeated keys keep the LAST value,
             matching API Gateway's own `queryStringParameters` behaviour.
         body: Parsed JSON object body, or `{}`.
-        form: Parsed `application/x-www-form-urlencoded` body, or `{}`. The
-            console posts forms; the API posts JSON; both land here typed.
+        form: Parsed form body, or `{}`. Both `application/x-www-form-
+            urlencoded` and the non-file parts of `multipart/form-data` land
+            here. The console posts forms; the API posts JSON.
+        files: File parts of a `multipart/form-data` body, keyed by field
+            name. Empty for every other content type, and empty when the
+            browser sent a file input with nothing chosen -- so a handler can
+            treat "no upload" and "not a multipart request" identically.
         principal: The JWT `sub` claim. This is `hitl.reviewer.principal`
             (db/004:22 defines it as the IdP subject) and the value written
             to every `decided_by` / `started_by` / `published_by` column.
@@ -113,6 +136,7 @@ class Request:
     query: dict[str, str] = field(default_factory=dict)
     body: dict[str, Any] = field(default_factory=dict)
     form: dict[str, str] = field(default_factory=dict)
+    files: dict[str, Upload] = field(default_factory=dict)
     principal: str = ""
     groups: tuple[str, ...] = ()
     claims: dict[str, Any] = field(default_factory=dict)
@@ -126,6 +150,7 @@ class Request:
             query=self.query,
             body=self.body,
             form=self.form,
+            files=self.files,
             principal=self.principal,
             groups=self.groups,
             claims=self.claims,
@@ -384,11 +409,69 @@ class Router:
         )
 
 
-def _decode_body(event: dict[str, Any]) -> str:
+def _decode_body(event: dict[str, Any]) -> bytes:
+    """The request body as bytes, whichever way API Gateway encoded it.
+
+    Bytes rather than str because a multipart body is a container whose parts
+    have their own encodings, and decoding the envelope before splitting it
+    would corrupt any part that is not UTF-8 -- including the part whose
+    non-UTF-8-ness is the thing worth reporting to the operator.
+    """
     raw = event.get("body") or ""
     if event.get("isBase64Encoded"):
-        return base64.b64decode(raw).decode("utf-8", errors="replace")
-    return str(raw)
+        return base64.b64decode(raw)
+    return str(raw).encode("utf-8")
+
+
+def _parse_multipart(raw: bytes, content_type: str) -> tuple[dict[str, str], dict[str, Upload]]:
+    """Split a `multipart/form-data` body into text fields and file parts.
+
+    Uses the stdlib email parser, which is the multipart implementation
+    Python ships and keeps patched, by handing it the body with its
+    Content-Type header put back on the front -- MIME is what multipart form
+    data is. `cgi.FieldStorage`, the other stdlib answer, was removed in
+    3.13, and a hand-rolled boundary scanner is exactly the kind of parser
+    that is right until someone uploads a file containing its own boundary.
+
+    A part with a `filename` is a file even when the file is empty, EXCEPT
+    for the empty filename a browser sends for a file input left untouched --
+    that is "no upload", and it is dropped here so no handler has to know the
+    difference.
+    """
+    parsed = BytesParser(policy=policy.default).parsebytes(
+        b"Content-Type: " + content_type.encode("utf-8") + b"\r\nMIME-Version: 1.0\r\n\r\n" + raw
+    )
+    if not parsed.is_multipart():
+        raise GateError(
+            HTTPStatus.BAD_REQUEST,
+            "the form could not be read: the request declared multipart/form-data "
+            "but the body has no parts (a missing or mismatched boundary).",
+        )
+
+    form: dict[str, str] = {}
+    files: dict[str, Upload] = {}
+    for part in parsed.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not isinstance(name, str) or not name:
+            continue
+        payload = part.get_payload(decode=True)
+        content = payload if isinstance(payload, bytes) else b""
+        filename = part.get_filename()
+        if filename is None:
+            form[name] = content.decode("utf-8", errors="replace")
+            continue
+        if not filename:
+            continue
+        try:
+            files[name] = Upload(filename=filename, content=content.decode("utf-8"))
+        except UnicodeDecodeError:
+            raise GateError(
+                HTTPStatus.BAD_REQUEST,
+                f"{filename!r} is not a UTF-8 text file. Upload a plain .txt or "
+                ".md transcript -- a PDF or a .docx has to be exported to text "
+                "first, because what gets stored is the text a reviewer reads.",
+            ) from None
+    return form, files
 
 
 def _claims(event: dict[str, Any]) -> dict[str, Any]:
@@ -427,9 +510,14 @@ def parse_apigw_event(event: dict[str, Any]) -> Request:
 
     body: dict[str, Any] = {}
     form: dict[str, str] = {}
+    files: dict[str, Upload] = {}
     if raw_body:
         if content_type.startswith("application/x-www-form-urlencoded"):
-            form = dict(parse_qsl(raw_body, keep_blank_values=True))
+            form = dict(
+                parse_qsl(raw_body.decode("utf-8", errors="replace"), keep_blank_values=True)
+            )
+        elif content_type.startswith("multipart/form-data"):
+            form, files = _parse_multipart(raw_body, content_type)
         else:
             try:
                 parsed = json.loads(raw_body)
@@ -446,6 +534,7 @@ def parse_apigw_event(event: dict[str, Any]) -> Request:
         query=dict(event.get("queryStringParameters") or {}),
         body=body,
         form=form,
+        files=files,
         principal=str(claims.get("sub", "")),
         groups=_groups(claims),
         claims=claims,

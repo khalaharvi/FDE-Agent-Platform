@@ -1,0 +1,71 @@
+{% extends "base.html.j2" %}
+{% block title %}New source{% endblock %}
+{% block content %}
+<h1>New source</h1>
+<p class="muted">
+  Paste an interview transcript or an SOP, or upload it as a
+  <code>.txt</code> or <code>.md</code> file. The next screen shows how it
+  will be split up and how much of it the graph will be able to find, before
+  anything is saved.
+</p>
+
+<datalist id="engagements">
+  {% for e in engagements %}<option value="{{ e }}"></option>{% endfor %}
+</datalist>
+
+{# enctype is required: without it the browser posts the file's NAME and not
+   its contents, which looks like an empty upload with no error anywhere. #}
+<form method="post" action="/ui/sources/preview" enctype="multipart/form-data">
+  <fieldset>
+    <legend>What this is</legend>
+    <p>
+      <label>Engagement
+        <input type="text" name="engagement_id" list="engagements" size="38"
+               value="{{ form.engagement_id }}" required>
+      </label>
+    </p>
+    <p>
+      <label>Title
+        <input type="text" name="title" size="46" value="{{ form.title }}"
+               placeholder="RevOps discovery interview — Dana, 3 Aug" required>
+      </label>
+    </p>
+    <p>
+      <label>Kind
+        <select name="source_kind">
+          {% for k in source_kinds %}
+          <option value="{{ k }}"{% if k == form.source_kind %} selected{% endif %}>{{ k }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Captured on
+        {# The day the business said it, not today: captured_at is what
+           orders evidence, and back-dating an interview correctly is the
+           difference between "what they told us in March" and "what we
+           happened to type up in August". #}
+        <input type="date" name="captured_at" value="{{ form.captured_at }}" required>
+      </label>
+    </p>
+  </fieldset>
+
+  <fieldset>
+    <legend>The text</legend>
+    <p>
+      <label for="text">Paste it here</label>
+      <textarea id="text" name="text" rows="16"
+                placeholder="Paste the transcript…">{{ form.text }}</textarea>
+    </p>
+    <p>
+      <label>…or upload a file
+        <input type="file" name="file" accept=".txt,.md,text/plain,text/markdown">
+      </label>
+      <span class="muted">
+        Plain text and Markdown only. A PDF or Word document has to be
+        exported to text first &mdash; what gets stored is the text a
+        reviewer will read.
+      </span>
+    </p>
+    <button type="submit">Preview</button>
+  </fieldset>
+</form>
+{% endblock %}

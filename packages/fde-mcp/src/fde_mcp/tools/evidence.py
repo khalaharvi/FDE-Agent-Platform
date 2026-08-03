@@ -30,6 +30,15 @@ is still ALLOWED (a transcript is often chunked before extraction knows what
 the chunks evidence), but `kg_ingest_chunks` always warns and names the exact
 ordinals, because the alternative -- silence -- produces an ingestion that
 looks successful and yields nothing.
+
+The contract, not the tools, is the shared thing
+-------------------------------------------------
+The console's transcript intake writes the same two tables under a different
+role (`fde_gate_service`, db/017). Everything a caller can observe about that
+write -- the size caps, the SQL, the checksum-collision behaviour, the exact
+warning text -- lives in `fde_mcp.ingest` so both writers cannot drift apart.
+What stays here is the MCP surface: the pydantic schema a model fills in, the
+docstrings it reads as prompts, and the trace emission.
 """
 
 from __future__ import annotations
@@ -40,6 +49,20 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from fde_mcp import db
+from fde_mcp.ingest import (
+    CHUNK_CONTENT_MAX_CHARS,
+    DUPLICATE_SOURCE_NOTE,
+    ENQUEUE_CHUNKS_SQL,
+    INSERT_CHUNKS_SQL,
+    INSERT_SOURCE_SQL,
+    MAX_CHUNKS_PER_CALL,
+    SOURCE_BY_CHECKSUM_SQL,
+    SOURCE_KINDS,
+    UNKNOWN_ANCHORS_SQL,
+    skipped_ordinals_warning,
+    unanchored_warning,
+    unknown_anchors_warning,
+)
 from fde_mcp.tools._base import (
     emit_trace,
     fetchall,
@@ -52,32 +75,14 @@ from fde_mcp.tools._base import (
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-__all__ = ["ChunkIn", "register"]
+__all__ = ["CHUNK_CONTENT_MAX_CHARS", "MAX_CHUNKS_PER_CALL", "SOURCE_KINDS", "ChunkIn", "register"]
 
-# Mirrors kg.source's own CHECK constraint (db/002_graph_core.sql:56-58).
-# Spelled here as a Literal so a bad kind is rejected by the tool schema with
-# the valid list in the message, rather than reaching Postgres and coming back
-# as a check-violation the model has to guess the vocabulary from.
-SOURCE_KINDS: tuple[str, ...] = (
-    "interview",
-    "sop_document",
-    "screen_recording",
-    "system_export",
-    "observation",
-    "sme_assertion",
-    "sor_telemetry",
-    "agent_inference",
-)
-# Same `Literal[TUPLE]` indirection as _base.NodeType -- see the comment there.
+# Spelled as a Literal over the shared tuple so a bad kind is rejected by the
+# tool schema with the valid list in the message, rather than reaching Postgres
+# and coming back as a check-violation the model has to guess the vocabulary
+# from. Same `Literal[TUPLE]` indirection as _base.NodeType -- see the comment
+# there.
 SourceKind = Literal[SOURCE_KINDS]  # type: ignore[valid-type]
-
-# kg.chunk.content is unbounded in the schema; the cap here is the embedder's
-# budget, not the database's. amazon.titan-embed-text-v2 takes ~8k tokens, and
-# capping characters (a strictly tighter bound than tokens) is what lets
-# embedder_worker.py embed `content` verbatim with no truncation logic and no
-# silent quality cliff when a caller passes a whole document as one chunk.
-CHUNK_CONTENT_MAX_CHARS = 8000
-MAX_CHUNKS_PER_CALL = 200
 
 
 class ChunkIn(BaseModel):
@@ -129,13 +134,7 @@ async def kg_register_source(
         async with conn.cursor() as cur:
             if checksum:
                 await cur.execute(
-                    """
-                    SELECT source_id, source_kind, title, captured_at
-                      FROM kg.source
-                     WHERE engagement_id = %(eng)s::uuid AND checksum = %(checksum)s
-                     ORDER BY source_id
-                     LIMIT 1
-                    """,
+                    SOURCE_BY_CHECKSUM_SQL,
                     {"eng": engagement_id, "checksum": checksum},
                 )
                 existing = await fetchone(cur)
@@ -143,11 +142,7 @@ async def kg_register_source(
                     result: dict[str, Any] = {
                         "source_id": existing["source_id"],
                         "created": False,
-                        "note": (
-                            "a source with this checksum already exists for the "
-                            "engagement and was reused; cite this source_id and "
-                            "check kg_list_sources before re-ingesting its chunks."
-                        ),
+                        "note": DUPLICATE_SOURCE_NOTE,
                         "existing": existing,
                     }
                     await emit_trace(
@@ -156,14 +151,7 @@ async def kg_register_source(
                     return result
 
             await cur.execute(
-                """
-                INSERT INTO kg.source
-                    (engagement_id, source_kind, uri, title, captured_at,
-                     captured_by, checksum, metadata)
-                VALUES (%(eng)s::uuid, %(kind)s, %(uri)s, %(title)s, %(captured_at)s,
-                        %(captured_by)s, %(checksum)s, %(metadata)s)
-                RETURNING source_id, source_kind, title, uri, captured_at, created_at
-                """,
+                INSERT_SOURCE_SQL,
                 {
                     "eng": engagement_id,
                     "kind": source_kind,
@@ -248,19 +236,7 @@ async def kg_ingest_chunks(
                 return result
 
             await cur.execute(
-                """
-                INSERT INTO kg.chunk
-                    (engagement_id, source_id, ordinal, content, token_count,
-                     anchor_keys, metadata)
-                SELECT %(eng)s::uuid, %(sid)s, x.ordinal, x.content, x.token_count,
-                       COALESCE(x.anchor_keys, '{}'::text[]),
-                       COALESCE(x.metadata, '{}'::jsonb)
-                  FROM jsonb_to_recordset(%(chunks)s::jsonb)
-                    AS x(ordinal int, content text, token_count int,
-                         anchor_keys text[], metadata jsonb)
-                ON CONFLICT (source_id, ordinal) DO NOTHING
-                RETURNING chunk_id, ordinal
-                """,
+                INSERT_CHUNKS_SQL,
                 {"eng": engagement_id, "sid": source_id, "chunks": Jsonb(payload)},
             )
             inserted = await fetchall(cur)
@@ -269,18 +245,8 @@ async def kg_ingest_chunks(
 
             enqueued = 0
             if chunk_ids:
-                # ON CONFLICT DO NOTHING on (subject_kind, subject_id): a chunk
-                # already queued is already queued. Requeuing is not how a
-                # re-embed is requested (that is a `completed_at = NULL`
-                # update by an operator).
                 await cur.execute(
-                    """
-                    INSERT INTO kg.embed_queue (engagement_id, subject_kind, subject_id)
-                    SELECT %(eng)s::uuid, 'chunk', c
-                      FROM unnest(%(ids)s::bigint[]) AS c
-                    ON CONFLICT (subject_kind, subject_id) DO NOTHING
-                    RETURNING queue_id
-                    """,
+                    ENQUEUE_CHUNKS_SQL,
                     {"eng": engagement_id, "ids": chunk_ids},
                 )
                 enqueued = len(await fetchall(cur))
@@ -289,13 +255,7 @@ async def kg_ingest_chunks(
             unknown_anchors: list[str] = []
             if all_anchors:
                 await cur.execute(
-                    """
-                    SELECT t.k AS node_key
-                      FROM unnest(%(keys)s::text[]) AS t(k)
-                     WHERE NOT EXISTS (
-                             SELECT 1 FROM kg.node_current n
-                              WHERE n.engagement_id = %(eng)s::uuid AND n.node_key = t.k)
-                    """,
+                    UNKNOWN_ANCHORS_SQL,
                     {"keys": all_anchors, "eng": engagement_id},
                 )
                 unknown_anchors = [r["node_key"] for r in await fetchall(cur)]
@@ -305,26 +265,11 @@ async def kg_ingest_chunks(
 
         warnings: list[str] = []
         if unanchored_ordinals:
-            warnings.append(
-                f"chunks {unanchored_ordinals} have empty anchor_keys and are "
-                "INVISIBLE to kg_search's chunk arm: kg.hybrid_search keeps only "
-                "chunks with cardinality(anchor_keys) > 0 (db/008_retrieval.sql), "
-                "so these will be embedded and stored but can never raise a "
-                "node's rank. Pass the node_keys each chunk evidences."
-            )
+            warnings.append(unanchored_warning(unanchored_ordinals))
         if unknown_anchors:
-            warnings.append(
-                f"anchor_keys {unknown_anchors} match no live node in "
-                "kg.node_current for this engagement. Not an error -- the node "
-                "may be in a proposal that has not merged yet -- but until it "
-                "exists these anchors contribute nothing to retrieval."
-            )
+            warnings.append(unknown_anchors_warning(unknown_anchors))
         if skipped_ordinals:
-            warnings.append(
-                f"ordinals {skipped_ordinals} already exist for source_id "
-                f"{source_id} and were left untouched (chunks are immutable). "
-                "To re-chunk this document, register a new source."
-            )
+            warnings.append(skipped_ordinals_warning(skipped_ordinals, source_id))
 
         result = {
             "source_id": source_id,

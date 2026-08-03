@@ -1,0 +1,72 @@
+{% extends "base.html.j2" %}
+{% block title %}Sources{% endblock %}
+{% block content %}
+<h1>Sources</h1>
+<p class="muted">
+  Every interview, SOP and export registered against an engagement, and how
+  much of each one retrieval can actually reach. A source at 0% is stored but
+  invisible to search &mdash; open it to see what to do about that.
+</p>
+
+<p><a href="/ui/sources/new">Add a source</a></p>
+
+<form method="get" action="/ui/sources">
+  <label>Engagement
+    <input type="text" name="engagement_id" list="engagements" size="38"
+           value="{{ engagement_id or '' }}">
+  </label>
+  <datalist id="engagements">
+    {% for e in engagements %}<option value="{{ e }}"></option>{% endfor %}
+  </datalist>
+  <button type="submit">Filter</button>
+  {% if engagement_id %}<a href="/ui/sources" class="muted">Clear</a>{% endif %}
+</form>
+
+{% if not sources %}
+  <p class="empty">No source is registered{% if engagement_id %} for this engagement{% endif %} yet.</p>
+{% else %}
+<table>
+  <tr>
+    <th>Source</th><th>Kind</th><th>Captured</th><th>Coverage</th><th>Embedded</th>
+  </tr>
+  {% for s in sources %}
+  <tr>
+    <td>
+      <a href="/ui/sources/{{ s.source_id }}">{{ s.title }}</a>
+      <div class="muted">
+        #{{ s.source_id }}
+        {% if s.version > 1 %}&middot; version {{ s.version }}{% endif %}
+        {% if s.captured_by %}&middot; by {{ s.captured_by }}{% endif %}
+      </div>
+      {% if s.superseded_by %}
+      <div class="muted">
+        superseded by <a href="/ui/sources/{{ s.superseded_by }}">source {{ s.superseded_by }}</a>
+      </div>
+      {% endif %}
+    </td>
+    <td><span class="pill">{{ s.source_kind }}</span></td>
+    <td>{{ s.captured_at|day }}</td>
+    <td>
+      {% if s.chunk_count == 0 %}
+        <span class="muted">no text</span>
+      {% else %}
+        <span class="pill{% if s.coverage.anchored == 0 %} overdue{% endif %}">
+          {{ s.coverage.percent }}%
+        </span>
+        <div class="muted">
+          {{ s.coverage.anchored }} of {{ s.coverage.total }}
+          {{ s.coverage.total|plural("passage") }} searchable
+          {% if s.coverage.dark %}&middot; {{ s.coverage.dark }} dark{% endif %}
+        </div>
+      {% endif %}
+    </td>
+    <td class="muted">{{ s.embedded_chunks }} / {{ s.chunk_count }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">
+  &ldquo;Embedded&rdquo; is how many passages the embedder has processed. Until
+  that catches up, even an anchored passage will not appear in a search.
+</p>
+{% endif %}
+{% endblock %}

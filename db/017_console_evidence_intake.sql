@@ -1,0 +1,96 @@
+-- =====================================================================
+-- 017_console_evidence_intake.sql
+-- Letting the review console accept a transcript.
+--
+-- Until now the only way to get an interview into the platform was
+-- `kg_register_source` + `kg_ingest_chunks` over MCP -- pre-chunked JSON,
+-- written by something running as `fde_agent` (db/010:38, db/014:57-65).
+-- The person who actually conducts the interview has a .txt file and a
+-- browser, and the console could not take it from them: 010:49 grants
+-- `fde_gate_service` SELECT on `ALL TABLES IN SCHEMA kg` and nothing more.
+--
+-- This migration is three INSERT grants and no schema change. It is a
+-- grants-only migration in the same tradition as 011, 012 and 014: each
+-- grant names the code path that failed without it, and adds no capability
+-- beyond that path.
+--
+-- Why the console gets to write evidence at all
+-- ----------------------------------------------
+-- Registering evidence is a PROPOSE-side act. A `kg.source` row and a
+-- `kg.chunk` row assert nothing about the business: they are the text
+-- someone said, stored so an agent can read it and a reviewer can check a
+-- claim against it. Nothing merges, nothing is decided, and no fact enters
+-- the graph. The invariant this platform is built on -- agents propose,
+-- humans dispose, only `hitl.merge_proposal` writes the graph -- is
+-- untouched by all three grants below, and the CI denial matrix asserts
+-- that from the outside rather than trusting this paragraph.
+--
+-- The asymmetry with db/014 is deliberate and worth reading: `fde_agent`
+-- got these same INSERTs so a MACHINE could file evidence it captured.
+-- This gives them to the role a HUMAN's session runs as, for the same
+-- reason and under the same restriction.
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- The three tables the console's intake writes
+-- (fde_gate.service.sources, via the shared SQL in fde_mcp.ingest).
+--
+-- INSERT only, on every one of them, and that is the entire feature's
+-- safety story:
+--
+--   * kg.chunk is the verbatim evidence a reviewer reads to check a
+--     proposal. A console bug that could UPDATE it could rewrite the
+--     justification for a claim a human already agreed to. The same
+--     sentence is in db/014 about fde_agent; it is not more acceptable
+--     because the caller is a web form.
+--   * kg.source is INSERT-only for a reason the console depends on: with
+--     no version column in the schema, "re-ingest this transcript now
+--     that the anchors exist" HAS to be a new row. Being unable to
+--     rewrite the old one is what makes the lineage an audit trail
+--     instead of a field that used to say something else.
+--   * kg.embed_queue: without it the chunks land and never get an
+--     embedding, and a chunk with no embedding is invisible to
+--     kg.ann_chunks (008:251 filters embedding IS NOT NULL) -- an
+--     ingestion that silently produces unretrievable evidence, which is
+--     the exact failure this whole feature exists to make visible.
+--
+-- No sequence grants accompany these. All three primary keys are
+-- `GENERATED ALWAYS AS IDENTITY`, whose sequence is owned by the column
+-- and reachable through INSERT on the table; a `USAGE ON SEQUENCE` here
+-- would be a privilege that grants nothing and implies something.
+-- ---------------------------------------------------------------------
+GRANT INSERT ON kg.source      TO fde_gate_service;
+GRANT INSERT ON kg.chunk       TO fde_gate_service;
+GRANT INSERT ON kg.embed_queue TO fde_gate_service;
+
+-- ---------------------------------------------------------------------
+-- Deliberately NOT granted, listed so the omissions read as decisions:
+--
+--   * UPDATE or DELETE on kg.source, kg.chunk or kg.embed_queue, to
+--     anyone. Immutability is the point, above. DELETE on kg.source
+--     would be worse than it looks: kg.chunk references it ON DELETE
+--     CASCADE (003:65), so one deleted source silently takes every
+--     passage of an interview with it.
+--   * Anything at all on kg.node, kg.edge or kg.commit. The console
+--     already merges through `hitl.merge_proposal`, which is SECURITY
+--     DEFINER and is the ONLY path by which any of this platform's code
+--     writes the graph. Intake must not become a second one, and the
+--     denial matrix in .github/workflows/ci.yml now asserts that
+--     fde_gate_service still cannot insert a node.
+--   * These grants to fde_prodops. Product ops runs workflows and
+--     triages drift against a read-only graph (010:64-71); evidence
+--     intake is a different console page under a different role, and
+--     widening prodops "because it is also the console" would put the
+--     write on the role chosen for being narrow.
+--   * Any change to the reviewer roster's grants (db/016) or to the
+--     retrieval SQL (db/008). The intake's anchor matcher READS
+--     kg.node_current, which fde_gate_service could already select, and
+--     modifies no function.
+-- ---------------------------------------------------------------------
+
+-- No new tables, no new functions: nothing in this file needs a
+-- `REVOKE ALL ... FROM PUBLIC`. That default-PUBLIC-EXECUTE hazard applies
+-- to CREATE FUNCTION (013:877, 016:98), and this migration creates neither
+-- a function nor a table. Stated rather than omitted, because "did they
+-- forget the REVOKE" is the first question a reviewer of a grants
+-- migration should ask.
