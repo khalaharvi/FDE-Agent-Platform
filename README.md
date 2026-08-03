@@ -127,7 +127,7 @@ Cheap models are unusually safe here: every agent write passes the same human
 gates regardless of which model proposed it — sloppiness lands in a review
 queue, not in the graph, and each reviewer correction becomes SFT training
 data. Two rules the presets encode: small non-agentic models never drive the
-21-tool loop, and a cheaper *judge* is a separate, measured decision —
+22-tool loop, and a cheaper *judge* is a separate, measured decision —
 `fde-training rival-grader calibrate` must show Cohen's kappa ≥ 0.78 before
 any judge's verdicts are trusted as an RL reward.
 
