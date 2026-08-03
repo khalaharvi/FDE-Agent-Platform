@@ -13,12 +13,12 @@ agents and the graph.
 > writes the graph** — enforced at four independent layers and asserted by
 > eight privilege-denial checks in CI.
 
-**Who this is for.** Forward-deployed and solutions engineers who rebuild the
+**Who this is for.** Forward-deployed and solutions engineers rebuilding the
 same engagement scaffolding for every client; platform leads who must answer
 "what can the agent write, and who approved it?" — the answer here is a
-`SELECT`, not a model output; and practitioners who came for one extractable
-idea, human gates in pure SQL. **Not for you** if you want a general agent
-framework: without governed writes to shared state, you don't need this.
+`SELECT`, not a model output; and practitioners here for one extractable idea,
+human gates in pure SQL. **Not for you** if you want a general agent framework
+— if you don't need governed writes to shared state, you don't need this.
 
 ![The review console: a proposal moves from the queue through two SQL-computed gates into a sealed commit](docs-site/images/console.gif)
 
@@ -189,7 +189,7 @@ fde-platform/
 └── .github/workflows/   CI: static → database → tests → train-tests → ARM64 images → gated deploy
 ```
 
-**Gates, all green:** `ruff check` + `ruff format --check` across 166 files ·
+**Gates, all green:** `ruff check` (169 files) + `ruff format --check` (166) ·
 `mypy --strict` on the four production packages (83 files, 0 issues) ·
 `uv lock --check` · 25 SQL smoke tests on a clean rebuild · 609 Python tests
 against live Postgres · eight privilege-denial invariants, all correctly denied.

@@ -18,7 +18,8 @@ uv run pytest packages                             # 609 tests
 ```
 
 Already run Postgres locally with pgvector ≥ 0.8? Skip compose and use
-`createdb fde && ./db/rebuild.sh fde` as in the README.
+`createdb fde && ./db/rebuild.sh fde` instead. The README adds `--with-demo`
+to seed a reviewable engagement; the gates do not need it either way.
 
 ## The gates your PR must pass
 
