@@ -17,6 +17,11 @@ The unit tests below take no database at all: `render_playbook` is a pure
 function over rows, so the edge cases worth pinning (a step citing nothing, a
 decision's branches, a workflow that is all human steps) are cheaper and
 clearer as literals than as fixtures.
+
+The last test pins the size of the tool surface, which belongs here because
+this module's tool is the one that changed it. Nothing in this file carries a
+file-wide `requires_db` mark -- the pure tests, that one included, run whether
+or not a DSN is configured.
 """
 
 from __future__ import annotations
@@ -33,9 +38,11 @@ import pytest_asyncio
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from fde_mcp import __main__ as entrypoint
 from fde_mcp import db
 from fde_mcp.config import get_settings
 from fde_mcp.playbook import render_playbook
+from fde_mcp.server import build_server
 from fde_mcp.tools import workflow
 
 if TYPE_CHECKING:
@@ -556,3 +563,29 @@ def test_output_ends_in_exactly_one_newline() -> None:
     rendered = render_playbook(_MINIMAL_WORKFLOW, [_step()], {}, [])
     assert rendered.endswith("\n")
     assert not rendered.endswith("\n\n")
+
+
+# ---------------------------------------------------------------------------
+# The tool surface
+# ---------------------------------------------------------------------------
+
+# Pinned because the in-package count strings went stale silently the moment
+# wf_export_playbook made the surface 22 -- the registry and `fde-mcp --help`
+# now fail together, so the next tool has to update them on purpose.
+EXPECTED_TOOL_COUNT = 22
+
+
+async def test_the_registry_and_the_help_text_agree_on_the_tool_count() -> None:
+    registered = await build_server().list_tools()
+    assert len(registered) == EXPECTED_TOOL_COUNT, (
+        "the tool surface changed size; update the counts in server.py, "
+        "tools/__init__.py (including its per-group breakdown), __main__.py's "
+        "usage text and packages/fde-mcp/README.md, then this number"
+    )
+
+    stated = re.search(r"\((\d+) tools\b", entrypoint._USAGE)
+    assert stated is not None, "`fde-mcp --help` must say how many tools the server has"
+    assert int(stated.group(1)) == EXPECTED_TOOL_COUNT, (
+        "`fde-mcp --help` disagrees with the registry, and it is the first command a "
+        "new developer types (CLAUDE.md) -- it must not be the thing that is wrong"
+    )
