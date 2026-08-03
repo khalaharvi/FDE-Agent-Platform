@@ -107,3 +107,33 @@ New `packages/fde-agents/src/fde_agents/local_runner.py` + console script:
 - Login UX: keychain-backed `fde-providers login` with env override (chosen over env-only and plaintext config file).
 - Scope: local-first, deploy-ready (Secrets-Manager wiring deferred to sub-project 2).
 - OpenCode Zen and Pi ride the `openai-compat` provider as presets/documentation, not bespoke code.
+
+## As-built deviations
+
+The sections above are the approved design, kept as the record. The implementation
+(same branch) deviates in these reviewed, deliberate ways:
+
+1. No `ProviderSpec` dataclass or `PROVIDERS` dict — a `PROVIDER_KEYS` frozenset,
+   per-provider lazy loader functions, and a `build_model(model_id, backend)`
+   factory proved sufficient (YAGNI at plan stage); the provider key rides inside
+   `ModelBackendSettings`, not a separate argument.
+2. `COMPAT_PRESETS` lives canonically in `fde_mcp.credentials` (re-exported
+   unchanged by `fde_agents.common.providers`) so `fde-providers login` can
+   resolve `FDE_MODEL_COMPAT_PRESET` without importing fde-agents — found by the
+   final whole-branch review when the keyed `opencode-zen` preset couldn't log in.
+3. The credential error type is `CredentialError(RuntimeError)`, not `ConfigError`.
+4. `FDE_MODEL_API_KEY` is declared on `AgentSettings` in fde-mcp's `config.py`
+   (docs/11 §10 rule) and read through `get_settings()`, not straight from the
+   environment; gemini additionally honors a `GOOGLE_API_KEY` fallback.
+5. `FDE_MODEL_MAX_TOKENS` (default 8192) exists because Anthropic's Messages API
+   requires an explicit ceiling; other providers ignore it.
+6. Gemini embeddings use the batched `batchEmbedContents` endpoint (chunks of
+   100) with the key in the `x-goog-api-key` header — never the URL, so retry
+   logs and exception text carry no key material.
+7. `fde-agents-local doctor` treats a set `FDE_GATEWAY_URL` as a FAIL (exit 1),
+   not a warning: a set gateway URL unconditionally breaks a local run (Gateway
+   token minting requires an AgentCore workload identity). The `run()` command
+   itself warns non-fatally, as designed. Doctor also gained a fifth check
+   (model-id resolution) and detects `~/.aws/credentials`-only setups via boto3's
+   credential chain rather than env-var sniffing.
+8. `fde-providers status` accepts `--no-validate` to skip live pings.
