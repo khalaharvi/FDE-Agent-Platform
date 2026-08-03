@@ -11,7 +11,7 @@ check it before "fixing" something that was already reconciled.
 ```bash
 uv sync --all-packages --frozen          # never plain `uv lock` casually; lock is CI-checked
 createdb fde && ./db/rebuild.sh fde      # 15 migrations + 25 smoke tests, rebuilds from scratch
-FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 545 tests; without DSN the db-marked ones skip
+FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 609 tests; without DSN the db-marked ones skip
 uv run ruff check packages && uv run ruff format --check packages
 uv run mypy                              # strict; covers fde-mcp, fde-agents, fde-gate, fde-sor
 uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task ... (docs/12)
@@ -56,6 +56,7 @@ PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 - Docs are tested: `test_docs_sync.py` pins docs/06's reward-weight table to
   `DEFAULT_WEIGHTS` and requires 0.78/0.82 (docs/06) and 0.78 (README) to
   stay present. The CI step name hardcodes the smoke-test count.
+- Public docs drift: run the `update-docs` skill; it ends in a mandatory marketing-strategist review.
 - MCP tool docstrings are the model-facing prompt — edit them like prompts,
   not comments (`docs/11` §6). New env vars go in the package's `config.py`,
   nowhere else.
