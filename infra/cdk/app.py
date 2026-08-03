@@ -30,5 +30,22 @@ from fde_cdk.stack import FdePlatformStack
 # test_no_cdk_metadata_via_real_app_config for the forcing function this
 # resolves.
 app = cdk.App(outdir="cdk.out")
-FdePlatformStack(app, "FdePlatform")
+stack = FdePlatformStack(app, "FdePlatform")
+
+# Task 7.5 hygiene: cost-allocation tags on every taggable resource in the
+# stack, unconditional (not gated by OpsMode -- tagging costs nothing and
+# is useful even with the ops layer off). `cdk.Tags` is an Aspect, applied
+# during `app.synth()` below, so it does not matter that `stack` already
+# exists by the time these two calls run.
+#
+# "stack-tier" is bound to the SAME `DeployTier` launch parameter
+# `database.py`'s Fn::If tier-switching already reads (`stack.params` is
+# public on `FdePlatformStack`) rather than a fixed literal: this repo
+# already treats demo/production as the one axis a cost report would want
+# to split by, and a `CfnParameter` token is a valid CloudFormation Tag
+# value (verified via a standalone synth) the same way it is a valid
+# environment-variable value elsewhere in this stack.
+cdk.Tags.of(app).add("app", "fde-platform")
+cdk.Tags.of(app).add("stack-tier", stack.params.deploy_tier.value_as_string)
+
 app.synth()

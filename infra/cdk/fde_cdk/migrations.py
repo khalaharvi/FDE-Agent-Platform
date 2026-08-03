@@ -35,6 +35,7 @@ import aws_cdk as cdk
 import aws_cdk.aws_ec2 as ec2
 import aws_cdk.aws_iam as iam
 import aws_cdk.aws_lambda as lambda_
+import aws_cdk.aws_logs as logs
 import aws_cdk.aws_rds as rds
 import aws_cdk.aws_s3 as s3
 import aws_cdk.aws_secretsmanager as secretsmanager
@@ -58,6 +59,7 @@ class Migrations(Construct):
 
     function: lambda_.Function
     resource: cdk.CustomResource
+    log_group: logs.LogGroup
 
     def __init__(
         self,
@@ -91,6 +93,19 @@ class Migrations(Construct):
         )
         code_key = f"releases/{params.release_tag.value_as_string}/migration-runner.zip"
 
+        # Task 7.5 hygiene: explicit LogGroup, same reasoning as gate.py's
+        # (never `log_retention=` -- that synthesizes a bootstrap-violating
+        # asset Lambda). Auto-named (no `log_group_name=`): this function
+        # has no pinned `function_name=` the way the gate Lambda does, so
+        # there is no fixed name a pre-7.5 orphaned service-created group
+        # could collide with here.
+        self.log_group = logs.LogGroup(
+            self,
+            "FunctionLogGroup",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
+
         self.function = lambda_.Function(
             self,
             "Function",
@@ -108,6 +123,7 @@ class Migrations(Construct):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             role=migration_role,
             environment={"DB_SECRET_ARN": db_secret.secret_arn},
+            log_group=self.log_group,
         )
 
         # `Database.security_group`'s own docstring names this construct

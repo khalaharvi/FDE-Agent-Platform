@@ -281,6 +281,34 @@ class IamRoles(Construct):
                                 )
                             ],
                         ),
+                        # Task 7.5: the embed-queue-depth probe this SAME
+                        # Lambda answers when OpsLayer's `rate(5 minutes)`
+                        # EventBridge rule invokes it with `{"source":
+                        # "fde.ops.metrics"}` (see `ops.py` and
+                        # `lambdas/migration_runner/handler.py`'s
+                        # `_handle_ops_metrics_event` branch). Granted here,
+                        # unconditionally, rather than behind an `Fn::If` on
+                        # `OpsEnabled`: this role exists (and the migration
+                        # function it backs runs) regardless of `OpsMode` --
+                        # the EventBridge rule that would actually invoke
+                        # this branch is itself `Condition: OpsEnabled`
+                        # (ops.py), so an unused grant when ops are off is
+                        # inert, not a privilege-creep concern the way an
+                        # unconditioned DB GRANT would be (see CLAUDE.md's
+                        # "the invariant" -- this is an IAM policy, not a
+                        # Postgres GRANT, so it is outside that ledger).
+                        # `cloudwatch:PutMetricData` has no resource-level
+                        # permissions (AWS's own IAM reference: this action
+                        # only supports `Resource: "*"`) -- "namespace-
+                        # conditioned" per the brief means the `Condition`
+                        # block below, not the `Resource` ARN.
+                        iam.PolicyStatement(
+                            sid="PutOpsMetrics",
+                            effect=iam.Effect.ALLOW,
+                            actions=["cloudwatch:PutMetricData"],
+                            resources=["*"],
+                            conditions={"StringEquals": {"cloudwatch:namespace": "FDE/Platform"}},
+                        ),
                     ]
                 )
             },

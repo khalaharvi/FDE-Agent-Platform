@@ -10,7 +10,7 @@ import pytest
 # is importable here at all without `psycopg`/`boto3` installed in this
 # venv (both are imported lazily, inside the functions that need them).
 sys.path.insert(0, str(Path(__file__).parents[1] / "lambdas" / "migration_runner"))
-from handler import plan_migrations
+from handler import is_ops_metrics_event, plan_migrations, watchdog_should_fire
 
 from tests.test_synth import synth_template
 
@@ -51,6 +51,72 @@ def test_plan_ignores_applied_entries_not_in_available() -> None:
     assert plan_migrations({"000_retired.sql", "001_a.sql"}, ["001_a.sql", "002_b.sql"]) == [
         "002_b.sql"
     ]
+
+
+# ---------------------------------------------------------------------
+# Task 7.5: is_ops_metrics_event -- the pure dispatch predicate `handler`
+# uses to route an OpsLayer OpsMetricsRule invocation away from the
+# cfn-response custom-resource path (which would KeyError on
+# event["ResponseURL"] for an event that has none).
+# ---------------------------------------------------------------------
+
+
+def test_is_ops_metrics_event_true_for_the_ops_metrics_payload() -> None:
+    assert is_ops_metrics_event({"source": "fde.ops.metrics"}) is True
+
+
+def test_is_ops_metrics_event_false_for_a_custom_resource_event() -> None:
+    cfn_event = {
+        "RequestType": "Create",
+        "ResponseURL": "https://example.com/",
+        "StackId": "arn:aws:cloudformation:...",
+        "RequestId": "abc",
+        "LogicalResourceId": "Resource",
+        "ResourceProperties": {"AdminEmail": "a@b.com", "ReleaseTag": "dev"},
+    }
+    assert is_ops_metrics_event(cfn_event) is False
+
+
+def test_is_ops_metrics_event_false_for_an_unrelated_source() -> None:
+    assert is_ops_metrics_event({"source": "fde.gate.tick"}) is False
+
+
+def test_is_ops_metrics_event_false_when_source_is_absent() -> None:
+    assert is_ops_metrics_event({}) is False
+
+
+# ---------------------------------------------------------------------
+# Task 7.5: watchdog_should_fire -- the pure decision function the
+# background watchdog thread polls (see handler.py's own docstring for why
+# a background thread, not a synchronous pre-check, is what can actually
+# rescue a Lambda hung inside a single blocking call).
+# ---------------------------------------------------------------------
+
+
+def test_watchdog_does_not_fire_with_plenty_of_time_left() -> None:
+    assert watchdog_should_fire(900_000) is False  # a fresh 900s invocation
+
+
+def test_watchdog_fires_below_the_threshold() -> None:
+    assert watchdog_should_fire(9_999) is True
+
+
+def test_watchdog_does_not_fire_exactly_at_the_threshold() -> None:
+    # Strict less-than: a template value of `remaining_time_ms ==
+    # threshold_ms` still has the full threshold's worth of runway left.
+    assert watchdog_should_fire(10_000) is False
+
+
+def test_watchdog_threshold_is_configurable() -> None:
+    assert watchdog_should_fire(4_000, threshold_ms=5_000) is True
+    assert watchdog_should_fire(6_000, threshold_ms=5_000) is False
+
+
+def test_watchdog_fires_for_zero_or_negative_remaining_time() -> None:
+    # A cold start that ate the whole invocation before this thread even
+    # got scheduled -- still must fail fast, not silently pass.
+    assert watchdog_should_fire(0) is True
+    assert watchdog_should_fire(-1) is True
 
 
 # ---------------------------------------------------------------------

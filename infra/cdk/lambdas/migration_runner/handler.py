@@ -27,7 +27,9 @@ import json
 import os
 import secrets
 import string
+import threading
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +41,26 @@ _MIGRATIONS_DIR = _HANDLER_DIR / "db"  # populated by build.py from repo-root db
 
 _DEFAULT_PHYSICAL_ID = "fde-migration-runner"
 _ADMIN_DISPLAY_NAME = "Admin"
+
+# Task 7.5: the EventBridge `rate(5 minutes)` rule `fde_cdk/ops.py`'s
+# `OpsLayer` points at THIS SAME Lambda (`OpsMetricsRule`, `Condition:
+# OpsEnabled`) to probe the embed-queue backlog and publish it as a custom
+# CloudWatch metric for the `FdeEmbedQueueBacklog` alarm. Duplicated here
+# (not imported from `ops.py`) because this file ships in the Lambda zip
+# standalone -- `infra/cdk`'s `fde_cdk` package is never packaged alongside
+# it (see `build.py`) -- the same reason gate.py's `_SCHEDULES` payloads
+# (`"fde.gate.tick"`/`"fde.gate.expiry"`) are hand-copied literals against
+# `fde_gate/deploy/schedule.py` rather than a shared import.
+_OPS_METRICS_SOURCE = "fde.ops.metrics"
+_OPS_METRICS_NAMESPACE = "FDE/Platform"
+_OPS_METRICS_METRIC_NAME = "EmbedQueueDepth"
+
+# Task 7.5 watchdog: how many milliseconds of runway the FAILED
+# cfn-response PUT (a network call to a presigned S3 URL) needs before this
+# Lambda's own timeout freezes the process mid-request. 10s is the brief's
+# own figure -- generous for a small, same-region HTTPS PUT.
+_WATCHDOG_THRESHOLD_MS = 10_000
+_WATCHDOG_POLL_INTERVAL_S = 1.0
 
 _LEDGER_DDL = (
     "CREATE SCHEMA IF NOT EXISTS ops;\n"
@@ -59,6 +81,97 @@ _LOGIN_USERS: tuple[tuple[str, str, str], ...] = (
     ("fde/db/gate", "fde_gate_login", "fde_gate_service"),
     ("fde/db/ingest", "fde_ingest_login", "fde_ingest"),
 )
+
+
+def is_ops_metrics_event(event: dict[str, Any]) -> bool:
+    """Pure dispatch predicate: True when `event` is the `OpsLayer`
+    `OpsMetricsRule` invocation (`{"source": "fde.ops.metrics"}`), which
+    `handler` routes to the embed-queue-depth probe instead of the
+    cfn-response custom-resource path below. This check has to come FIRST
+    in `handler` and be exhaustive about what it is NOT: an ops-metrics
+    invocation carries none of `RequestType`/`ResponseURL`/`StackId` a
+    CloudFormation custom-resource event always has, so falling through to
+    `_send_cfn_response` for one would `KeyError` on `event["ResponseURL"]`
+    (or worse, PUT garbage to a URL that doesn't exist)."""
+    return event.get("source") == _OPS_METRICS_SOURCE
+
+
+def watchdog_should_fire(
+    remaining_time_ms: int, *, threshold_ms: int = _WATCHDOG_THRESHOLD_MS
+) -> bool:
+    """Pure decision function the watchdog background thread (`handler`,
+    via `_run_watchdog`) polls against: True once fewer than `threshold_ms`
+    milliseconds remain in this invocation
+    (`context.get_remaining_time_in_millis()`).
+
+    Runs on a background thread, not a synchronous pre-check between
+    migration steps, because the failure mode this guards against is a
+    SINGLE blocking call hanging for the Lambda's entire timeout (e.g.
+    `psycopg.connect` wedged behind a misconfigured security group) --
+    nothing on the main thread would ever reach a pre-check in that case.
+    A background thread's `time.sleep`/poll loop keeps running through a
+    blocking syscall on the main thread because CPython releases the GIL
+    for blocking I/O, so the watchdog can still fire (and PUT the FAILED
+    cfn-response itself) even while the main thread is stuck. Without this,
+    CloudFormation would wait out its own ~1-hour custom-resource timeout
+    with zero information about why."""
+    return remaining_time_ms < threshold_ms
+
+
+def _run_watchdog(
+    get_remaining_time_ms: Callable[[], int],
+    stop: threading.Event,
+    fire: Callable[[], None],
+) -> None:
+    """Background-thread body: poll `get_remaining_time_ms()` (normally
+    `context.get_remaining_time_in_millis`) once per
+    `_WATCHDOG_POLL_INTERVAL_S`, calling `fire()` exactly once and
+    returning as soon as `watchdog_should_fire` says so, or returning
+    without ever calling `fire()` if `stop` is set first (the normal path:
+    the main thread finished and does not need a watchdog rescue)."""
+    while not stop.is_set():
+        if watchdog_should_fire(get_remaining_time_ms()):
+            fire()
+            return
+        stop.wait(_WATCHDOG_POLL_INTERVAL_S)
+
+
+def _embed_queue_depth(conn: psycopg.Connection) -> int:
+    """`kg.embed_queue`'s own pending-row definition (`db/003_vectors_hnsw.
+    sql`'s partial index: `WHERE completed_at IS NULL`) -- the same
+    predicate the FDE/Platform:EmbedQueueDepth metric this feeds
+    (`FdeEmbedQueueBacklog` alarm, `ops.py`) is meant to track."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM kg.embed_queue WHERE completed_at IS NULL")
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+def _put_embed_queue_depth_metric(depth: int) -> None:
+    import boto3  # local import -- see module docstring
+
+    client = boto3.client("cloudwatch")
+    client.put_metric_data(
+        Namespace=_OPS_METRICS_NAMESPACE,
+        MetricData=[
+            {"MetricName": _OPS_METRICS_METRIC_NAME, "Value": float(depth), "Unit": "Count"}
+        ],
+    )
+
+
+def _handle_ops_metrics_event() -> None:
+    """The `is_ops_metrics_event(event)` branch of `handler`: connect via
+    the SAME `DB_SECRET_ARN` env var the migration path uses (this Lambda
+    already has VPC/security-group access to Postgres for that reason),
+    probe `_embed_queue_depth`, publish it, done -- no cfn-response, no
+    `ResourceProperties`, no ledger/migration work."""
+    import psycopg  # local import -- see module docstring
+
+    secret_json = _fetch_secret_json(os.environ["DB_SECRET_ARN"])
+    dsn = _dsn_from_secret(secret_json)
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        depth = _embed_queue_depth(conn)
+    _put_embed_queue_depth_metric(depth)
 
 
 def plan_migrations(applied: set[str], available: list[str]) -> list[str]:
@@ -325,23 +438,72 @@ def _send_cfn_response(
 
 
 def handler(event: dict[str, Any], context: Any) -> None:
-    """Lambda entry point for the `Migrations` custom resource
-    (`fde_cdk/migrations.py`).
+    """Lambda entry point, shared by two callers (`fde_cdk/migrations.py`'s
+    custom resource AND `fde_cdk/ops.py`'s `OpsMetricsRule`):
 
-    Create/Update: connect via the cluster's master secret
-    (`DB_SECRET_ARN` env var), ensure the `ops.applied_migration` ledger,
-    apply pending `db/0*.sql` in order (`plan_migrations`), mint the three
-    login-user secrets, seed the admin reviewer. Delete: no-op SUCCESS --
-    the database (and its data) outlives the stack, per
-    `fde_cdk/database.py`'s `RemovalPolicy.SNAPSHOT` and `Identity`'s
-    `RemovalPolicy.RETAIN` on the user pool -- deleting the stack must
-    never touch either.
+    * Ops-metrics invocation (`is_ops_metrics_event(event)`): probe
+      `kg.embed_queue`'s backlog depth, publish it, return. No
+      cfn-response -- this event carries no `ResponseURL`.
+    * Custom-resource invocation (everything else): Create/Update connects
+      via the cluster's master secret (`DB_SECRET_ARN` env var), ensures
+      the `ops.applied_migration` ledger, applies pending `db/0*.sql` in
+      order (`plan_migrations`), mints the three login-user secrets, seeds
+      the admin reviewer. Delete is a no-op SUCCESS -- the database (and
+      its data) outlives the stack, per `fde_cdk/database.py`'s
+      `RemovalPolicy.SNAPSHOT` and `Identity`'s `RemovalPolicy.RETAIN` on
+      the user pool -- deleting the stack must never touch either.
+
+    Task 7.5 watchdog: a background thread (`_run_watchdog`) races the main
+    path here. If `watchdog_should_fire` trips first -- fewer than
+    `_WATCHDOG_THRESHOLD_MS` remain in this invocation -- it sends FAILED
+    itself and the main thread's own eventual `_send_once` call becomes a
+    no-op (the `response_lock`/`response_sent` guard: CloudFormation's
+    custom-resource protocol does not tolerate more than one response PUT
+    per request). Without this, a Lambda that times out mid-`psycopg.
+    connect` never gets to run its own `except`/`finally` -- the runtime
+    just kills it -- and CloudFormation would sit out its own ~1-hour
+    custom-resource timeout with no diagnostic beyond "no response".
     """
+    if is_ops_metrics_event(event):
+        _handle_ops_metrics_event()
+        return
+
     physical_id = event.get("PhysicalResourceId") or _DEFAULT_PHYSICAL_ID
     request_type = event.get("RequestType")
+
+    response_lock = threading.Lock()
+    response_sent = False
+
+    def _send_once(status: str, *, reason: str = "", data: dict[str, Any] | None = None) -> None:
+        nonlocal response_sent
+        with response_lock:
+            if response_sent:
+                return
+            response_sent = True
+        _send_cfn_response(
+            event, context, status, physical_resource_id=physical_id, reason=reason, data=data
+        )
+
+    def _watchdog_fire() -> None:
+        log_stream = getattr(context, "log_stream_name", "")
+        _send_once(
+            "FAILED",
+            reason=(
+                "migration runner watchdog: invocation approaching its own "
+                f"timeout -- see CloudWatch Logs: {log_stream}"
+            ),
+        )
+
+    stop_watchdog = threading.Event()
+    watchdog_thread = threading.Thread(
+        target=_run_watchdog,
+        args=(context.get_remaining_time_in_millis, stop_watchdog, _watchdog_fire),
+        daemon=True,
+    )
+    watchdog_thread.start()
     try:
         if request_type == "Delete":
-            _send_cfn_response(event, context, "SUCCESS", physical_resource_id=physical_id)
+            _send_once("SUCCESS")
             return
 
         import psycopg  # local import -- see module docstring
@@ -365,13 +527,7 @@ def handler(event: dict[str, Any], context: Any) -> None:
             _ensure_login_users(conn, host=host, port=port, dbname=dbname)
             _ensure_admin_principal(conn, admin_email)
 
-        _send_cfn_response(
-            event,
-            context,
-            "SUCCESS",
-            physical_resource_id=physical_id,
-            data={"AppliedMigrations": str(len(pending))},
-        )
+        _send_once("SUCCESS", data={"AppliedMigrations": str(len(pending))})
     except Exception as exc:  # must always answer CFN, even for an unexpected bug
         # Deliberately NOT `str(exc)`: `_dsn_from_secret` builds the master
         # connection string with the password embedded in plain text, and
@@ -384,7 +540,13 @@ def handler(event: dict[str, Any], context: Any) -> None:
         # `raise`.
         log_stream = getattr(context, "log_stream_name", "")
         reason = f"{type(exc).__name__} -- see CloudWatch Logs: {log_stream}"
-        _send_cfn_response(
-            event, context, "FAILED", physical_resource_id=physical_id, reason=reason
-        )
+        _send_once("FAILED", reason=reason)
         raise
+    finally:
+        # Unblocks `_run_watchdog`'s `stop.wait(...)` immediately (an
+        # `Event` unblocks a pending `wait` as soon as `set()` is called
+        # from another thread) so the background thread exits promptly
+        # once the main path has already answered CloudFormation, instead
+        # of lingering up to `_WATCHDOG_POLL_INTERVAL_S` longer than
+        # necessary.
+        stop_watchdog.set()

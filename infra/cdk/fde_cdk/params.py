@@ -74,11 +74,34 @@ class LaunchParams:
     admin_email: cdk.CfnParameter
     release_tag: cdk.CfnParameter
     assets_bucket: cdk.CfnParameter
+    # Task 7.5: the ops-layer click surface. See OpsLayer (ops.py) for what
+    # each condition below gates.
+    ops_mode: cdk.CfnParameter
+    ops_alert_email: cdk.CfnParameter
+    monthly_budget_usd: cdk.CfnParameter
 
     is_production: cdk.CfnCondition
     is_bedrock_model: cdk.CfnCondition
     has_provider_key: cdk.CfnCondition
     has_assets_bucket: cdk.CfnCondition
+    # OpsEnabled: OpsMode != "off" -- gates every resource OpsLayer creates
+    # (params.py's own charter: every CfnCondition lives here, not inside
+    # the construct that consumes it -- same reason is_production/
+    # is_bedrock_model/has_provider_key/has_assets_bucket all live here).
+    ops_enabled: cdk.CfnCondition
+    # OpsEmailEnabled: OpsMode == "email" -- gates the SNS email
+    # subscription specifically (topic-only mode wants the topic without
+    # the default email sink).
+    ops_email_enabled: cdk.CfnCondition
+    # HasOpsAlertEmail: OpsAlertEmail != "" -- the blank-string-sentinel
+    # pattern has_provider_key/has_assets_bucket already use, deciding
+    # whether the email subscription's address resolves to OpsAlertEmail or
+    # falls back to AdminEmail (see ops_alert_email_value below).
+    has_ops_alert_email: cdk.CfnCondition
+    # OpsBudgetEnabled: OpsEnabled AND MonthlyBudgetUsd != 0 -- 0 is the
+    # documented "no budget" sentinel (params.py's own MonthlyBudgetUsd
+    # description).
+    ops_budget_enabled: cdk.CfnCondition
 
     assets_region_map: cdk.CfnMapping
 
@@ -183,6 +206,48 @@ def add_launch_params(stack: cdk.Stack) -> LaunchParams:
         ),
     )
 
+    # --- Task 7.5: ops layer click surface ---
+    # "email" is the default because the whole point of Part B is that a
+    # launcher gets a working alarm->inbox path with zero extra
+    # configuration; "topic-only" and "off" are the explicit opt-outs for
+    # someone who already has their own ops stack (see the module docstring
+    # in ops.py -- the SNS topic is the seam that stays even in "topic-only").
+    ops_mode = cdk.CfnParameter(
+        stack,
+        "OpsMode",
+        type="String",
+        default="email",
+        allowed_values=["email", "topic-only", "off"],
+        description=(
+            "email = SNS topic + email subscription + dashboard + budget "
+            "(default). topic-only = SNS topic only -- subscribe your own "
+            "Datadog/PagerDuty/SIEM, skip the default email. off = no ops "
+            "resources at all (bring your own health/alarm stack)."
+        ),
+    )
+    ops_alert_email = cdk.CfnParameter(
+        stack,
+        "OpsAlertEmail",
+        type="String",
+        default="",
+        description=(
+            "Address the ops SNS topic emails alarms/budget notifications to "
+            "when OpsMode=email. Blank falls back to AdminEmail."
+        ),
+    )
+    monthly_budget_usd = cdk.CfnParameter(
+        stack,
+        "MonthlyBudgetUsd",
+        type="Number",
+        default=300,
+        min_value=0,
+        description=(
+            "AWS Budgets monthly cost alert threshold in USD, notified to the "
+            "same ops email. 0 disables the budget entirely (no AWS::Budgets::"
+            "Budget resource, regardless of OpsMode)."
+        ),
+    )
+
     is_production = cdk.CfnCondition(
         stack,
         "IsProduction",
@@ -211,6 +276,40 @@ def add_launch_params(stack: cdk.Stack) -> LaunchParams:
         expression=cdk.Fn.condition_not(cdk.Fn.condition_equals(assets_bucket.value_as_string, "")),
     )
 
+    # --- Task 7.5: ops layer conditions ---
+    ops_enabled = cdk.CfnCondition(
+        stack,
+        "OpsEnabled",
+        expression=cdk.Fn.condition_not(cdk.Fn.condition_equals(ops_mode.value_as_string, "off")),
+    )
+    ops_email_enabled = cdk.CfnCondition(
+        stack,
+        "OpsEmailEnabled",
+        expression=cdk.Fn.condition_equals(ops_mode.value_as_string, "email"),
+    )
+    has_ops_alert_email = cdk.CfnCondition(
+        stack,
+        "HasOpsAlertEmail",
+        expression=cdk.Fn.condition_not(
+            cdk.Fn.condition_equals(ops_alert_email.value_as_string, "")
+        ),
+    )
+    # `Fn::And` referencing the already-named OpsEnabled condition directly
+    # (verified: `Fn.condition_and` accepts a `CfnCondition` object and
+    # emits `{"Condition": "OpsEnabled"}`, not a re-expansion of its
+    # expression) -- MonthlyBudgetUsd's own description names "0" as the
+    # no-budget sentinel, checked as a string equality the same way every
+    # other blank/zero sentinel in this module is (Number CfnParameters
+    # still expose `.value_as_string`).
+    ops_budget_enabled = cdk.CfnCondition(
+        stack,
+        "OpsBudgetEnabled",
+        expression=cdk.Fn.condition_and(
+            ops_enabled,
+            cdk.Fn.condition_not(cdk.Fn.condition_equals(monthly_budget_usd.value_as_string, "0")),
+        ),
+    )
+
     assets_region_map = cdk.CfnMapping(
         stack,
         "AssetsRegionMap",
@@ -232,10 +331,17 @@ def add_launch_params(stack: cdk.Stack) -> LaunchParams:
         admin_email=admin_email,
         release_tag=release_tag,
         assets_bucket=assets_bucket,
+        ops_mode=ops_mode,
+        ops_alert_email=ops_alert_email,
+        monthly_budget_usd=monthly_budget_usd,
         is_production=is_production,
         is_bedrock_model=is_bedrock_model,
         has_provider_key=has_provider_key,
         has_assets_bucket=has_assets_bucket,
+        ops_enabled=ops_enabled,
+        ops_email_enabled=ops_email_enabled,
+        has_ops_alert_email=has_ops_alert_email,
+        ops_budget_enabled=ops_budget_enabled,
         assets_region_map=assets_region_map,
     )
 
@@ -365,4 +471,28 @@ def model_id_env(params: LaunchParams) -> str:
     """
     return cdk.Token.as_string(
         cdk.Fn.condition_if(params.is_bedrock_model.logical_id, "", params.model_id.value_as_string)
+    )
+
+
+def ops_alert_email_value(params: LaunchParams) -> str:
+    """`Fn::If(HasOpsAlertEmail, OpsAlertEmail, AdminEmail)` -- the address
+    `OpsLayer`'s (`ops.py`) SNS email subscription resolves to: the
+    `OpsAlertEmail` launch parameter when a launcher set one, else the
+    `AdminEmail` every launch already requires (so there is always a real
+    inbox to fall back to, never a blank subscription endpoint).
+
+    Same shape as `resolve_assets_bucket_name`/`dynamic_secret_env_value`
+    above: a plain `str` carrying an embedded CDK token via
+    `cdk.Token.as_string`. This resolves the value regardless of `OpsMode`
+    -- `ops.py` is the one that decides whether the *subscription resource*
+    consuming it exists at all (`Condition: OpsEmailEnabled`), matching the
+    same separation `dynamic_secret_env_value` draws between "what does
+    this value resolve to" and "does the resource holding it exist".
+    """
+    return cdk.Token.as_string(
+        cdk.Fn.condition_if(
+            params.has_ops_alert_email.logical_id,
+            params.ops_alert_email.value_as_string,
+            params.admin_email.value_as_string,
+        )
     )

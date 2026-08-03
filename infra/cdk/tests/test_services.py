@@ -181,10 +181,15 @@ def test_http_api_exists_exactly_once() -> None:
 
 
 def test_two_gate_schedules() -> None:
+    """A subset check, not exact-list equality: Task 7.5's `OpsLayer` adds
+    a THIRD `AWS::Events::Rule` at the stack level (`rate(5 minutes)`,
+    `ops.py`'s `OpsMetricsRule`) -- this test's job is only to prove the
+    two gate schedules themselves are unaffected, not that no other rule
+    exists anywhere in the template (see tests/test_ops.py for that one)."""
     t = synth_template()
     rules = t.find_resources("AWS::Events::Rule")
-    exprs = sorted(r["Properties"]["ScheduleExpression"] for r in rules.values())
-    assert exprs == ["rate(1 hour)", "rate(1 minute)"]
+    exprs = {r["Properties"]["ScheduleExpression"] for r in rules.values()}
+    assert {"rate(1 hour)", "rate(1 minute)"} <= exprs
 
 
 def test_schedule_payloads_match_fde_gate_deploy_schedule() -> None:

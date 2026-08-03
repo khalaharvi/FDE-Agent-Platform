@@ -10,6 +10,7 @@ from fde_cdk.iam_roles import IamRoles
 from fde_cdk.identity import Identity
 from fde_cdk.migrations import Migrations
 from fde_cdk.network import Network
+from fde_cdk.ops import OpsLayer
 from fde_cdk.outputs import add_outputs
 from fde_cdk.params import add_launch_params
 from fde_cdk.services import Services
@@ -17,9 +18,9 @@ from fde_cdk.services import Services
 
 class FdePlatformStack(cdk.Stack):
     """Root stack behind the README Launch-Stack button. One template URL,
-    nine single-responsibility constructs: Network -> Database -> Identity
+    ten single-responsibility constructs: Network -> Database -> Identity
     -> IamRoles -> Migrations -> Services -> Agents -> GateService ->
-    Outputs."""
+    OpsLayer -> Outputs."""
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs: object) -> None:
         super().__init__(
@@ -145,15 +146,36 @@ class FdePlatformStack(cdk.Stack):
         cfn_console_client.add_property_override("CallbackURLs", [console_url])
         cfn_console_client.add_property_override("LogoutURLs", [console_url])
 
+        # OpsLayer after GateService: its 8 alarms/dashboard read handles
+        # (`gate_service.function`, `migrations.function`,
+        # `services.mcp_target_group`/`mcp_service`/`embedder_service`,
+        # `database.cluster`, `gate_service.dlq`) every earlier construct
+        # already built -- see ops.py's own module docstring for the
+        # condition-gating mechanism (every OpsLayer resource carries
+        # `Condition: OpsEnabled`) and the alarm inventory.
+        self.ops = OpsLayer(
+            self,
+            "OpsLayer",
+            params=self.params,
+            gate_function=self.gate_service.function,
+            migration_function=self.migrations.function,
+            mcp_target_group=self.services.mcp_target_group,
+            mcp_service=self.services.mcp_service,
+            embedder_service=self.services.embedder_service,
+            db_cluster=self.database.cluster,
+            dlq=self.gate_service.dlq,
+        )
+
         # Outputs last: every value they print (the console URL, the login
-        # URL, the two endpoints) is built from constructs above them.
-        # `add_outputs` is a plain function, not a nested Construct -- see
-        # outputs.py's module docstring for why (clean, unhashed output
-        # names on the CloudFormation console).
+        # URL, the two endpoints, the ops topic/dashboard) is built from
+        # constructs above them. `add_outputs` is a plain function, not a
+        # nested Construct -- see outputs.py's module docstring for why
+        # (clean, unhashed output names on the CloudFormation console).
         add_outputs(
             self,
             identity=self.identity,
             gate_service=self.gate_service,
             services=self.services,
+            ops=self.ops,
             console_url=console_url,
         )

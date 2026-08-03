@@ -71,9 +71,11 @@ import aws_cdk.aws_events as events
 import aws_cdk.aws_events_targets as events_targets
 import aws_cdk.aws_iam as iam
 import aws_cdk.aws_lambda as lambda_
+import aws_cdk.aws_logs as logs
 import aws_cdk.aws_rds as rds
 import aws_cdk.aws_s3 as s3
 import aws_cdk.aws_secretsmanager as secretsmanager
+import aws_cdk.aws_sqs as sqs
 from constructs import Construct
 
 from fde_cdk.iam_roles import GATE_FUNCTION_NAME
@@ -192,6 +194,12 @@ class GateService(Construct):
     function: lambda_.Function
     http_api: apigwv2.HttpApi
     api_endpoint: str
+    log_group: logs.LogGroup
+    # Task 7.5: the shared ops DLQ (`fde-ops-dlq`), created here (not
+    # ops.py) because it is unconditional hygiene -- it exists regardless
+    # of `OpsMode` -- while `OpsLayer`'s `FdeOpsDlqMessages` alarm on it
+    # IS `OpsMode`-gated. Exposed so `stack.py` can pass it into `OpsLayer`.
+    dlq: sqs.Queue
 
     def __init__(
         self,
@@ -264,6 +272,39 @@ class GateService(Construct):
         for agent_name in _AGENT_NAMES:
             environment[f"FDE_RUNTIME_ARN_{agent_name}"] = resolved_runtime_arns.get(agent_name, "")
 
+        # --- Task 7.5 hygiene: explicit LogGroup, never `log_retention=` ---
+        # `log_retention=` on `lambda_.Function` synthesizes a
+        # `LogRetention` custom-resource asset Lambda under the hood
+        # (CDK's own framework, published through the bootstrap assets
+        # bucket) -- forbidden by this stack's bootstrap-free contract
+        # (`BootstraplessSynthesizer`, `stack.py`). An explicit
+        # `logs.LogGroup(...)` passed via `log_group=` gets the same
+        # retention/removal behavior as a plain resource this stack already
+        # owns.
+        #
+        # The name is pinned to the DERIVED default
+        # (`/aws/lambda/{GATE_FUNCTION_NAME}`), not left to CDK's
+        # auto-naming, because `function_name=GATE_FUNCTION_NAME` above is
+        # itself pinned (`iam_roles.py`'s own comment: `gate_role`'s
+        # log-group statement is scoped to this exact name) -- a launcher
+        # who deployed a pre-7.5 build of this stack already has a
+        # service-created `/aws/lambda/fde-gate-service` log group AWS
+        # Lambda made automatically on first invoke (default 2-year/RETAIN
+        # policy); THIS CloudFormation-owned LogGroup resource creating a
+        # group of the identical name is a collision on create for that
+        # launcher (`ResourceAlreadyExistsException` at deploy time) --
+        # docs/13's teardown sweep names this exact orphaned-group case as
+        # a documented follow-up (delete the old group by hand once, before
+        # a 7.5+ update), not something this construct itself can detect or
+        # remediate at synth time.
+        self.log_group = logs.LogGroup(
+            self,
+            "FunctionLogGroup",
+            log_group_name=f"/aws/lambda/{GATE_FUNCTION_NAME}",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
+
         self.function = lambda_.Function(
             self,
             "Function",
@@ -279,6 +320,7 @@ class GateService(Construct):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             role=gate_role,
             environment=environment,
+            log_group=self.log_group,
         )
 
         # Same pattern as Migrations: open 5432 from this Lambda's own
@@ -332,6 +374,16 @@ class GateService(Construct):
         )
         self.api_endpoint = self.http_api.api_endpoint
 
+        # --- Task 7.5 hygiene: one shared DLQ for both schedule targets ---
+        # `fde-ops-dlq` catches any tick/expiry invocation EventBridge
+        # could not deliver to the gate Lambda after its own retries --
+        # unconditional (not `OpsMode`-gated): a launcher who set
+        # `OpsMode=off` still deserves undelivered-event durability, they
+        # just don't get the `FdeOpsDlqMessages` alarm `OpsLayer` builds on
+        # top of this same queue (see that construct and gate.py's own
+        # `dlq` attribute this queue is exposed as).
+        self.dlq = sqs.Queue(self, "OpsDlq", queue_name="fde-ops-dlq")
+
         # --- EventBridge schedules ---
         for logical_id, schedule_expr, payload, description in _SCHEDULES:
             rule = events.Rule(
@@ -342,6 +394,9 @@ class GateService(Construct):
             )
             rule.add_target(
                 events_targets.LambdaFunction(
-                    self.function, event=events.RuleTargetInput.from_object(payload)
+                    self.function,
+                    event=events.RuleTargetInput.from_object(payload),
+                    dead_letter_queue=self.dlq,
+                    retry_attempts=2,
                 )
             )

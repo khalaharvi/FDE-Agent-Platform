@@ -56,10 +56,12 @@ and is called out in the Task 6 report as a follow-up.
 
 from __future__ import annotations
 
+import aws_cdk as cdk
 import aws_cdk.aws_ec2 as ec2
 import aws_cdk.aws_ecs as ecs
 import aws_cdk.aws_elasticloadbalancingv2 as elbv2
 import aws_cdk.aws_iam as iam
+import aws_cdk.aws_logs as logs
 import aws_cdk.aws_rds as rds
 import aws_cdk.aws_secretsmanager as secretsmanager
 from constructs import Construct
@@ -129,6 +131,12 @@ class Services(Construct):
     mcp_service: ecs.FargateService
     embedder_service: ecs.FargateService
     mcp_url: str
+    # Task 7.5: `OpsLayer`'s `FdeMcpUnhealthyHosts`/`FdeMcpTarget5xx`
+    # alarms build on this target group's own `metric_*` helpers -- exposed
+    # here (captured from `add_targets`' return value, previously
+    # discarded) so `stack.py` can pass it into `OpsLayer` as a handle
+    # rather than that construct reaching into `Services`' internals.
+    mcp_target_group: elbv2.ApplicationTargetGroup
 
     def __init__(
         self,
@@ -180,6 +188,20 @@ class Services(Construct):
             runtime_platform=runtime_platform,
             task_role=mcp_task_role,
         )
+        # Task 7.5 hygiene: explicit LogGroup for the same reason gate.py's
+        # gets one -- an `ecs.LogDriver.aws_logs` with no `log_group=`
+        # override lets the ECS agent auto-create the group with NO
+        # retention policy (logs kept forever) rather than this
+        # `RetentionDays.ONE_MONTH`/`RemovalPolicy.DESTROY` pair. Auto-named
+        # (no `log_group_name=`): unlike the gate Lambda, neither Fargate
+        # task definition pins a fixed, externally-depended-on name, so
+        # there is no pre-7.5-orphan collision risk to guard against here.
+        mcp_log_group = logs.LogGroup(
+            self,
+            "McpLogGroup",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
         mcp_task_definition.add_container(
             "McpContainer",
             container_name="fde-mcp",
@@ -190,7 +212,7 @@ class Services(Construct):
                 "FDE_DB_SECRET_ARN": mcp_db_secret.secret_arn,
                 **embed_env,
             },
-            logging=ecs.LogDriver.aws_logs(stream_prefix="fde-mcp"),
+            logging=ecs.LogDriver.aws_logs(stream_prefix="fde-mcp", log_group=mcp_log_group),
         )
         self.mcp_service = ecs.FargateService(
             self,
@@ -227,7 +249,11 @@ class Services(Construct):
             ec2.Port.tcp(80),
             "VPC-internal callers only (gate Lambda, AgentCore Gateway)",
         )
-        listener.add_targets(
+        # Task 7.5: `add_targets` returns the `ApplicationTargetGroup` it
+        # creates -- previously discarded, now captured as
+        # `self.mcp_target_group` (see this construct's own docstring/class
+        # attribute) for `OpsLayer`'s unhealthy-host/5xx alarms.
+        self.mcp_target_group = listener.add_targets(
             "McpTargets",
             port=_MCP_CONTAINER_PORT,
             targets=[self.mcp_service],
@@ -253,6 +279,13 @@ class Services(Construct):
             runtime_platform=runtime_platform,
             task_role=embedder_task_role,
         )
+        # Same Task 7.5 hygiene as McpLogGroup above.
+        embedder_log_group = logs.LogGroup(
+            self,
+            "EmbedderLogGroup",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
         embedder_task_definition.add_container(
             "EmbedderContainer",
             container_name="fde-embedder",
@@ -263,7 +296,9 @@ class Services(Construct):
                 "FDE_EMBEDDER_ROLE": _EMBEDDER_ROLE,
                 **embed_env,
             },
-            logging=ecs.LogDriver.aws_logs(stream_prefix="fde-embedder"),
+            logging=ecs.LogDriver.aws_logs(
+                stream_prefix="fde-embedder", log_group=embedder_log_group
+            ),
         )
         self.embedder_service = ecs.FargateService(
             self,

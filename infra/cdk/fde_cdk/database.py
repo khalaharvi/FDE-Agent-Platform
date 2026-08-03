@@ -108,6 +108,21 @@ class Database(Construct):
             # DeletionProtection below, it is fine to set directly from
             # Python rather than through the Fn::If pattern.
             removal_policy=cdk.RemovalPolicy.SNAPSHOT,
+            # Task 7.5 hygiene (unconditional, both tiers -- not gated by
+            # OpsMode, per that task's brief: "correctness hygiene is NOT
+            # optional"): 7-day automated-backup retention, up from the
+            # RDS-managed-cluster default (1 day) that would otherwise be
+            # the only recovery point between snapshot-on-delete events.
+            backup=rds.BackupProps(retention=cdk.Duration.days(7)),
+            # RDS Data API (the HTTP/IAM query interface, not a libpq
+            # connection): the break-glass path docs/13's principal-
+            # reconciliation UPDATE and the embed-queue probe both need when
+            # nothing with VPC network access is available (e.g. no
+            # bastion/VPN yet on a fresh launch). `enable_data_api=True` is
+            # a direct L2 prop on this aws-cdk-lib version (2.263.0,
+            # verified via introspection) -- no L1
+            # `EnableHttpEndpoint` override needed.
+            enable_data_api=True,
         )
 
         # --- Tier switching: L1 escape hatch, Fn::If on both branches ---

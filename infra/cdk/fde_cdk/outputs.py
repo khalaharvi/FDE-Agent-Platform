@@ -51,6 +51,7 @@ import aws_cdk as cdk
 
 from fde_cdk.gate import GateService
 from fde_cdk.identity import Identity
+from fde_cdk.ops import OpsLayer
 from fde_cdk.services import Services
 
 # The brief's own literal -- matches the `Repository`/`Changelog` project
@@ -66,6 +67,7 @@ def add_outputs(
     identity: Identity,
     gate_service: GateService,
     services: Services,
+    ops: OpsLayer,
     console_url: str,
 ) -> None:
     cdk.CfnOutput(
@@ -116,4 +118,25 @@ def add_outputs(
         "FirstStepsUrl",
         value=FIRST_STEPS_URL,
         description="Launch-day walkthrough: seed data, first login, first proposal.",
+    )
+
+    # Task 7.5: the ops layer's own two outputs. Both are unconditioned
+    # `CfnOutput`s carrying Fn::If-wrapped VALUES (see `ops.py`'s own
+    # `topic_arn`/`dashboard_url` docstring) -- present in every synth,
+    # resolving to "" when OpsMode=off.
+    cdk.CfnOutput(
+        stack,
+        "OpsTopicArn",
+        value=ops.topic_arn,
+        description=(
+            "The fde-ops SNS topic -- the integration seam. Subscribe your own "
+            "Datadog/PagerDuty/SIEM here; set OpsMode=topic-only to skip the "
+            "default email subscription. Blank when OpsMode=off."
+        ),
+    )
+    cdk.CfnOutput(
+        stack,
+        "OpsDashboardUrl",
+        value=ops.dashboard_url,
+        description="The FdeOps CloudWatch dashboard. Blank when OpsMode=off.",
     )

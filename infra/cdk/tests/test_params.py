@@ -19,15 +19,21 @@ def test_admin_email_pattern_rejects_garbage() -> None:
 
 
 def test_conditions_and_mapping_present() -> None:
-    """The rest of the Interfaces contract: the four named conditions
+    """The rest of the Interfaces contract: the named conditions
     (`HasAssetsBucket` added by Task 5, consumed by `Migrations`'s
-    code-bucket `Fn::If`) and the region->assets-bucket mapping."""
+    code-bucket `Fn::If`; the four `Ops*` conditions added by Task 7.5,
+    consumed by `OpsLayer`, `ops.py`) and the region->assets-bucket
+    mapping."""
     template = synth_template().to_json()
     assert set(template["Conditions"]) == {
         "IsProduction",
         "IsBedrockModel",
         "HasProviderKey",
         "HasAssetsBucket",
+        "OpsEnabled",
+        "OpsEmailEnabled",
+        "HasOpsAlertEmail",
+        "OpsBudgetEnabled",
     }
     assert template["Mappings"]["AssetsRegionMap"]["us-east-1"]["bucket"]
 
@@ -59,6 +65,31 @@ def test_no_cdk_metadata_resource() -> None:
     companion that exercises app.py's actual (now False) configuration."""
     resource_types = {r["Type"] for r in synth_template().to_json().get("Resources", {}).values()}
     assert "AWS::CDK::Metadata" not in resource_types
+
+
+def test_app_level_tags_present_via_real_app_config() -> None:
+    """Task 7.5 hygiene, `app.py`: `cdk.Tags.of(app).add(...)` twice --
+    "app"=fde-platform (fixed) and "stack-tier"=the SAME `DeployTier`
+    launch parameter `database.py`'s tier-switching Fn::If already reads.
+    Same real-`app.py`-construction pattern as
+    `test_no_cdk_metadata_via_real_app_config` below (a bare `cdk.App()`
+    via `synth_template()` never applies these -- they are `app.py`'s own
+    script, not `FdePlatformStack`'s)."""
+    import aws_cdk as cdk
+    from aws_cdk.assertions import Template
+
+    from fde_cdk.stack import FdePlatformStack
+
+    app = cdk.App(analytics_reporting=False)
+    stack = FdePlatformStack(app, "FdePlatform")
+    cdk.Tags.of(app).add("app", "fde-platform")
+    cdk.Tags.of(app).add("stack-tier", stack.params.deploy_tier.value_as_string)
+
+    template = Template.from_stack(stack).to_json()
+    vpc = next(r for r in template["Resources"].values() if r["Type"] == "AWS::EC2::VPC")
+    tags = {t["Key"]: t["Value"] for t in vpc["Properties"]["Tags"] if t["Key"] != "Name"}
+    assert tags["app"] == "fde-platform"
+    assert tags["stack-tier"] == {"Ref": "DeployTier"}
 
 
 def test_no_cdk_metadata_via_real_app_config() -> None:
