@@ -53,7 +53,10 @@ __all__ = [
     "values_from_form",
 ]
 
-#: Prefixed onto every generated control's `name`. See `Field.input_name`.
+#: Prefixed onto every generated control's `name` AND its `id`. See
+#: `Field.input_name`. It reserves a namespace in both, so a template's own
+#: hand-written controls must not use it for either -- `_fields.html.j2`
+#: repeats that rule where the ids are written.
 FIELD_PREFIX = "f_"
 
 # Keys of a `human_schema` that describe the STEP rather than the answer.
@@ -79,6 +82,14 @@ _SUPPORTED_TYPES = frozenset({"string", "boolean", "integer", "number", "array"}
 # list of scalars; an array of objects is a table, and a text box that
 # claimed to collect one would be collecting prose.
 _SUPPORTED_ITEM_TYPES = frozenset({"string", "integer", "number"})
+
+# How tall a generated array control is. An array is read one entry per line
+# (`_coerce`) and its hint says so, but a schema-derived one rendered as a
+# single-line `<input>` -- a box that cannot show the second line of the list
+# it is asking for, and that swallows the Enter key as a form submit. The
+# launcher's hand-built array fields have said `rows` since they were
+# written; this is the same answer for the ones a schema produces.
+_ARRAY_ROWS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,8 +299,19 @@ def _enum_property(
     answers -- but it does NOT excuse the type from the gate every other
     property passes. It used to: a declared type this module cannot read was
     quietly downgraded to "string", which made an enum a hole in the
-    whole-or-nothing rule. An enum with NO declared type is still strings,
-    which is what its members are, and nothing has been bypassed.
+    whole-or-nothing rule.
+
+    Two ways an enum can still fail to be a question anybody can answer, and
+    both of them produce no form rather than a form that lies:
+
+    * The declared type and the members disagree about what an answer IS. A
+      boolean whose members are "yes" and "no" rendered two options that both
+      submitted "" and were both labelled "false" -- the same option twice,
+      and neither of them the answer the schema offered.
+    * There is no declared type, so the MEMBERS are the only statement of
+      what the answers are. Reading them all as strings turned
+      `{"enum": [1, 2]}` into a select recording "1", and `$.n == 1` is not
+      `$.n == "1"` to the jsonpath a decision branch is written in.
     """
     if isinstance(declared, str) and value_type not in _SUPPORTED_TYPES:
         return None
@@ -298,14 +320,66 @@ def _enum_property(
         # cannot express it, and splitting that line would invent a list the
         # enum never offered.
         return None
+    if not value_type:
+        inferred = _inferred_enum_type(enum)
+        if inferred is None:
+            return None
+        value_type = inferred
+    if value_type == "boolean" and not all(_is_boolean_member(item) for item in enum):
+        return None
     return _Property(
         name=name,
-        value_type=value_type if value_type in _SUPPORTED_TYPES else "string",
+        value_type=value_type,
         title=str(spec.get("title") or ""),
         description=str(spec.get("description") or ""),
         enum=tuple(enum),
         required=required,
     )
+
+
+def _is_boolean_member(item: Any) -> bool:
+    """Can `_option`'s boolean half carry this member back out of a form?
+
+    `True` and `False`, and the two JSON spellings of them -- a schema author
+    who writes `"enum": ["true", "false"]` beside `"type": "boolean"` has
+    said something this can render faithfully. Anything else has not: every
+    non-boolean member collapses onto the same falsy option value, so a
+    schema offering "yes" and "no" produced one answer where it declared two.
+    """
+    if isinstance(item, bool):
+        return True
+    return isinstance(item, str) and item.strip().lower() in ("true", "false")
+
+
+def _inferred_enum_type(enum: list[Any]) -> str | None:
+    """The one type every member of a typeless enum is, or None.
+
+    All of them or none of them: members that do not agree have no single
+    `value_type` to give the field, and an option list whose values parse
+    back as different types is not something `values_from_form` can read. The
+    whole-or-nothing rule makes the JSON fallback the honest answer there.
+    """
+    types = {_member_type(item) for item in enum}
+    if len(types) != 1:
+        return None
+    (inferred,) = types
+    return inferred
+
+
+def _member_type(item: Any) -> str | None:
+    """The JSON type of one enum member, or None if this cannot ask for it."""
+    # bool before int, because `isinstance(True, int)` is true in Python. A
+    # boolean enum read as integers would offer 0 and 1 for a question the
+    # schema wrote as true and false.
+    if isinstance(item, bool):
+        return "boolean"
+    if isinstance(item, int):
+        return "integer"
+    if isinstance(item, float):
+        return "number"
+    if isinstance(item, str):
+        return "string"
+    return None
 
 
 def _item_type(spec: dict[str, Any]) -> str | None:
@@ -337,7 +411,7 @@ def _to_field(prop: _Property) -> Field:
         hint=prop.description or _type_hint(prop),
         required=prop.required and prop.value_type != "boolean",
         options=tuple(_option(prop.value_type, item) for item in prop.enum),
-        rows=0,
+        rows=_ARRAY_ROWS if prop.value_type == "array" else 0,
     )
 
 
