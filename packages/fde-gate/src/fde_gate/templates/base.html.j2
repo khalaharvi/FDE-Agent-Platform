@@ -53,6 +53,10 @@
     <a href="/ui/workflows">Workflows</a>
     <a href="/ui/runs">Runs</a>
     <a href="/ui/drift">Drift</a>
+    {# Shown to administrators only. The page refuses everyone else on its
+       own (service/reviewers.py), so this hides a door rather than locking
+       one -- an operator who bookmarks the URL still gets a 403. #}
+    {% if is_admin %}<a href="/ui/reviewers">Reviewers</a>{% endif %}
   </nav>
   <span class="who">{{ principal or "unauthenticated" }}</span>
 </header>
