@@ -124,8 +124,27 @@ def _day(timestamp: str) -> str:
     return timestamp[:10] if len(timestamp) >= 10 else timestamp
 
 
+def _error_text(error: Any) -> str:
+    """The sentence inside a stored error envelope. The `error_text` filter.
+
+    `wf.agent_launch.error` holds `StepExecutionError.detail` verbatim, which
+    is a JSON object whose `error` key is the message and whose other keys are
+    context. An operator reading the launch list wants the message; rendering
+    the whole object gives them the message wrapped in braces. Anything that
+    is not that shape is shown as JSON rather than guessed at -- the same
+    trade `_message` makes, and the same one `launch` makes when it turns a
+    detail into a GateError.
+    """
+    if isinstance(error, dict):
+        message = error.get("error")
+        if isinstance(message, str):
+            return message
+    return json.dumps(error)
+
+
 _ENV.filters["plural"] = _plural
 _ENV.filters["day"] = _day
+_ENV.filters["error_text"] = _error_text
 
 
 def render(template: str, **context: Any) -> str:
@@ -423,15 +442,33 @@ async def publish_post(request: Request) -> Response:
 
 
 async def runs_page(request: Request) -> Response:
-    """The run list, and the two-step form that starts a new one.
+    """The run list, the form that starts a new one, and the launch records.
 
     `?workflow_id=` is the second step: with one chosen, the page renders the
     fields that workflow's declared answer shape produces instead of the JSON
     textarea it used to demand. Without one, only the picker -- there is no
     way to know which fields to show before knowing which workflow.
+
+    Agent launches are listed here rather than on a page of their own. They
+    are not runs -- a launch has no workflow, no steps and no pinned commit,
+    and the section says so -- but they are the same question asked of a
+    different verb: what did I set going, and how did it end. A separate route
+    would be a fourth nav entry an operator has to know exists BEFORE the
+    launch they are trying to chase down, which is precisely when they do not.
+
+    The two lists come from two different DB roles: runs through
+    `fde_prodops`, launches through the gate role, because db/018 grants
+    `wf.agent_launch` to the gate service alone. Two transactions, both
+    read-only, on a page that already opens one for the nav's admin flag.
+
+    `?status=` filters the runs and deliberately not the launches. The values
+    it takes are `wf.run_status` members -- `awaiting_human`, `cancelled` --
+    and a launch can be none of them; quietly emptying the launch table
+    because a run filter was applied to it would read as "no launches".
     """
     status = request.query.get("status")
     listing = await runs.list_runs(statuses=(status,) if status else None)
+    launched = await agents.list_launches()
     published = await workflows.list_workflows(status="published")
 
     chosen = request.query.get("workflow_id") or ""
@@ -444,6 +481,7 @@ async def runs_page(request: Request) -> Response:
         request,
         "runs.html.j2",
         runs=listing["runs"],
+        launches=launched["launches"],
         workflows=published["workflows"],
         status=status,
         selected_workflow=selected,
@@ -899,11 +937,13 @@ async def agent_run_page(request: Request) -> Response:
 async def agent_run_post(request: Request) -> Response:
     """Dispatch the chosen task, then land on the review queue.
 
-    The queue, and not `/ui/runs`, because that is where the OUTCOME is. A
-    launch creates no `wf.run` -- it is not a workflow -- so the runs page
-    would have answered a successful launch with a list that had not
-    changed. What did change is the proposal the agent raised, and the
-    notice below points at it from the page it is on.
+    The queue, and not `/ui/runs`, because that is where the OUTCOME is: a
+    launch produces a proposal, and a proposal is what somebody has to do
+    something about. `/ui/runs` now carries the launch RECORD, which is the
+    answer to a different question -- "did the thing I started actually
+    run?" -- and the one an operator asks only when this redirect never
+    arrived. So the notice names the record by number instead of sending
+    them to it; a successful launch has nothing to chase.
     """
     try:
         result = await agents.launch(
@@ -927,7 +967,8 @@ async def agent_run_post(request: Request) -> Response:
         "/ui",
         notice=(
             f"the {result['agent']} agent finished {result['task']} "
-            f"({result['events']} {_plural(result['events'], 'event')}). "
+            f"({result['events']} {_plural(result['events'], 'event')}), "
+            f"recorded as launch #{result['launch_id']} on Runs. "
             "Anything it proposed is in the queue below."
         ),
     )

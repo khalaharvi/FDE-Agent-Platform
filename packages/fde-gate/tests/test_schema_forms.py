@@ -432,6 +432,11 @@ def _runs_page(**overrides: Any) -> str:
         "notice": None,
         "rendered_at": 0.0,
         "runs": [],
+        # This file is about the generated FORM half of the page; the launch
+        # records section below it is `test_launch_records.py`'s subject.
+        # Present and empty, because StrictUndefined makes "absent" a crash
+        # rather than a blank.
+        "launches": [],
         "workflows": [_WORKFLOW],
         "status": None,
         "selected_workflow": _WORKFLOW,
