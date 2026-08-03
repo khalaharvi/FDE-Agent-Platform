@@ -67,11 +67,12 @@ jobs:
       - name: migrations + 25 smoke tests
         run: ./db/rebuild.sh fde
       - name: core invariants must hold
-        # These twenty-five statements MUST all fail. If any succeeds, an
+        # These twenty-nine statements MUST all fail. If any succeeds, an
         # agent can write the graph, publish a workflow, label its own
-        # training data, appoint its own reviewer, or rewrite the evidence a
-        # reviewer checked a proposal against, and the platform's central
-        # guarantee is gone. Asserted here rather than trusted.
+        # training data, appoint its own reviewer, rewrite the evidence a
+        # reviewer checked a proposal against, or forge the record of who
+        # asked for a piece of work, and the platform's central guarantee is
+        # gone. Asserted here rather than trusted.
         #
         # The first eight are the original set: they are the four-layer
         # invariant itself, and their roles, targets and claims are not to be
@@ -98,10 +99,12 @@ jobs:
         # SUCCEEDING once the privilege is granted. The twelve after them
         # guard the reviewer roster (db/016): the console may administer it,
         # nothing else may touch it, and even the console may only write the
-        # columns db/016 names. The last five guard evidence intake
+        # columns db/016 names. Five more guard evidence intake
         # (db/017), which gave the console INSERT on three kg tables: the
         # grant must not have widened into UPDATE, DELETE, the graph
-        # tables, or a second role.
+        # tables, or a second role. The last four guard the launch record
+        # (db/018), and each was proven in both directions before it was
+        # written down.
         run: |
           set -u
           fail=0
@@ -193,6 +196,39 @@ jobs:
           # kg.chunk would leave both lines denying for the wrong reason.
           assert_denied fde_gate_service "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) SELECT engagement_id,node_key,node_type,label,commit_id FROM kg.node WHERE false;"
           assert_denied fde_prodops "INSERT INTO kg.chunk (engagement_id,source_id,ordinal,content) SELECT engagement_id,source_id,ordinal,content FROM kg.chunk WHERE false;"
+
+          # db/018 records console agent launches in wf.agent_launch, so a
+          # launch that outlives its HTTP request still leaves a trace. The
+          # row is an attribution -- this person asked for this task on this
+          # engagement -- and the four lines below are what makes it one.
+          # An agent that could INSERT here could file a record claiming a
+          # human asked for work the human never asked for, which is the
+          # propose/dispose invariant defeated in the audit trail rather
+          # than in the graph; one that could UPDATE could mark its own
+          # launch succeeded. The console writes the row and may stamp only
+          # how it ended: status, runtime_session_id, error, completed_at.
+          # Rewriting `principal` is refused for the reason db/016 refuses
+          # it on hitl.reviewer -- it re-points a record at somebody who did
+          # not make it -- and the same grant withholds agent, task,
+          # engagement_id and input, which are the rest of the request.
+          # Nothing holds DELETE, because a history that can be deleted
+          # answers "did this run?" only until somebody would rather it did
+          # not.
+          #
+          # The INSERT selects literals rather than reading the target the
+          # way db/017's pair does, and that is required here rather than a
+          # preference: wf.agent_launch is a NEW table, so db/010's
+          # `ALL TABLES IN SCHEMA wf` never reached it and fde_agent holds
+          # no SELECT on it either -- the read-the-target form would deny on
+          # the missing SELECT and keep printing "ok" after INSERT had been
+          # granted. All four match no rows, so the privilege is the only
+          # thing left to fail on, and all four were run in both directions
+          # against a rebuilt database: denied as written, and succeeding
+          # once the privilege each one names had been granted.
+          assert_denied fde_agent "INSERT INTO wf.agent_launch (engagement_id,agent,task,principal) SELECT gen_random_uuid(),'engagement','ingest_interview','x' WHERE false;"
+          assert_denied fde_agent "UPDATE wf.agent_launch SET status = 'succeeded' WHERE false;"
+          assert_denied fde_gate_service "UPDATE wf.agent_launch SET principal = 'x' WHERE false;"
+          assert_denied fde_gate_service "DELETE FROM wf.agent_launch WHERE false;"
           exit $fail
 
   # -------------------------------------------------------------------
