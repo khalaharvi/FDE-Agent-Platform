@@ -56,8 +56,8 @@ that production inference and RL rollouts see byte-identical behavior.
 
 Every commit passes: ruff lint and format checks, strict mypy on the four
 production packages, a frozen lockfile check, the full schema rebuild with
-smoke tests, 608 of the 609 Python tests against live Postgres (599 in the
-main job and nine more in the `train`-extra job; the last one needs
+smoke tests, 599 Python tests against live Postgres plus nine more in the
+`train`-extra job, which needs no database (the last of the 609 needs
 `wal_level=logical` and runs in no CI environment), ARM64 image builds for
 all five deployable artifacts, and the eight privilege-denial assertions.
 
