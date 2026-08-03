@@ -1,0 +1,170 @@
+---
+title: "Your first merge"
+description: "Hand-write a proposal, watch deterministic gates fire, approve it in the review console, and merge it into the knowledge graph."
+---
+
+After the [quickstart](/quickstart), your review console is running and its
+queue is empty. This page walks the platform's core loop by hand: you play the
+agent (propose), then the reviewer (dispose), and end with a sealed commit in
+the graph. It takes about five minutes, all local, no AWS.
+
+<Note>
+The sequence below is adapted from the platform's own end-to-end smoke test
+(`db/tests/smoke_test.sql`), which runs this exact flow — including the
+attempts to cheat — on every CI build, then rolls back. Here you get to keep
+the result.
+</Note>
+
+## Play the agent: propose
+
+Connect with the same environment you exported in the quickstart:
+
+```bash
+psql -d fde
+```
+
+Create an engagement's genesis commit, one evidence source, one reviewer with
+authority, and a one-item proposal — then submit it. Submitting is the moment
+the gate set is computed and frozen.
+
+```sql
+DO $$
+DECLARE
+  eng      uuid := '22222222-2222-2222-2222-222222222222';
+  genesis  bigint;
+  src      bigint;
+  rev      bigint;
+  prop     bigint;
+BEGIN
+  INSERT INTO kg.commit (status, engagement_id, title, authored_by, sealed_by, sealed_at)
+  VALUES ('sealed', eng, 'genesis', 'you@example.com', 'you@example.com', now())
+  RETURNING commit_id INTO genesis;
+
+  INSERT INTO kg.source (engagement_id, source_kind, title, captured_at, captured_by)
+  VALUES (eng, 'interview', 'RevOps lead interview', now() - interval '1 day', 'you@example.com')
+  RETURNING source_id INTO src;
+
+  INSERT INTO hitl.reviewer (principal, display_name)
+  VALUES ('sme@example.com', 'RevOps SME')
+  RETURNING reviewer_id INTO rev;
+
+  INSERT INTO hitl.reviewer_authority (reviewer_id, engagement_id, gate_kind, granted_by)
+  VALUES (rev, eng, 'ontology', 'bootstrap'),
+         (rev, eng, 'factual',  'bootstrap');
+
+  INSERT INTO hitl.proposal (engagement_id, title, rationale, authored_by, agent_name, base_commit_id)
+  VALUES (eng, 'Map the discount review step',
+          'Hand-written first proposal from the walkthrough.',
+          'you@example.com', 'engagement', genesis)
+  RETURNING proposal_id INTO prop;
+
+  INSERT INTO hitl.proposal_item
+    (proposal_id, ordinal, op, node_type, subject_key, payload, source_ids, agent_confidence)
+  VALUES
+    (prop, 1, 'add_node', 'activity', 'act.discount_review',
+     '{"label":"Discount Review","summary":"Deal desk reviews quotes discounted beyond policy.","attributes":{}}',
+     ARRAY[src], 0.90);
+
+  PERFORM hitl.submit_proposal(prop);
+  RAISE NOTICE 'submitted proposal %', prop;
+END $$;
+```
+
+Note what you could not skip: the item carries `source_ids`. A proposal item
+with no evidence source is refused at submit — evidence is mandatory, not
+encouraged.
+
+## See the gate decision as data
+
+Ask the database which approvals this proposal needs, and why:
+
+```sql
+SELECT gate_kind, quorum, sla_hours
+FROM hitl.proposal_gate
+ORDER BY gate_id;
+```
+
+You will see at least an `ontology` gate — the shipped catch-all policy fires
+on everything, which is what keeps the fail-closed check in
+`hitl.submit_proposal` reachable rather than a permanent exception. Depending
+on how the evidence-strength policy scores your single interview source, a
+`factual` gate may fire too; your reviewer holds authority for both, so
+approve whatever appears.
+
+This is the load-bearing property of the whole platform: the gate set is the
+output of `hitl.compute_required_gates()`, a pure SQL function over a policy
+table. Same proposal, same policy, same gates, every time. No model
+participates in the decision, so no agent can negotiate its way to a lighter
+review. See [Human gates](/concepts/human-gates) for the full model.
+
+## Play the reviewer: dispose
+
+Refresh the review console at `http://127.0.0.1:8787/ui`. Your proposal is now
+in the queue.
+
+1. Open it. You will see the item, its payload, its evidence source, and the
+   gates awaiting a decision.
+2. Approve each gate. Your decisions record under the `sme@example.com`
+   principal you started the dev server with.
+3. Merge. The merge re-checks gate quorum inside its own transaction — an
+   approval revoked between your click and the commit would still block it.
+
+<Tip>
+Instead of approving as-is, try editing the item first — reword the summary,
+then approve and merge. The original and edited payloads are now a paired
+(wrong, right) example on identical input. That pair is the most valuable
+event the platform produces: a free preference dataset from a reviewer doing
+their job. See [The training flywheel](/concepts/training-flywheel).
+</Tip>
+
+## Verify the graph changed
+
+Back in `psql`:
+
+```sql
+SELECT node_key, node_type, label
+FROM kg.node_current
+WHERE engagement_id = '22222222-2222-2222-2222-222222222222';
+
+SELECT proposal_id, status
+FROM hitl.proposal
+ORDER BY proposal_id DESC
+LIMIT 1;
+```
+
+One live node, one merged proposal, and a new sealed commit carrying a content
+digest. The graph row exists because a human decided it should — and the
+decision record (who, what, how long they looked) is now queryable history.
+
+## Try to cheat
+
+The invariant is worth feeling, not just reading. Impersonate the agent role
+and write to the graph directly:
+
+```sql
+SET ROLE fde_agent;
+INSERT INTO kg.node (engagement_id, node_key, node_type, label, commit_id)
+VALUES (gen_random_uuid(), 'x', 'activity', 'x', 1);
+```
+
+```text
+ERROR:  permission denied for table node
+```
+
+```sql
+RESET ROLE;
+```
+
+That denial is not an application check someone could forget to call — the
+role never had the privilege. CI asserts eight denials like this one on every
+build, so a change that quietly grants an agent write access fails the build
+before it ships.
+
+## Where to go next
+
+- [Human gates](/concepts/human-gates) — the four enforcement layers and the
+  four gate kinds you just used.
+- [The knowledge graph](/concepts/knowledge-graph) — what you just wrote into,
+  and how agents retrieve from it.
+- [The three agents](/concepts/agents) — what does the proposing in
+  production, so you don't have to hand-write SQL.

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "FDE Agent Platform",
+  "colors": {
+    "primary": "#0F766E",
+    "light": "#2DD4BF",
+    "dark": "#0B4F44"
+  },
+  "navbar": {
+    "links": [
+      {
+        "type": "github",
+        "href": "https://github.com/khalaharvi/FDE-Agent-Platform"
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/khalaharvi/FDE-Agent-Platform"
+    }
+  },
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get started",
+        "pages": ["index", "quickstart", "first-merge"]
+      },
+      {
+        "group": "Concepts",
+        "pages": [
+          "concepts/human-gates",
+          "concepts/knowledge-graph",
+          "concepts/agents",
+          "concepts/training-flywheel"
+        ]
+      },
+      {
+        "group": "Running the platform",
+        "pages": ["architecture", "models-and-cost", "deployment"]
+      },
+      {
+        "group": "Project",
+        "pages": ["status", "faq"]
+      }
+    ]
+  }
+}

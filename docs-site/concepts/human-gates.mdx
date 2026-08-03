@@ -1,0 +1,100 @@
+---
+title: "Human gates"
+description: "The propose/dispose invariant: deterministic review computed in pure SQL, enforced at four layers, asserted by CI."
+---
+
+Every write an agent wants to make to the knowledge graph is a proposal. The
+set of human approvals required to merge it is computed by
+`hitl.compute_required_gates()` — a pure SQL function over a policy table.
+Given the same proposal contents and the same active policy rows, it returns
+the same gates. Every time. No model participates in that decision.
+
+Three properties follow, and each one is a requirement somewhere else in the
+system:
+
+- **Auditability.** "Why did this need compliance sign-off?" has an answer
+  that is a row in a table you can `SELECT`, not a model output you cannot
+  reproduce. When an auditor asks how you decide what gets reviewed, you show
+  them the policy table.
+- **Non-negotiability.** The proposing agent does not participate in the
+  decision. It cannot argue for a lighter review, cannot self-approve, and
+  cannot route around a gate by rephrasing.
+- **Training validity.** Because the gate is deterministic and the reviewer is
+  human, a merged proposal is a genuine label. If an LLM decided which
+  proposals needed review, the training signal would be partly the model
+  grading itself — and the whole [training flywheel](/concepts/training-flywheel)
+  would be compromised.
+
+## Four enforcement layers
+
+The invariant — agents propose, humans dispose, only `hitl.merge_proposal`
+writes the graph — is enforced at four independent layers, so removing any
+one does not open the door:
+
+1. **Grant.** The agent role has no `INSERT`, `UPDATE`, or `DELETE` privilege
+   on the graph tables. A privilege the role never had cannot be bypassed by
+   any code path.
+2. **Function.** `hitl.merge_proposal` is `SECURITY DEFINER` and revoked from
+   `PUBLIC`. Only the gate service role may execute it.
+3. **Precondition.** The merge re-checks gate quorum inside its own
+   transaction, not just at the UI layer. An authority revoked between
+   approval and merge still blocks the merge.
+4. **Fail-closed submit.** A proposal matching no gate policy raises an
+   exception rather than sailing through. "No policy matched" means "refuse,"
+   never "no review needed."
+
+CI asserts eight privilege denials on every build — the agent role inserting
+a graph node, calling the merge function, publishing a workflow, labeling its
+own training data, and four more. If any of the eight statements succeeds,
+the build fails. The invariant is asserted, not trusted.
+
+## The four gate kinds
+
+Different questions, asked of different people. Collapsing them into one
+"approve" button is the most common way human review gets implemented, and the
+reason it usually stops working: a subject-matter expert asked to approve a
+compliance question either rubber-stamps it or blocks on someone else, and
+either way the signal is gone.
+
+| Kind | Question it answers | Who clears it |
+|---|---|---|
+| `ontology` | Is this the right node or edge type? Does it duplicate something? | any authorized reviewer |
+| `factual` | Is this how the work is actually done? | subject-matter expert |
+| `control` | Does this touch a compliance control? | risk or compliance |
+| `automation` | May an agent do this unattended? | process owner |
+
+Gate rules are additive. A proposal adding a new process that touches a
+control and carries weak evidence collects every gate that fires — the
+shipped policy set includes a catch-all ontology review on everything, a
+two-reviewer quorum for new processes, compliance sign-off for anything
+touching a control, and a process-owner gate for any claim that an activity
+is automatable.
+
+## The gate set freezes at submit
+
+`hitl.submit_proposal` materializes the computed gates into a table rather
+than recomputing them on read. Editing a policy therefore cannot move the bar
+underneath a review already in flight — a reviewer who started under a
+one-approval gate does not discover mid-review that it now needs two.
+
+The trade is that a policy fix does not retroactively apply to in-flight
+proposals. That is the correct trade: the alternative is a review process
+whose requirements change while people are working, which destroys trust in
+it faster than any bug.
+
+## Quorum is strict
+
+An approval counts toward quorum only if it is from a distinct reviewer who
+currently holds authority for that gate kind on that engagement, and who is
+not the proposal's author. Any live reject or request-changes decision blocks
+the merge regardless of how many approvals exist. The platform's smoke suite
+proves each of these: a merge attempted before gates clear is refused even if
+someone sets the proposal's status to `approved` by hand, and an approval
+from a reviewer without the right authority is ignored.
+
+## See it yourself
+
+The fastest way to internalize this model is to run it:
+[make your first merge](/first-merge) — you will submit a proposal, read its
+gate set out of the database, approve it in the console, and watch a direct
+write get denied at the grant layer.

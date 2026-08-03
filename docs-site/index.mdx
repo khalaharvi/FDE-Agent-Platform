@@ -1,0 +1,76 @@
+---
+title: "What is the FDE Agent Platform"
+description: "Three forward-deployed-engineering agents over a Postgres knowledge graph, with human gates enforced in SQL. Agents propose. Humans dispose."
+---
+
+The FDE Agent Platform is an open-source (Apache-2.0) platform for running AI
+agents against a shared model of how a business works — without ever letting
+an agent write to that model directly.
+
+One rule holds the whole system together:
+
+> **Agents propose. Humans dispose. Only `hitl.merge_proposal` writes the
+> graph.** Enforced at four independent layers in SQL, and asserted by eight
+> privilege-denial checks in CI on every commit.
+
+Three agents run on Amazon Bedrock AgentCore over a knowledge graph in
+PostgreSQL (with pgvector). The Engagement Agent turns what subject-matter
+experts say into evidenced, structured claims. Those claims are proposals, not
+writes: pure SQL computes which humans must sign off, and nothing reaches the
+graph until they do. The Workflow Agent reads the graph at a pinned commit,
+authors workflows whose every step must name the graph element it implements,
+and watches the system of record for drift. The Development Agent turns
+published workflows into deployable agent packages with evals derived from the
+workflow itself.
+
+Every human review decision — approve, reject, or edit — becomes a training
+label. That is what makes the system improve rather than just run.
+
+## Who this is for
+
+- **Forward-deployed and solutions engineers** at AI labs and consultancies
+  who rebuild the same engagement scaffolding for every client, and want the
+  knowledge graph, review gates, and drift loop to be reusable infrastructure
+  instead.
+- **Platform and AI-engineering leads at enterprises** who need agent writes
+  to be governed and auditable. "Why did this change need compliance
+  sign-off?" is answered by a row in a table you can `SELECT`, not by a model
+  output you cannot reproduce.
+- **Engineers evaluating agent architectures** who want to see specific
+  patterns done carefully: human-in-the-loop gates in pure SQL, hybrid
+  retrieval fused with reciprocal rank fusion in SQL, drift detection as SQL,
+  and training-data export with validated loss masks.
+
+If your agents never write to shared state, or a lost write costs you nothing,
+you probably do not need this platform.
+
+## Honest status
+
+<Info>
+Everything local is tested: 15 migrations rebuild from scratch with 25
+end-to-end smoke tests, 545 Python tests run against live Postgres, and eight
+privilege-denial invariants are asserted in CI rather than trusted. Nothing
+has run against live AWS. All Bedrock and AgentCore code is written against
+verified API shapes, not validated here. See [Status and honesty](/status).
+</Info>
+
+## Start here
+
+<Columns cols={2}>
+  <Card title="Quickstart" href="/quickstart">
+    Clone to a green test suite and a running review console in about ten
+    minutes. No AWS account needed.
+  </Card>
+  <Card title="Your first merge" href="/first-merge">
+    Hand-write a proposal, watch the gates fire, approve it, and merge it —
+    the whole invariant in one sitting.
+  </Card>
+  <Card title="The gate model" href="/concepts/human-gates">
+    Why the review decision is deterministic SQL, and what that buys:
+    auditability, non-negotiability, and honest training labels.
+  </Card>
+  <Card title="Architecture" href="/architecture">
+    Five packages, one database, and the roles that keep agents from writing
+    where they should not.
+  </Card>
+</Columns>

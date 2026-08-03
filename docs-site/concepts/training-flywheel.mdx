@@ -1,0 +1,87 @@
+---
+title: "The training flywheel"
+description: "Every human review decision becomes a training label. How gate outcomes turn into SFT and preference data, and when not to train at all."
+---
+
+The human gates are not just a safety mechanism — they are a labeling
+operation that nobody has to staff. Reviewers doing their normal job produce
+high-quality training signal as a side effect:
+
+| Gate outcome | Training signal |
+|---|---|
+| Merged, no edits | Positive — the trajectory and its output were correct |
+| Rejected | Negative |
+| **Edited** | **Paired preference** — original versus corrected payload, same input |
+| Expired | Discarded — the absence of a decision is not a decision |
+| Approved in seconds | Discarded — a rubber stamp is not a label |
+
+The edited case is the valuable one. A reviewer who rewords a proposal before
+approving it has produced a (rejected, chosen) pair on identical input —
+exactly the shape preference optimization wants, for free. This is why the
+review console is designed to make editing as easy as approving: the reviewer
+edit is the most valuable event in the system.
+
+The discards matter as much as the labels. Training on rubber stamps means
+training on noise that is correlated with reviewer fatigue — worse than
+random noise, because it is systematic.
+
+None of this works unless the review decision is genuinely human. That is one
+of the three reasons the gates are [deterministic SQL](/concepts/human-gates):
+if an LLM decided which proposals needed review, the training signal would be
+partly the model grading itself.
+
+## Why traces are trainable
+
+Every agent invocation records a trace with two load-bearing fields:
+
+- **The pinned graph commit** the agent could see. Without it a trace is
+  untrainable — you cannot reconstruct what was retrievable, so you cannot
+  tell whether a miss was the policy's fault or the graph's.
+- **A per-turn trainable flag** — false on every tool-result and user turn.
+  This is the loss mask, computed once at capture rather than re-derived (and
+  mis-derived) by each downstream consumer.
+
+The mask is the highest-stakes detail in the pipeline. Train on retrieved
+tokens and you either add gradient noise from content the policy does not
+control, or — worse — teach the model to *generate* plausible-looking
+retrieval results instead of calling the tool. You would be training a
+hallucinator on retrieval data. The export tooling validates the mask and
+fails loudly rather than warning, because a silent mask bug costs a full
+training run and you find out at eval.
+
+## Most teams should stop before RL
+
+The pipeline is staged, and each stage has an explicit gate to proceed:
+
+1. **Prompt and context engineering first.** Retrieval tuning, prompt
+   structure, tool design. This is where the largest wins usually are, and it
+   costs zero GPU-hours. Do not proceed without a specific, named failure
+   that the prompt cannot fix.
+2. **Supervised fine-tuning** on gate-outcome labels. Most teams should stop
+   here.
+3. **Reinforcement learning**, only if you can trust your reward. RL's
+   ceiling is set by the reward function, which is set by the judge — and a
+   judge's verdicts are usable as a reward only after calibration against
+   human decisions shows Cohen's kappa of at least 0.78. Agreement above 0.82
+   is treated as suspicious rather than reassuring — improbably high
+   agreement with humans usually means leakage, not brilliance. The kappa
+   thresholds in the docs and the code are kept in sync by a CI test.
+
+One more constraint ties training back to retrieval: RL rollouts and
+production inference call the same SQL retrieval functions through the same
+tool surface, enforced byte-identical by a parity test. A policy trained
+against even a slightly different retrieval environment learns to exploit
+the difference.
+
+## See it yourself
+
+The export path runs locally against the decisions you made in
+[your first merge](/first-merge):
+
+```bash
+uv run fde-training export-sft --stats
+```
+
+With a fresh database the counts are small or zero — the point is that the
+pipeline from review decision to training example is real, running code, not
+a diagram.

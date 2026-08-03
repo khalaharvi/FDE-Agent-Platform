@@ -1,0 +1,110 @@
+---
+title: "The knowledge graph"
+description: "A closed ontology, two time axes, and hybrid retrieval — all in PostgreSQL with pgvector, no separate graph database."
+---
+
+The knowledge graph is the shared model of how a business runs work: who does
+what, in what order, gated by which controls, recorded in which systems, and
+supported by what evidence. Everything else in the platform either writes into
+it through exactly one gated path or reads from it.
+
+It lives entirely in PostgreSQL — relational edge tables plus pgvector, not a
+graph database. Apache AGE is not available on RDS or Aurora, Neptune would
+mean a second datastore, and the merge path needs graph rows, evidence, the
+embedding queue, and drift signals in one transaction. Recursive CTEs with
+cycle detection and partial composite indexes are adequate at the scale an
+engagement produces (thousands to hundreds of thousands of nodes).
+
+## A closed ontology
+
+Fifteen node types and fifteen edge types, both Postgres enums. You cannot
+insert a row whose type is not in the enum — the database rejects it before
+any application code runs.
+
+A sample of the vocabulary, using a quote-to-cash engagement:
+
+| Node type | Example |
+|---|---|
+| `process` | "Quote to Cash" |
+| `activity` | "Discount Review" |
+| `role` | "Deal Desk Analyst" |
+| `system` | "CPQ" |
+| `control` | "20% Discount Threshold" |
+| `pain_point` | "Deal Desk backlog on Fridays" |
+| `opportunity` | "Auto-approve sub-10% discounts" |
+
+Edges carry the semantics: `performs` (role to activity), `precedes` and
+`hands_off_to` (control flow), `gated_by` (activity to control),
+`depends_on` (the backbone that dependency-closure and impact-radius queries
+walk), and `automatable_by` — the highest-consequence edge in the ontology,
+because it is the claim that an agent may do a step unattended, and it has
+its own human gate.
+
+Why closed? An LLM given a free-text type field will, over a long engagement,
+invent `process_step` alongside `activity` the first time the exact word does
+not feel right. A closed enum turns that into a typed error the model sees
+and corrects, not a new de facto type nobody agreed to. It also makes every
+engagement's graph speak the same vocabulary, so prompts, retrieval tuning,
+and training data transfer between engagements. Adding a sixteenth type is a
+schema migration reviewed by a human — a forcing function for the right
+conversation.
+
+## Two time axes
+
+Every node and edge carries bitemporal columns:
+
+| Axis | Answers |
+|---|---|
+| Valid time | When was this true of the business? |
+| Transaction time | When did we believe it? |
+
+Nothing is ever updated or deleted in place — a change closes the current row
+and inserts a new one under a new commit. This is what lets the graph answer
+two different questions that a single timestamp conflates: "what did we
+believe on May 1, knowing only what we knew then?" versus "what do we now
+believe was true on May 1?" When a subject-matter expert corrects a fact
+months later ("the threshold was actually 20% since January"), both the
+correction and the history of the mistaken belief survive, queryably.
+
+Workflows depend on this: a workflow pins to a specific graph commit, and its
+faithfulness check refuses any step bound to a graph element that was not
+live at the pin.
+
+## Hybrid retrieval, fused in SQL
+
+Three things get embedded separately: node summaries, edge sentences, and
+evidence chunks. They match at different levels — the edge "Sales Rep hands
+off Quote Approval to Deal Desk when discount exceeds 20%" is a sentence
+worth embedding, and it is invisible if you only embed node summaries.
+
+The three result lists are fused with reciprocal rank fusion (k=60). RRF is
+rank-based because cosine distance and graph-hop distance are not on a
+comparable scale; fusing ranks sidesteps the incommensurability instead of
+pretending a weighted sum fixes it. A trigram-based lexical search covers the
+cases embeddings miss: exact internal jargon, ticket codes, acronyms the
+embedding model has never seen.
+
+All retrieval logic lives in SQL, and only in SQL. The MCP tools and the RL
+rollout environment call the same functions, and a parity test enforces that
+they stay byte-identical — because a policy trained against a retrieval
+environment that differs even slightly from production learns to exploit the
+difference. See [The training flywheel](/concepts/training-flywheel).
+
+## Drift detection is SQL too
+
+The graph claims work happens a certain way; systems of record show how it
+actually happens. Deterministic SQL detectors compare the two and emit drift
+signals — reproducible, cheap, and honest about sample size. The agent does
+not decide *whether* drift exists; it decides what to do about it, and its
+proposed response goes through the same human gates as everything else.
+
+## See it yourself
+
+Run [your first merge](/first-merge), then query the result directly — the
+graph is just tables:
+
+```sql
+SELECT node_key, node_type, label
+FROM kg.node_current
+WHERE engagement_id = '22222222-2222-2222-2222-222222222222';
+```

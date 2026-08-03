@@ -1,0 +1,101 @@
+---
+title: "Deployment"
+description: "AgentCore runtimes, the database in production, and the CI deploy path — with honest labels on what has and has not been validated."
+---
+
+<Warning>
+Nothing in this repository has run against live AWS. Everything on this page
+that touches Bedrock, AgentCore, Lambda, or IAM is **written against verified
+API shapes, not validated here** — the API request and response shapes were
+checked against primary documentation (recorded, with URLs, in the repo's
+sources ledger), but the calls have not been executed with real credentials.
+The local paths — database, MCP server, gate console, tests — are fully
+exercised. Treat this page as a well-researched plan, and validate each step
+in your own account.
+</Warning>
+
+## Build order: gates before agents
+
+The deployment doc's strongest advice is about sequence, not services. Deploy
+the database and the gate service with a minimal review UI **before** any
+agent. The gate service is the platform's actual product: if humans will not
+use the review queue, no amount of agent quality matters — and you want to
+discover that in week two with a hand-written proposal, not in month three
+after building three agents that feed a queue nobody opens.
+
+You can rehearse that entire first phase locally today —
+[quickstart](/quickstart), then [your first merge](/first-merge).
+
+## The database in production
+
+Aurora PostgreSQL 16.8+ or RDS PostgreSQL 17.1+, with **pgvector ≥ 0.8.0 as a
+hard requirement** — the first migration refuses to install below it, because
+older versions silently return incomplete filtered ANN results.
+
+Sizing is dominated by one rule: the HNSW vector indexes must fit in RAM, or
+query latency falls off a cliff. As a worked anchor, 100k nodes at 1024
+dimensions with half-precision vectors is roughly 205 MB raw and a few GB of
+index budget across the partial indexes — a memory-optimized instance class
+in the 32 GB range is comfortable for several engagements at that scale.
+
+<Note>
+Aurora Serverless v2 needs care: scaling down can evict a resident HNSW graph
+from memory, after which the planner may stop using the index entirely. Set
+the minimum capacity high enough that the graph never falls out of memory.
+This is informed inference from documented scaling behavior plus community
+reports, not an AWS-published guarantee.
+</Note>
+
+If you compile pgvector yourself, build with `OPTFLAGS=""` — the default
+`-march=native` produces a binary that can crash Postgres with SIGILL when
+the host CPU changes. This repo hit that bug and logged it.
+
+## Agent runtimes: two artifact shapes
+
+AgentCore accepts either a container image or a code archive:
+
+- **Container** — ARM64 is mandatory. The repo ships Dockerfiles and CI
+  builds all five images for `linux/arm64` on every commit (build only; they
+  are not pushed from PRs).
+- **CodeZip** — no architecture constraint, no Docker, no ECR. The lighter
+  path for iteration.
+
+```bash
+# stage code artifacts, then create/update runtimes with a model preset
+uv run fde-agents-deploy codezip --agents engagement --code-bucket <bucket>
+uv run fde-agents-deploy runtimes --agents engagement --role-arn <arn> \
+  --artifact-mode code --model-preset balanced
+```
+
+The deploy CLI bakes the resolved [model preset](/models-and-cost) into each
+runtime's environment, so the audit trail records exactly which model
+authored each proposal.
+
+## How agents reach the tools
+
+Two transports for the same 21-tool MCP surface, differing only in transport
+configuration:
+
+| | AgentCore Gateway | In-runtime MCP |
+|---|---|---|
+| Path | agent → Gateway → MCP server target | agent process spawns the server over stdio |
+| Auth | Gateway-minted JWT; the server never sees AWS credentials | process boundary |
+| When | production: one shared, throttled, audited tool surface | local dev, tests, or a single dedicated agent |
+
+## CI/CD
+
+The repo's CI ends in a deploy job that only runs on the main branch, gated
+behind a protected environment with required reviewers — human sign-off on
+deploys, consistent with the platform's own philosophy. On forks or repos
+without AWS secrets the job skips cleanly, which is why the full pipeline is
+green without any AWS account. After a deploy it runs a smoke test against
+the deployed runtimes.
+
+## Before you build a release process on this
+
+Beyond the API-shape caveat above, the sources ledger explicitly lists the
+claims that could not be verified from primary sources — cold-start latency,
+RDS pgvector minor-version availability, Aurora HNSW memory behavior, and
+others. Check `docs/99-sources.md` §6 in the repo before treating any of
+them as load-bearing. See [Status and honesty](/status) for the full
+validated/unvalidated split.

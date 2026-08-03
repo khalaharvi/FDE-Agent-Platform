@@ -1,0 +1,89 @@
+---
+title: "FAQ"
+description: "What forward-deployed engineering is, how this compares to building approval flows yourself, and what you can use without AWS."
+---
+
+## What is forward-deployed engineering?
+
+Forward-deployed engineers (FDEs) work on-site with a customer to understand
+how the business actually runs — interviewing subject-matter experts, mapping
+processes and handoffs, finding bottlenecks — and then build automation
+against that understanding. Every engagement produces the same artifacts: a
+model of the work, evidence for each claim, workflows that change the work,
+and agents that execute the workflows. This platform is that engagement
+lifecycle as infrastructure: the model of the work is a
+[knowledge graph](/concepts/knowledge-graph), the claims pass
+[human gates](/concepts/human-gates), and the review decisions accumulate
+into [training data](/concepts/training-flywheel) that survives between
+engagements.
+
+## Why not just use LangGraph interrupts or Temporal signals for human approval?
+
+Framework-level human-in-the-loop pauses execution until a person responds —
+which is useful, but the approval lives in application code. Three things
+distinguish the approach here:
+
+- **Enforcement depth.** An application-layer check is one forgotten call,
+  refactor, or new code path away from being bypassed. Here the agent role
+  never holds write privileges on the graph — a grant that does not exist
+  cannot be bypassed by any code path, and CI asserts eight such denials on
+  every build.
+- **Deterministic routing.** Which approvals a change needs is computed by
+  pure SQL over a policy table — reproducible, auditable, and immune to the
+  agent talking its way into a lighter review. Most hand-rolled approval
+  flows route by heuristic or by whatever the developer wired up.
+- **Labels as a by-product.** Because the routing is deterministic and the
+  reviewer is human, every decision is a clean training label. An LLM
+  anywhere in the review decision means the model is partly grading itself.
+
+If you need a general workflow engine, use one — this is not that. This is
+the governance and learning layer for agent writes to shared state.
+
+## Can I use it without AWS?
+
+Yes, for everything except model inference and embeddings. The database, the
+gates, the review console, the 21-tool MCP server, and the training export
+all run locally — that is the [quickstart](/quickstart), and it is the fully
+tested surface. The agents themselves and query embedding call Amazon
+Bedrock, and the runtime story targets AgentCore. Those paths are written
+against verified API shapes but not validated live — see
+[Status and honesty](/status).
+
+## Can I adopt just the gate model?
+
+The gate model is plain SQL — migrations that create the schemas, policies,
+and the one privileged merge function, plus a smoke suite proving the
+invariant. It has no dependency on the agents or AWS. If SQL-enforced,
+fail-closed human gates are the one idea you came for, the `db/` directory
+and the [human gates](/concepts/human-gates) page are self-contained, and the
+Apache-2.0 license permits exactly this kind of reuse.
+
+## Is this production-ready?
+
+No production deployment exists, and the project says so plainly rather than
+implying otherwise. The local surface is thoroughly tested (545 tests, 25
+smoke tests, 8 CI-asserted invariants); the AWS surface is a validated
+design awaiting a first live deployment. Read
+[Status and honesty](/status) before making commitments on top of it.
+
+## What does it cost to run?
+
+Model inference dominates, and it is a configuration dial with three presets
+— roughly $110 to $350 per month per active engagement at list prices,
+order-of-magnitude. See [Models and cost](/models-and-cost) for the presets,
+the override order, and why cheap models are unusually safe behind the gates.
+
+## How do I contribute?
+
+The repo's `CONTRIBUTING.md` has the five-minute setup and the exact gates
+your PR must pass — they are the same commands CI runs. The house rule worth
+knowing before your first PR: every claim in the docs is either tested or
+labeled unverified, and if you find a bug, you add it to the public ledger.
+The project treats the ledger as a feature.
+
+## Where do I start?
+
+The [quickstart](/quickstart) gets you to green tests and a running review
+console in about ten minutes, and [your first merge](/first-merge) walks the
+core loop by hand. If you read only one concept page, read
+[Human gates](/concepts/human-gates).
