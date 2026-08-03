@@ -10,8 +10,8 @@ an agent write to that model directly.
 One rule holds the whole system together:
 
 > **Agents propose. Humans dispose. Only `hitl.merge_proposal` writes the
-> graph.** Enforced at four independent layers in SQL, and asserted by eight
-> privilege-denial checks in CI on every commit.
+> graph.** Enforced at four independent layers in SQL, and asserted by
+> twenty-five privilege-denial checks in CI on every commit.
 
 Three agents run on Amazon Bedrock AgentCore over a knowledge graph in
 PostgreSQL (with pgvector). The Engagement Agent turns what subject-matter
@@ -47,9 +47,9 @@ you probably do not need this platform.
 ## Honest status
 
 <Info>
-Everything local is tested: 15 migrations rebuild from scratch with 25
-end-to-end smoke tests, 599 of 609 Python tests run green against live
-Postgres in one pass with the rest skipped by design, and eight
+Everything local is tested: 17 migrations rebuild from scratch with 25
+end-to-end smoke tests, 804 of 814 Python tests run green against live
+Postgres in one pass with the rest skipped by design, and twenty-five
 privilege-denial invariants are asserted in CI rather than trusted. Nothing
 has run against live AWS. All Bedrock and AgentCore code is written against
 verified API shapes, not validated here. See [Status and honesty](/status).

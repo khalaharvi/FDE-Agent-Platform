@@ -10,10 +10,10 @@ labeled unverified.** This page is the split.
 
 | Claim | Evidence |
 |---|---|
-| 15 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate, run on every commit |
+| 17 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate, run on every commit |
 | 25 end-to-end smoke tests pass | including fail-closed submit, unauthorized approval, review → edit → merge → label, workflow publish/run, observation dedup, and as-of traversal |
-| 599 of 609 Python tests pass in one run against live Postgres | across all five packages, in CI with the same pgvector image the quickstart uses. The other 10 skip cleanly rather than silently: 9 need the optional `train` extra and run in CI's separate `train-tests` job, and 1 needs `wal_level=logical`, which a CI service container cannot be started with — so that one never runs in CI, and this page says so rather than counting it |
-| 8 privilege-denial invariants hold | asserted in CI — eight statements that must all fail, or the build does |
+| 804 of 814 Python tests pass in one run against live Postgres | across all five packages, in CI with the same pgvector image the quickstart uses. The other 10 skip cleanly rather than silently: 9 need the optional `train` extra and run in CI's separate `train-tests` job, and 1 needs `wal_level=logical`, which a CI service container cannot be started with — so that one never runs in CI, and this page says so rather than counting it |
+| 25 privilege-denial invariants hold | asserted in CI — twenty-five statements that must all fail, or the build does. The first eight are the original four-layer invariant; twelve more guard the reviewer roster (`db/016`) and five guard evidence intake (`db/017`) |
 | Docs match code | a CI test parses the training doc's reward-weight table and kappa thresholds and asserts they equal the code's constants |
 
 ## What is not validated
@@ -35,8 +35,9 @@ build a release process around them.
 
 ## The bug ledger
 
-Fourteen real bugs were found and fixed while building this, and they are
-recorded candidly — with root causes — in the repo's sources ledger
+Sixteen real bugs were found and fixed while building this, and a seventeenth
+is recorded open rather than quietly carried. All of them are recorded
+candidly — with root causes — in the repo's sources ledger
 (`docs/99-sources.md` §7–§8). A sample:
 
 - The merge function stamped rows with wall-clock time while reads used

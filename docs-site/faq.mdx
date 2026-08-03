@@ -26,8 +26,8 @@ distinguish the approach here:
 - **Enforcement depth.** An application-layer check is one forgotten call,
   refactor, or new code path away from being bypassed. Here the agent role
   never holds write privileges on the graph — a grant that does not exist
-  cannot be bypassed by any code path, and CI asserts eight such denials on
-  every build.
+  cannot be bypassed by any code path, and CI asserts twenty-five such
+  denials on every build.
 - **Deterministic routing.** Which approvals a change needs is computed by
   pure SQL over a policy table — reproducible, auditable, and immune to the
   agent talking its way into a lighter review. Most hand-rolled approval
@@ -61,8 +61,8 @@ Apache-2.0 license permits exactly this kind of reuse.
 ## Is this production-ready?
 
 No production deployment exists, and the project says so plainly rather than
-implying otherwise. The local surface is thoroughly tested (609 tests, 599 of
-them in one run, 25 smoke tests, 8 CI-asserted invariants); the AWS surface
+implying otherwise. The local surface is thoroughly tested (814 tests, 804 of
+them in one run, 25 smoke tests, 25 CI-asserted invariants); the AWS surface
 is a validated design awaiting a first live deployment. Read
 [Status and honesty](/status) before making commitments on top of it.
 

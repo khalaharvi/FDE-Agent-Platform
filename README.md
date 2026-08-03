@@ -84,7 +84,7 @@ Already running Postgres with pgvector ≥ 0.8? Skip compose:
 <summary><b>Beyond hello world: MCP server, pipelines, deploy</b></summary>
 
 ```bash
-FDE_MCP_TRANSPORT=stdio uv run fde-mcp     # the MCP server, 21 tools
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp     # the MCP server, 22 tools
 uv run fde-training export-sft --stats     # training data from gate outcomes
 uv run fde-sor replay --help               # drift ingestion from a JSONL export
 
@@ -179,7 +179,7 @@ fde-platform/
 ├── docs/                14 documents — the blueprints
 ├── db/                  17 migrations + a 25-test smoke suite
 ├── packages/
-│   ├── fde-mcp/         MCP server: 21 tools (graph, proposals, drift, workflow, evidence), embedder worker
+│   ├── fde-mcp/         MCP server: 22 tools (graph, proposals, drift, workflow, evidence), embedder worker
 │   ├── fde-agents/      3 AgentCore runtimes over one shared common/runtime.py, + deploy CLI
 │   ├── fde-training/    SFT export + trainers, rewards/ package, rollout env, rival graders, RFT path
 │   ├── fde-gate/        gate service Lambda: review console, evidence intake, merge, workflow publish + runner
@@ -189,9 +189,9 @@ fde-platform/
 └── .github/workflows/   CI: static → database → tests → train-tests → ARM64 images → gated deploy
 ```
 
-**Gates, all green:** `ruff check` (174 files) + `ruff format --check` (172) ·
-`mypy --strict` on the four production packages (88 files, 0 issues) ·
-`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 740 Python tests
+**Gates, all green:** `ruff check` (183 files) + `ruff format --check` (181) ·
+`mypy --strict` on the four production packages (90 files, 0 issues) ·
+`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 814 Python tests
 against live Postgres · twenty-five privilege-denial invariants, all correctly denied.
 
 </details>
@@ -310,7 +310,7 @@ model — the one to read if you read only one**), and
 |---|---|
 | 17 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate |
 | 25 end-to-end smoke tests pass | incl. fail-closed submit, unauthorised approval, review→edit→merge→label, workflow publish/run/human-response, observation dedup, as-of traversal |
-| 740 Python tests, 730 of them in one run against live Postgres | fde-mcp 110 · fde-agents 117 · fde-training 183 · fde-gate 160 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
+| 814 Python tests, 804 of them in one run against live Postgres | fde-mcp 110 · fde-agents 117 · fde-training 183 · fde-gate 234 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
 | 25 privilege-denial invariants hold | asserted in CI, not trusted |
 | 6 diagrams screenshot-verified | both colour schemes |
 
@@ -320,8 +320,9 @@ Gateway and Memory provisioning, and Bedrock RFT submission. Those are
 written against the verified API shapes documented in `docs/99-sources.md`
 but have not been executed.
 
-**Fourteen real bugs were found and fixed while building this**, recorded
-candidly in `docs/99-sources.md` §7–§8. Highlights: `merge_proposal` stamped
+**Sixteen real bugs were found and fixed while building this**, and a
+seventeenth is recorded open rather than quietly carried — all of them in
+`docs/99-sources.md` §7–§8, with root causes. Highlights: `merge_proposal` stamped
 `valid_from` with `clock_timestamp()` while reads used transaction time (a
 read-your-own-write failure); the same function later aborted on its own
 stale-pin housekeeping the second time an engagement merged; the one role
