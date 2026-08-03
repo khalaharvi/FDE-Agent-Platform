@@ -30,10 +30,28 @@ def test_validate_ok_and_bad(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "401" in err
 
 
-def test_validate_compat_requires_base_url() -> None:
+def test_validate_compat_requires_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FDE_MODEL_BASE_URL", raising=False)
+    monkeypatch.delenv("FDE_MODEL_COMPAT_PRESET", raising=False)
     err = providers_cli.validate_api_key("openai-compat", "k")
     assert err is not None
     assert "FDE_MODEL_BASE_URL" in err
+    assert "FDE_MODEL_COMPAT_PRESET" in err
+
+
+def test_validate_compat_falls_back_to_preset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FDE_MODEL_BASE_URL", raising=False)
+    monkeypatch.setenv("FDE_MODEL_COMPAT_PRESET", "opencode-zen")
+    captured: dict[str, str] = {}
+
+    def _fake_get_status(url: str, headers: dict[str, str]) -> int:
+        captured["url"] = url
+        return 200
+
+    monkeypatch.setattr(providers_cli, "_http_get_status", _fake_get_status)
+    err = providers_cli.validate_api_key("openai-compat", "k")
+    assert err is None
+    assert captured["url"].startswith("https://opencode.ai/zen/v1")
 
 
 def test_login_validates_before_storing(

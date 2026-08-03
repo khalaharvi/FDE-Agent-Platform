@@ -364,10 +364,11 @@ async def _gemini_uncached(texts: list[str], model_id: str) -> list[list[float]]
     """
     dims = get_settings().embedding.dimensions
     api_key = _embed_api_key()
+    headers = {"x-goog-api-key": api_key}
     vecs: list[list[float]] = []
     for start in range(0, len(texts), GEMINI_MAX_BATCH):
         chunk = texts[start : start + GEMINI_MAX_BATCH]
-        url = f"{GEMINI_EMBED_BASE}/models/{model_id}:batchEmbedContents?key={api_key}"
+        url = f"{GEMINI_EMBED_BASE}/models/{model_id}:batchEmbedContents"
         body = {
             "requests": [
                 {
@@ -378,7 +379,7 @@ async def _gemini_uncached(texts: list[str], model_id: str) -> list[list[float]]
                 for t in chunk
             ]
         }
-        payload = await _http_post_with_retry(url, {}, body)
+        payload = await _http_post_with_retry(url, headers, body)
         chunk_vecs = payload["embeddings"]
         if len(chunk_vecs) != len(chunk):
             msg = f"{model_id} returned {len(chunk_vecs)} embeddings for {len(chunk)} inputs"

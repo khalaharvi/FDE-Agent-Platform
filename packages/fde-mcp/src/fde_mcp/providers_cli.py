@@ -9,8 +9,9 @@ Subcommands:
                       unless --no-validate, a live key check
 
 Providers: anthropic, openai, gemini, openai-compat (openai-compat
-validates against FDE_MODEL_BASE_URL). Bedrock needs no key here -- it uses
-the ambient AWS credential chain; `status` reports whether one is present.
+validates against FDE_MODEL_BASE_URL, or FDE_MODEL_COMPAT_PRESET when no
+base URL is set). Bedrock needs no key here -- it uses the ambient AWS
+credential chain; `status` reports whether one is present.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import os
 import sys
 
 from fde_mcp.credentials import (
+    COMPAT_PRESETS,
     PROVIDER_ENV_VARS,
     delete_api_key,
     peek_api_key,
@@ -58,9 +60,17 @@ def _prompt_secret(prompt: str) -> str:
 def validate_api_key(provider: str, key: str, *, base_url: str | None = None) -> str | None:
     """None if the key authenticates; else a one-line human explanation."""
     if provider == "openai-compat":
-        url = base_url or os.environ.get("FDE_MODEL_BASE_URL")
+        # FDE_MODEL_BASE_URL and FDE_MODEL_COMPAT_PRESET are declared on
+        # fde_agents' ModelBackendSettings (docs/11's "env vars belong in
+        # config.py" rule); they are read raw here only because login-time
+        # validation runs in fde-mcp, which must not import fde-agents.
+        url = (
+            base_url
+            or os.environ.get("FDE_MODEL_BASE_URL")
+            or COMPAT_PRESETS.get(os.environ.get("FDE_MODEL_COMPAT_PRESET") or "")
+        )
         if not url:
-            return "openai-compat needs FDE_MODEL_BASE_URL set to validate against"
+            return "openai-compat needs FDE_MODEL_BASE_URL or FDE_MODEL_COMPAT_PRESET set to validate against"
         target, headers = (f"{url.rstrip('/')}/models", {"Authorization": f"Bearer {key}"})
     elif provider in _VALIDATION_URLS:
         raw_url, raw_headers = _VALIDATION_URLS[provider]

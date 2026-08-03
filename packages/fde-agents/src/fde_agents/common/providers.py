@@ -11,15 +11,17 @@ from __future__ import annotations
 from typing import Any
 
 from fde_agents.common.config import ModelBackendSettings
+from fde_mcp.credentials import COMPAT_PRESETS as _MCP_COMPAT_PRESETS
 from fde_mcp.credentials import CredentialError
 
 PROVIDER_KEYS = frozenset({"bedrock", "anthropic", "openai", "gemini", "openai-compat"})
 
-COMPAT_PRESETS: dict[str, str] = {
-    "opencode-zen": "https://opencode.ai/zen/v1",
-    "ollama": "http://127.0.0.1:11434/v1",
-    "lmstudio": "http://127.0.0.1:1234/v1",
-}
+# Re-exported from fde_mcp.credentials (the shared provider-metadata module)
+# under the same public name so existing callers/tests of
+# `providers.COMPAT_PRESETS` are untouched. fde_mcp.providers_cli's
+# login-time validation needs this dict too, and fde-mcp must not import
+# fde-agents, so fde_mcp.credentials is the one home for it.
+COMPAT_PRESETS: dict[str, str] = _MCP_COMPAT_PRESETS
 
 
 def _resolve_api_key(provider: str) -> str:

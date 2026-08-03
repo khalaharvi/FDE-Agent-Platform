@@ -66,11 +66,6 @@ _USAGE = __doc__ or ""
 
 _AGENTS = ("engagement", "workflow", "development")
 
-# Any of these set means an AWS credential chain is plausibly configured --
-# mirrors fde_mcp.providers_cli's own check for the same reason (bedrock
-# authenticates through the ambient chain, not an API key doctor can peek).
-_BEDROCK_ENV_VARS = ("AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_ROLE_ARN")
-
 # Kept in sync with fde_mcp.embeddings' own dispatch (embeddings.py's
 # embed_batch): the four providers it actually knows how to call.
 _VALID_EMBED_PROVIDERS = frozenset({"bedrock", "openai", "openai-compat", "gemini"})
@@ -201,16 +196,31 @@ def _check_db() -> tuple[str, str | None]:
     return ("db", None)
 
 
+def _aws_credentials_present() -> bool:
+    """Whether boto3's own credential resolution finds anything: env vars,
+    `~/.aws/credentials`/`~/.aws/config` profiles, an instance/task role, or
+    SSO -- the full chain, not just an env-var slice (a bare `aws configure`
+    default profile has none of AWS_ACCESS_KEY_ID/AWS_PROFILE/AWS_ROLE_ARN
+    set and was false-FAILing doctor before this).
+    """
+    try:
+        import boto3  # noqa: PLC0415 -- keep boto3 optional until first use
+
+        return boto3.session.Session().get_credentials() is not None
+    except Exception:  # infra/config failure -- doctor reports it as absent, not a crash
+        return False
+
+
 def _check_model_provider() -> tuple[str, str | None]:
     backend = ModelBackendSettings.from_env()
     provider = backend.provider
     if provider == "bedrock":
-        if any(os.environ.get(var) for var in _BEDROCK_ENV_VARS):
+        if _aws_credentials_present():
             return ("model provider", None)
         return (
             "model provider",
-            "no AWS credential chain detected (set AWS_ACCESS_KEY_ID / AWS_PROFILE / "
-            "AWS_ROLE_ARN, or rely on an instance/task role)",
+            "no AWS credentials found (run `aws configure`, set AWS_PROFILE, or rely on "
+            "an instance/task role)",
         )
     try:
         key, source = peek_api_key(provider)
@@ -247,9 +257,16 @@ def _check_embeddings() -> tuple[str, str | None]:
     if provider == "openai-compat" and not os.environ.get("FDE_EMBED_BASE_URL"):
         return ("embeddings", "FDE_EMBED_PROVIDER=openai-compat requires FDE_EMBED_BASE_URL")
     if provider not in ("bedrock", "openai-compat"):
-        key, _source = peek_api_key(provider)
-        if key is None:
-            return ("embeddings", f"no key: run fde-providers login {provider}")
+        # Mirror fde_mcp.embeddings._embed_api_key's resolution order:
+        # FDE_EMBED_API_KEY overrides the provider's normal credential
+        # resolution, so a deployment relying on it must not FAIL here just
+        # because peek_api_key(provider) alone would find nothing.
+        from fde_mcp.config import get_settings  # noqa: PLC0415 -- keep import local
+
+        if not get_settings().embedding.api_key:
+            key, _source = peek_api_key(provider)
+            if key is None:
+                return ("embeddings", f"no key: run fde-providers login {provider}")
     return ("embeddings", None)
 
 

@@ -28,6 +28,17 @@ PROVIDER_ENV_VARS: dict[str, str] = {
 
 _FALLBACK_ENV_VARS: dict[str, str] = {"gemini": "GOOGLE_API_KEY"}
 
+# Named openai-compat endpoints, keyed by `FDE_MODEL_COMPAT_PRESET`. Lives
+# here (rather than in fde_agents.common.providers, its original home)
+# because fde_mcp.providers_cli's login-time validation needs it too, and
+# fde-mcp must not import fde-agents; fde_agents.common.providers re-exports
+# this dict under the same public name so existing callers are unaffected.
+COMPAT_PRESETS: dict[str, str] = {
+    "opencode-zen": "https://opencode.ai/zen/v1",
+    "ollama": "http://127.0.0.1:11434/v1",
+    "lmstudio": "http://127.0.0.1:1234/v1",
+}
+
 
 class CredentialError(RuntimeError):
     """A provider API key is missing or the provider is unknown."""

@@ -41,7 +41,12 @@ class _EmbedStub(BaseHTTPRequestHandler):
         cls = type(self)
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         cls.requests.append(
-            {"path": self.path, "auth": self.headers.get("Authorization"), "body": body}
+            {
+                "path": self.path,
+                "auth": self.headers.get("Authorization"),
+                "goog_api_key": self.headers.get("x-goog-api-key"),
+                "body": body,
+            }
         )
         if cls.fail_first_with and not cls._failed_once:
             cls._failed_once = True
@@ -154,7 +159,8 @@ async def test_gemini_path_batch_request_shape(
         assert all(len(v) == DIMS for v in vecs)
         req = _EmbedStub.requests[0]
         assert "batchEmbedContents" in req["path"]
-        assert "key=g-key" in req["path"]
+        assert "key=" not in req["path"]
+        assert req["goog_api_key"] == "g-key"
         item = req["body"]["requests"][0]
         assert item["output_dimensionality"] == DIMS
         assert item["model"] == "models/gemini-embedding-001"
