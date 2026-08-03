@@ -96,8 +96,8 @@ silently, they rot on pages your diff never pointed at, and the same count is
 usually stated on three or four pages at once. Sweep first, unconditionally:
 
 ```bash
-grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+)[- ]([a-z]+[- ])?(tests?|migrations?|smoke tests?|tools?|packages?|agents?|pages?|layers?|denials?|kinds?|types?|policies|axes|bugs?|documents?|diagrams?|reviewers?|tables?|images?|runtimes?|traces?|files?|invariants?|commands?|steps?|members?|statements?|gates?)' \
-    docs-site/ README.md CONTRIBUTING.md CLAUDE.md claude-plugin/
+grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+)[- ]([a-z]+[- ]){0,2}(tests?|migrations?|smoke tests?|tools?|packages?|agents?|pages?|layers?|denials?|kinds?|types?|policies|axes|bugs?|documents?|diagrams?|reviewers?|tables?|images?|runtimes?|traces?|files?|invariants?|commands?|steps?|members?|statements?|gates?|checks?)' \
+    docs-site/ README.md CONTRIBUTING.md CLAUDE.md claude-plugin/ docs/ .claude/agents/
 ```
 
 Three things that pattern is built for:
@@ -105,14 +105,34 @@ Three things that pattern is built for:
 - **Counts are spelled out as often as they are digits** — "five packages",
   "Fifteen migrations", "Fourteen real bugs". The word list runs to twenty
   because the docs use it that far up; extend it if they go higher.
-- **The noun is usually a word away from the number** — "four *enforcement*
-  layers", "609 *Python* tests", "21 *MCP* tools", "eight *gate* policies" — so
-  one word is tolerated in between. That is also why the list holds base nouns
-  (`types`, `kinds`, `axes`) rather than phrases: `types` already catches "15
-  node types" and "fifteen edge types".
+- **The noun sits one to three words away from the number** — "four
+  *enforcement* layers", "609 *Python* tests", "eight *gate* policies", and
+  "twenty-five *CI privilege-denial* checks", which needs two. That last one is
+  not hypothetical: it is the agent definition's own phrasing, and a slot of
+  one word did not match it, so a stale count sat in the file that writes the
+  project's marketing copy. The slot is `{0,2}` for that reason. The list holds
+  base nouns (`types`, `kinds`, `axes`) rather than phrases: `types` already
+  catches "15 node types" and "fifteen edge types".
 - **`CONTRIBUTING.md` is in the file set**, not only the pathspec in step 1. It
   is a public doc that states the test, migration, smoke and denial counts in its
   own quickstart block, and nothing else sweeps it.
+- **`docs/` and `.claude/agents/` are swept too**, even though step 1 calls
+  `docs/` the *source* and never a target. The boundary is about whose prose
+  wins a disagreement, not about whether numbers rot: internal blueprints rot
+  exactly the same way, `docs/11-python-conventions.md` is binding on all Python
+  in this repo, and an agent definition's stale count is worse than a page's
+  because it reappears in everything that agent writes. Sweeping them is not
+  permission to rewrite them to match the site — fix a wrong number, leave the
+  framing alone.
+- **Do not "fix" a dated record.** Sweeping `docs/` reaches
+  `docs/superpowers/{plans,specs,audits}/` and `docs/99-sources.md` §8, which
+  are point-in-time documents: a plan that says *"the '21 tools' claims are
+  updated only in Task 6"*, a spec written when there were eight CI denials, a
+  ledger row reading *"'13 migrations' in README | there are 12 | corrected"*.
+  Every one of those numbers is **correct as history** and editing it destroys
+  the record — the ledger row would stop describing the bug it exists to
+  document. Read the hit, decide whether the sentence is claiming *what is true
+  now* or *what was true then*, and only touch the first kind.
 - **Counts appear hyphenated and singular, as adjectives** — "the *21-tool*
   loop", "a *four-layer* invariant" — which is why the noun alternatives carry
   `?` and the separator accepts `-`. That form is exactly how the last stale
