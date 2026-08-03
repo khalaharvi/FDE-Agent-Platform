@@ -184,7 +184,7 @@ verified" and recheck before quoting externally:
 
 ## 7. Field notes — discovered while building this repo
 
-Three things found empirically, not documented anywhere upstream, that would
+Four things found empirically, not documented anywhere upstream, that would
 otherwise cost someone a debugging session:
 
 **1. pgvector compiled with the default `-march=native` crashes Postgres
@@ -255,6 +255,37 @@ passing on the Apple Silicon dev machine. Config-assembly tests must pin
 default is correct for real GPU training and unchanged. Neither failure was
 reachable before publication because CI had never executed the image builds
 or the `train-tests` job against non-local hardware.
+
+**4. A validity-interval schema that stamps rows with `clock_timestamp()`
+while its readers default to `now()` loses every write to its own
+transaction — silently, as an empty result rather than an error.**
+`hitl.merge_proposal` originally set `valid_from` from `clock_timestamp()`
+(statement wall-clock, which advances mid-transaction) while `kg.traverse`
+and every other temporal read filters on `now()` (the transaction timestamp,
+fixed for the life of the transaction). Inside a single transaction the wall
+clock has necessarily moved past the transaction timestamp by the time the
+merge runs, so rows the merge just inserted carry a `valid_from` fractionally
+*after* the reading snapshot's `now()` and fall outside the
+`valid_from <= now() < valid_to` window every read applies. The merge
+succeeds, the rows are genuinely there, and the next query in the same
+transaction returns nothing. Nothing raises — the symptom is a zero-row
+result, which reads as "that node doesn't exist" rather than "your writer and
+your reader disagree about what time it is." Both functions are documented
+upstream and neither is surprising alone; what is written down nowhere is
+that mixing them across the write and read paths of a bitemporal schema turns
+a correct merge into a silent no-op. It reproduces only where a merge and a
+read share a transaction — test harnesses and batch jobs that merge then
+immediately query — which is exactly why it survived interactive use, where
+each statement is its own transaction and gets a fresh, later `now()` that
+makes the rows appear normally. The fix is to resolve the timestamp once,
+`v_now timestamptz := now()`, and use that single value for every
+`valid_from`, `valid_to`, commit timestamp and decision timestamp the
+function writes, so writer and reader agree by construction
+(`db/005_merge.sql`, at the declaration; the reasoning is restated in
+`docs/07-hitl-gates.md` §7). It carries a side effect worth keeping on
+purpose: merging the same key twice inside one transaction now violates the
+`valid_to > valid_from` check and aborts, which is the behaviour that
+boundary should have had anyway.
 
 ---
 
