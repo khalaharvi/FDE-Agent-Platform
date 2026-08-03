@@ -20,6 +20,7 @@ from psycopg.types.json import Jsonb
 from fde_gate.config import get_gate_settings
 from fde_gate.http import as_conflict
 from fde_gate.rows import fetchall, fetchone
+from fde_gate.service import is_missing as service_is_missing
 from fde_mcp import db
 from fde_mcp.logging import get_logger
 
@@ -104,8 +105,13 @@ def is_missing(result: dict[str, Any]) -> bool:
     `/ui/runs/{id}` and `GET /api/runs/{id}` answered "not found" for every
     run that existed. The presence of `run_id` is the thing that actually
     distinguishes the two shapes.
+
+    Kept as a named function of one argument, rather than callers passing
+    "run_id" to `service.is_missing` themselves, because this is the read
+    where the collision was real: the key that decides it belongs next to the
+    query that returns it. The discrimination itself is shared.
     """
-    return "run_id" not in result
+    return service_is_missing(result, "run_id")
 
 
 async def get_run(run_id: int) -> dict[str, Any]:

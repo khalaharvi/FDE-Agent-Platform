@@ -45,7 +45,16 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from fde_gate.forms import fields_from_schema, values_from_form
 from fde_gate.http import GateError, Request, Response, pg_message
 from fde_gate.runner import advance, default_invoker
-from fde_gate.service import agents, drift, proposals, reviewers, runs, sources, workflows
+from fde_gate.service import (
+    agents,
+    drift,
+    is_missing,
+    proposals,
+    reviewers,
+    runs,
+    sources,
+    workflows,
+)
 
 if TYPE_CHECKING:
     from fde_gate.http import Router
@@ -272,7 +281,7 @@ async def queue_page(request: Request) -> Response:
 async def proposal_page(request: Request) -> Response:
     proposal_id = request.param_int("proposal_id")
     proposal = await proposals.get_proposal(proposal_id, request.principal)
-    if "error" in proposal:
+    if is_missing(proposal, "proposal_id"):
         return await _page(request, "not_found.html.j2", what=f"proposal {proposal_id}")
     return await _page(request, "proposal.html.j2", proposal=proposal)
 
@@ -340,7 +349,7 @@ async def workflow_page(request: Request) -> Response:
     """
     workflow_id = request.param_int("workflow_id")
     playbook = await workflows.get_playbook(workflow_id)
-    if "error" in playbook:
+    if is_missing(playbook, "workflow"):
         return await _page(request, "not_found.html.j2", what=f"workflow {workflow_id}")
     return await _page(
         request,
@@ -729,7 +738,7 @@ async def source_page(request: Request) -> Response:
         if exc.status == HTTPStatus.FORBIDDEN:
             return await _forbidden(request, exc)
         raise
-    if "error" in detail:
+    if is_missing(detail, "source"):
         return await _page(request, "not_found.html.j2", what=f"source {source_id}")
     return await _page(
         request,

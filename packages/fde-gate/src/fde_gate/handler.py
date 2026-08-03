@@ -48,7 +48,7 @@ from fde_gate.http import (
     to_apigw_response,
 )
 from fde_gate.rows import fetchone
-from fde_gate.service import drift, proposals, runs, workflows
+from fde_gate.service import drift, is_missing, proposals, runs, workflows
 from fde_mcp import db
 from fde_mcp.logging import configure_logging, get_logger
 
@@ -138,7 +138,7 @@ async def list_proposals(request: Request) -> Response:
 
 async def get_proposal(request: Request) -> Response:
     result = await proposals.get_proposal(request.param_int("proposal_id"), request.principal)
-    if "error" in result:
+    if is_missing(result, "proposal_id"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
 
@@ -184,7 +184,7 @@ async def list_workflows(request: Request) -> Response:
 
 async def get_workflow(request: Request) -> Response:
     result = await workflows.get_workflow(request.param_int("workflow_id"))
-    if "error" in result:
+    if is_missing(result, "workflow_id"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
 
@@ -198,7 +198,7 @@ async def get_playbook(request: Request) -> Response:
     can find again.
     """
     result = await workflows.get_playbook(request.param_int("workflow_id"))
-    if "error" in result:
+    if is_missing(result, "workflow"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response(
         body=str(result["markdown"]),
@@ -329,7 +329,7 @@ async def post_triage(request: Request) -> Response:
         request.field_str("state"),
         note=request.body.get("note") or request.form.get("note"),
     )
-    if "error" in result:
+    if is_missing(result, "signal"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
 
