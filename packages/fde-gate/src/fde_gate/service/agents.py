@@ -676,6 +676,14 @@ async def _mark_finished(launch_id: int, *, status: str, error: dict[str, Any] |
 async def list_launches(*, engagement_id: str | None = None, limit: int = 50) -> dict[str, Any]:
     """Launches, most recent first. Rendered as a section of `/ui/runs`.
 
+    Fifty by default where `runs.list_runs` takes a hundred, and the
+    difference is deliberate rather than left over: this is the SECOND list on
+    a page whose subject is runs, and each launch row can carry a failure
+    message several lines long. The operator reading it is chasing a launch
+    they made minutes ago, which is at the top either way. The 500 ceiling is
+    the same as the runs list's, for the same reason -- a page is not an
+    export.
+
     No reviewer check, deliberately, and the asymmetry with `launch` is the
     point: WRITING a launch record is an act attributed to a person, so it is
     refused to anyone who is not an active reviewer; READING the list is the
