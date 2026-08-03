@@ -18,6 +18,11 @@ on:
     paths:
       - "claude-plugin/**"
       - ".claude-plugin/**"
+      # check_plugin.py counts fde-mcp's tool registrations and resolves the
+      # repository paths the plugin cites, so a tool added, removed or moved
+      # there is exactly what makes a plugin file wrong -- and it happens in a
+      # PR that touches no plugin file at all.
+      - "packages/fde-mcp/**"
       - ".github/workflows/plugin.yml"
   workflow_dispatch:
 
