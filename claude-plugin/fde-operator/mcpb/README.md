@@ -36,6 +36,14 @@ and that someone has the repository.
 
 `uv` must be on PATH — https://docs.astral.sh/uv/.
 
+## Why `entry_point` points at this file
+
+The MCPB schema requires `server.entry_point`, and this bundle deliberately
+ships no server code — the launch comes from `mcp_config`, which runs `uv`
+against your checkout. Rather than name a source file the archive does not
+contain (which reads as true and is not), `entry_point` points at this
+document, which is what actually describes how the server starts.
+
 ## Verified here / not verified here
 
 - `manifest.json` passes `mcpb validate` against the v0.4 schema, and

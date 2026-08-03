@@ -47,8 +47,8 @@ The plugin lives inside the repository and launches the MCP server from it, so
 the checkout is the install:
 
 ```bash
-git clone https://github.com/khalaharvi/FDE-Agent-Platform
-cd FDE-Agent-Platform
+git clone https://github.com/khalaharvi/FDE-Agent-Platform ~/FDE-Agent-Platform
+cd ~/FDE-Agent-Platform
 uv sync --all-packages --frozen
 createdb fde && ./db/rebuild.sh fde --with-demo
 export FDE_DB_DSN=postgresql:///fde
@@ -72,10 +72,12 @@ Code:
 
 Restart the session afterwards so the MCP server and commands load.
 
-`.mcp.json` resolves the repository as `${CLAUDE_PLUGIN_ROOT}/../..`, which is
-correct whenever the plugin is loaded from the checkout — the only supported v1
-install. If you relocate the plugin directory, edit that path; it is the one
-line in the file that assumes anything.
+**Run Claude Code from the checkout.** Installing copies the plugin into
+`~/.claude/plugins/cache/…`, well away from the repository, so `.mcp.json`
+locates the workspace as `${CLAUDE_PROJECT_DIR}` — your session's project root
+— rather than by walking up from the plugin. That is why the `cd` above
+matters: the project root has to be the repository, or `uv` has no workspace to
+run the server from.
 
 ### Settings
 
@@ -83,6 +85,25 @@ line in the file that assumes anything.
 |---|---|---|
 | `FDE_DB_DSN` | yes | Postgres DSN for the `fde_agent` role, with `db/` applied. Passed through to the server. |
 | `FDE_VAULT_DIR` | no | Where `/playbook` writes. Unset, the skill asks once per session. |
+
+`.mcp.json` defaults the DSN to `postgresql:///fde` when the variable is unset,
+so the plugin works against a local database with no configuration. Note the
+consequence for a deployed database: `FDE_DB_DSN` **wins over**
+`FDE_DB_SECRET_ARN` and `FDE_DB_IAM_AUTH` in the server's own resolution
+(`packages/fde-mcp/src/fde_mcp/config.py`), so the default silently takes
+precedence over Secrets Manager or IAM auth. Point `FDE_DB_DSN` at the real
+database, or edit the default out of `.mcp.json`, before using either.
+
+### Verified / not verified
+
+- **Verified:** the launch command starts the server and reports its tool count;
+  it was exercised from an unrelated working directory with the plugin copied to
+  a directory outside the repository, mirroring the layout `/plugin install`
+  produces, to confirm it does not depend on the plugin sitting in the checkout.
+- **Not verified:** a live `/plugin marketplace add` + `/plugin install` into a
+  real Claude Code installation. Nothing here was installed into a user's
+  `~/.claude`, so the install flow is written against the documented behaviour
+  and the on-disk layout of already-installed plugins, not exercised end to end.
 
 There is no model configuration here: the plugin uses whatever model your Claude
 session runs. `FDE_MODEL_*` configures the platform's own agents, which are a
@@ -104,7 +125,7 @@ checkout instead of vendoring a Python runtime.
 ## Where the boundary is documented
 
 - `docs/05-mcp-surface.md` — tool-by-tool contracts
-- `docs/10-prodops-runbook.md` — the operator runbook, including reviewer
-  bootstrap and intake enrichment
+- `docs/10-prodops-runbook.md` — the operator runbook: running a workflow, the
+  review and drift queues, escalation, and the reviewer roster (§8)
 - `docs-site/first-merge.mdx` — the propose → gate → approve → merge loop by
   hand, including the privilege denial you can reproduce in `psql`

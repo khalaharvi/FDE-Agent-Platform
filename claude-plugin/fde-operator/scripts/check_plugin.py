@@ -43,6 +43,13 @@ EXPECTED = (
 # for a path. Extend the alternation when the plugin starts citing a new one.
 CITED_PATH = re.compile(r"`((?:packages|docs|docs-site|db|infra|tests|\.github)/[\w./-]+)`")
 
+# Every place the plugin states how many MCP tools there are: "22 MCP tools",
+# "the `fde` MCP server's 22 tools", "## Tool roster (22)". The count is a
+# promise about another package, so it is derived from that package's tool
+# registrations rather than trusted.
+CLAIMED_TOOLS = re.compile(r"(\d+)\s+(?:MCP\s+)?tools\b|Tool roster \((\d+)\)")
+TOOL_REGISTRATION = re.compile(r"mcp\.tool\(\)\(")
+
 failures: list[str] = []
 
 
@@ -168,6 +175,36 @@ def check_marketplace() -> None:
             )
 
 
+def check_tool_count() -> None:
+    """Every "N tools" claim must equal the tools fde-mcp actually registers.
+
+    Same pin philosophy as the version assert: the number is scattered across
+    the README, the skill and the MCPB long_description, so a tool added or
+    removed in another package silently makes all of them wrong at once.
+    """
+    tools_dir = REPO / "packages/fde-mcp/src/fde_mcp/tools"
+    if not tools_dir.is_dir():
+        fail("packages/fde-mcp/src/fde_mcp/tools", "missing -- cannot derive the tool count")
+        return
+    actual = sum(
+        len(TOOL_REGISTRATION.findall(py.read_text())) for py in sorted(tools_dir.glob("*.py"))
+    )
+    if actual == 0:
+        fail("packages/fde-mcp/src/fde_mcp/tools", "no mcp.tool()( registrations found")
+        return
+
+    for path in sorted(PLUGIN.rglob("*")):
+        if not path.is_file() or path.suffix not in {".md", ".json"}:
+            continue
+        if "build/" in str(path) or "dist/" in str(path):
+            continue
+        rel = path.relative_to(PLUGIN)
+        for prose, roster in CLAIMED_TOOLS.findall(path.read_text()):
+            claimed = int(prose or roster)
+            if claimed != actual:
+                fail(str(rel), f"claims {claimed} tools; fde-mcp registers {actual}")
+
+
 def check_cited_paths() -> None:
     """Every `repo/relative/path` in any plugin file resolves in the repo."""
     for path in sorted(PLUGIN.rglob("*")):
@@ -203,6 +240,7 @@ def main() -> int:
     check_frontmatter()
     check_plugin_name()
     check_marketplace()
+    check_tool_count()
     check_cited_paths()
     check_no_absolute_paths()
 
@@ -219,6 +257,7 @@ def main() -> int:
         "expected files present",
         "marketplace entry resolves to this plugin",
         "version agrees across plugin.json / mcpb / marketplace",
+        "every tool-count claim matches fde-mcp's registrations",
         "command + skill frontmatter parses as YAML",
         "every cited repo path exists",
         "no absolute paths or email addresses",

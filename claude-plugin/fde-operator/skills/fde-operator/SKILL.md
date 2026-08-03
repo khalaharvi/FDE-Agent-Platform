@@ -92,7 +92,12 @@ number as a fraction of the total. Then:
    version, re-anchored (`packages/fde-gate/src/fde_gate/service/sources.py`).
    Prefer it over re-chunking by hand — it re-runs the same anchor matcher the
    original intake used (`packages/fde-gate/src/fde_gate/intake.py`). Report the
-   new `source_id` and the new coverage.
+   new `source_id` and the new coverage. Two refusals to expect and relay
+   rather than retry: the action requires an **active reviewer** principal
+   (403 otherwise), and it refuses outright when the matcher still finds no
+   live node for any dark passage — re-ingesting then would only make a second
+   copy retrieval also cannot see. That refusal means step 2 has not landed
+   yet, not that the console is broken.
 
 ## 3. Getting a proposal made
 
@@ -127,6 +132,10 @@ rejected:
 | `workflow` | `monitor_drift` | `min_severity` (default `medium`) |
 | `workflow` | `triage_drift` | `signal_ids` |
 | `workflow` | `reauthor_stale` | `workflow_id` |
+
+Every `workflow` task also accepts `await_gates` (default false): set it when
+this invocation should wait briefly for the gate its proposal triggers instead
+of returning as soon as it submits.
 
 `fde-agents-local` also accepts a third agent, `development`. It is out of scope
 here for the same reason the console launcher omits it
@@ -168,6 +177,12 @@ context, then every step — and it is plain Markdown, so write it into the vaul
 unchanged. Do not reformat, re-order, or "improve" it: the export is
 byte-stable against the workflow's pinned commit, which is what makes two
 exports diffable.
+
+One carve-out to that stability, and it matters when you diff: the **Process
+context** section reads the graph as it stands *now*, not at the pinned commit,
+and says so in its own text. Two exports of the same workflow taken across a
+merge can legitimately differ in that section alone. A diff there is not drift
+in the workflow.
 
 Write it to `$FDE_VAULT_DIR/<slug>-v<version>.md` (or the vault path agreed in
 §1). If a file is already there, diff before overwriting and tell the operator

@@ -24,7 +24,7 @@
   ],
   "server": {
     "type": "python",
-    "entry_point": "packages/fde-mcp/src/fde_mcp/__main__.py",
+    "entry_point": "README.md",
     "mcp_config": {
       "command": "uv",
       "args": [
