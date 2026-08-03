@@ -1,5 +1,5 @@
 ---
-title: "For operators"
+title: "Run an engagement"
 description: "Take an interview from a recorded conversation to a published, exportable playbook without leaving the review console."
 ---
 
@@ -19,6 +19,18 @@ The console is the product. The agents draft, but nothing they draft reaches
 the graph until a human with the right authority approves it — that is
 enforced by database privileges, not by the interface you are about to use.
 See [Human gates](/concepts/human-gates).
+</Note>
+
+<Note>
+Two things have to be true before any of this works, and neither is something
+you do yourself. Someone has to be running the console and give you its URL —
+that is the [quickstart](/quickstart) locally, or a deployment. And your
+sign-in has to hold the **admin** authority, because only an admin can open
+the reviewer roster. The first admin on a new database is granted once,
+directly against the database, by whoever set the platform up; the prod-ops
+runbook (`docs/10-prodops-runbook.md`) carries the statements. On the demo
+database that admin is `owner@example.com` — ask to be signed in as them, or
+the roster page will refuse you by name.
 </Note>
 
 ## Before the first interview: who can approve
@@ -44,6 +56,11 @@ Open **`/ui/sources/new`** and paste the transcript. Give it a title, say
 what kind of source it is, and say when it was captured — that timestamp is
 what later lets anyone ask what the graph believed at the time.
 
+The form also asks which engagement the transcript belongs to. No console
+page creates an engagement, so that id comes from whoever set the platform up;
+the field offers the ones that already exist, and on the demo database there
+is one waiting for you.
+
 Before anything is stored, the console shows you a preview: how the text was
 split into passages, and **how many of those passages anchored to something
 the graph already knows about**. Read that number. It is the one thing on
@@ -63,15 +80,26 @@ for them later will return nothing.
 </Step>
 
 <Step title="Let an agent draft from what it can now find">
-Open **`/ui/agents/run`**. Pick the agent and the task; the form is generated
-from the agent's own input schema, so what you are asked for is what that
-agent actually accepts, and the console will not let you send a field it
-does not declare.
+Open **`/ui/agents/run`**. Pick the agent and the task. The dropdown offers
+exactly the tasks those two agents perform — the console keeps its own copy
+of that list and a test fails the build when it drifts from the agents' — and
+each task's form asks for the keys that task actually reads, so there is no
+JSON to compose and no field to guess.
 
 The Engagement Agent turns transcript evidence into structured claims. The
 Workflow Agent reads the graph at a pinned commit and drafts a workflow from
 it. Neither writes anything: both produce a proposal, and the proposal goes
 to the queue.
+
+<Warning>
+This is the one step that needs AWS. The console dispatches to a deployed
+Bedrock AgentCore runtime, and that path is written against verified API
+shapes but has not been run against live AWS — see
+[Status and honesty](/status). Where no runtime is configured the console
+says so and names the terminal command that does the same job, which is a
+task for whoever set the platform up. Every other step on this page runs
+against a local database with no AWS account.
+</Warning>
 
 <Info>
 A launch can outlast the browser request that started it. The outcome shows
@@ -147,18 +175,25 @@ exercised. The MCP server launch it depends on has been.
 ## When the process changes underneath you
 
 Published workflows are pinned to the graph commit they were drafted from.
-When a later merge changes something a published workflow depends on, the
-platform raises a drift signal instead of letting the workflow quietly go
-stale. **`/ui/drift`** is that queue. Triaging a signal sends it back through
-the same loop you just ran: an agent drafts the correction, a human approves
-it.
+When a later merge moves the graph past that pin, the platform raises a
+stale-pin signal — for every published workflow behind the new head, whether
+or not the merge touched anything that workflow cites. **`/ui/drift`** is
+that queue, and the signal records how far behind the pin now is.
+
+So a stale-pin signal is a prompt to look, not a verdict that the workflow is
+wrong. Triage is where a human decides whether it matters; when it does, the
+correction goes back through the same loop you just ran — an agent drafts it,
+a human approves it.
 
 That is the whole point of the pinning. A playbook you exported six months
-ago is either still true or has a signal attached explaining why it is not.
+ago is either still true or has a signal attached asking whether it still is.
 
 ## Next step
 
-Open the review console and merge something. [Your first
-merge](/first-merge) walks the same propose → gate → approve → merge loop
-against the seeded demo engagement, so there is a real proposal in the queue
-to practise on before an engagement depends on it.
+Open the queue at **`/ui`** and open the top proposal. On a demo database
+three are waiting — one nobody has touched, one part-reviewed, and one a
+compliance reviewer sent back — and reading a real gate table is the fastest
+way to see what you are actually being asked to decide.
+
+If you want the same loop as SQL, [your first merge](/first-merge) walks it
+from the other side, against the same seeded engagement.

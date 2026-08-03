@@ -53,6 +53,12 @@ candidly — with root causes — in the repo's sources ledger
 - pgvector compiled with the default `-march=native` crashed Postgres with
   SIGILL when the host CPU changed.
 
+Recorded open: `wf_draft` types a decision step's branches as an object while
+the workflow runner evaluates a list, so no decision step an agent can author
+is one the runner can execute. Closing it changes a model-facing tool
+signature, which is not a thing to slip into a docs branch — so it is written
+down instead of quietly carried.
+
 The ledger is a feature, not a confession. A project that shows you its
 failure modes is one whose passing tests you can believe — and contributors
 are asked to extend the ledger when they find the next one.
