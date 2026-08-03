@@ -77,7 +77,14 @@ def validate_api_key(provider: str, key: str, *, base_url: str | None = None) ->
     return f"provider returned HTTP {status} (bad key?)"
 
 
+def _unknown_provider_error(provider: str) -> str:
+    return f"unknown provider {provider!r}; expected one of {sorted(PROVIDER_ENV_VARS)}"
+
+
 def _cmd_login(provider: str) -> int:
+    if provider not in PROVIDER_ENV_VARS:
+        sys.stderr.write(f"{_unknown_provider_error(provider)}\n")
+        return 2
     key = _prompt_secret(f"API key for {provider}: ")
     error = validate_api_key(provider, key)
     if error is not None:
@@ -89,6 +96,9 @@ def _cmd_login(provider: str) -> int:
 
 
 def _cmd_logout(provider: str) -> int:
+    if provider not in PROVIDER_ENV_VARS:
+        sys.stderr.write(f"{_unknown_provider_error(provider)}\n")
+        return 2
     removed = delete_api_key(provider)
     if removed:
         sys.stdout.write(f"removed stored key for {provider!r}\n")

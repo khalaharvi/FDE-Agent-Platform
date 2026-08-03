@@ -58,6 +58,36 @@ def test_login_rejects_bad_key_without_storing(
     assert "openai" not in fake_keychain
 
 
+def test_login_unknown_provider_returns_2_without_prompting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(prompt: str) -> str:
+        raise AssertionError("_prompt_secret should not be called for an unknown provider")
+
+    monkeypatch.setattr(providers_cli, "_prompt_secret", _boom)
+    assert providers_cli.main(["login", "netscape"]) == 2
+
+
+def test_logout_unknown_provider_returns_2(
+    fake_keychain: dict[str, str],
+) -> None:
+    assert providers_cli.main(["logout", "netscape"]) == 2
+
+
+def test_logout_removes_stored_key(
+    fake_keychain: dict[str, str],
+) -> None:
+    fake_keychain["openai"] = "sk-stored"
+    assert providers_cli.main(["logout", "openai"]) == 0
+    assert "openai" not in fake_keychain
+
+
+def test_logout_known_provider_with_nothing_stored(
+    fake_keychain: dict[str, str],
+) -> None:
+    assert providers_cli.main(["logout", "openai"]) == 0
+
+
 def test_status_lists_all_providers(
     monkeypatch: pytest.MonkeyPatch,
     fake_keychain: dict[str, str],
