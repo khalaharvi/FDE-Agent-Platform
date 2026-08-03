@@ -12,9 +12,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # uv manages Python itself
 uv sync --all-packages --frozen
 docker compose up -d db                            # pgvector 0.8, port 55432
 export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
-./db/rebuild.sh fde                                # 15 migrations + 25 smoke tests
+./db/rebuild.sh fde                                # 16 migrations + 25 smoke tests
 export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
-uv run pytest packages                             # 609 tests
+uv run pytest packages                             # 629 tests
 ```
 
 Already run Postgres locally with pgvector ≥ 0.8? Skip compose and use
@@ -38,7 +38,7 @@ uv lock --check                   # lockfile must match pyproject changes
 ## Rules that are enforced, not suggested
 
 - **The invariant is sacred.** Agents propose, humans dispose. CI asserts
-  eighteen privilege denials; your change must keep all eighteen failing. New
+  twenty privilege denials; your change must keep all twenty failing. New
   SECURITY DEFINER functions need `REVOKE ALL ... FROM PUBLIC` + explicit
   grants with a comment saying why (see db/011 for the style).
 - **Retrieval logic lives in SQL only** (`db/008`). The MCP tools and the

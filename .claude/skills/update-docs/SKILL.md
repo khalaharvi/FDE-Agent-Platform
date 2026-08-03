@@ -39,13 +39,13 @@ pages for them.
 |---|---|---|
 | `index` | positioning, who it's for, honest status, migration count | `README.md` framing, `db/` migration count, release state |
 | `quickstart` | clone → green tests → running console, no AWS | `db/rebuild.sh`, `db/seed_demo.sql`, `pyproject.toml` deps, test/migration counts, `fde-gate-dev`, `FDE_DB_DSN` / `FDE_GATE_DEV_PRINCIPAL` |
-| `first-merge` | the propose → gate → approve → merge walkthrough, run by hand | `db/seed_demo.sql` (the walkthrough uses its seeded item), `hitl.*` in `db/004`–`db/005`, the fde-gate review console UI, the eighteen privilege denials |
+| `first-merge` | the propose → gate → approve → merge walkthrough, run by hand | `db/seed_demo.sql` (the walkthrough uses its seeded item), `hitl.*` in `db/004`–`db/005`, the fde-gate review console UI, the twenty privilege denials |
 | `architecture` | five packages, DB roles, quality gates, where things run | workspace members in `pyproject.toml`, `packages/*` layout, roles in `db/010`–`db/014`, CI job list |
 | `models-and-cost` | preset table, override order, cost anchors | `packages/fde-agents/src/fde_agents/common/config.py` (preset map, `DEFAULT_MODEL_ID`), `fde-agents-deploy --model-preset`, `FDE_MODEL_ID` / `FDE_MODEL_PRESET` |
 | `deployment` | AgentCore runtimes, artifact shapes, CI deploy path | `fde-agents-deploy` subcommands and flags (`codezip`, `runtimes`), `infra/`, deploy workflows — **and the honesty labels below** |
 | `status` | what is verified vs not, bug ledger, release state | test counts, `docs/99-sources.md` §7–§8, `CHANGELOG.md`, the version |
 | `faq` | FDE definition, comparisons, no-AWS answer, cost | test count, cost figures (must equal `models-and-cost`), `CONTRIBUTING.md` |
-| `concepts/human-gates` | `hitl.compute_required_gates`, four enforcement layers, four gate kinds, strict quorum | any `db/` migration touching `hitl.*`; the eighteen CI denial assertions |
+| `concepts/human-gates` | `hitl.compute_required_gates`, four enforcement layers, four gate kinds, strict quorum | any `db/` migration touching `hitl.*`; the twenty CI denial assertions |
 | `concepts/knowledge-graph` | closed ontology, two time axes, hybrid retrieval, drift-as-SQL | ontology types in `db/001`–`db/002`, `kg.hybrid_search` in `db/008`, drift SQL in `db/007` |
 | `concepts/agents` | three agents, the loop, the MCP tool count | tool registrations in `packages/fde-mcp/src/fde_mcp/tools/`, agent definitions in `fde-agents` |
 | `concepts/training-flywheel` | gate outcomes → SFT/preference data, the kappa band, "stop before RL" | `packages/fde-training` (`rewards.DEFAULT_WEIGHTS`, `rival_grader` kappa constants), `docs/06-training.md` |
@@ -65,7 +65,7 @@ sections carry their own triggers:
 
 | Doc | What it claims | Rewrite it when this changes |
 |---|---|---|
-| `CONTRIBUTING.md` | its own build-and-verify block, and the invariant a contributor must not break | test count, migration and smoke counts, the eighteen privilege denials, the gate commands (`db/rebuild.sh`, `uv run pytest packages`) |
+| `CONTRIBUTING.md` | its own build-and-verify block, and the invariant a contributor must not break | test count, migration and smoke counts, the twenty privilege denials, the gate commands (`db/rebuild.sh`, `uv run pytest packages`) |
 
 Keep all three consistent with each other: the site, the README, and
 `CONTRIBUTING.md` state the same counts, and the first two state the same presets

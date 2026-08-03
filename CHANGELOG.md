@@ -17,7 +17,7 @@ tracking table) until the first production deployment freezes the schema.
   (`hitl.reviewer_admin`), checked server-side on every GET and POST; the
   first admin on a deployment is still granted by hand, once, and
   `docs/10-prodops-runbook.md` §8 carries the statement.
-- Ten new privilege denials (eighteen total): no role but `fde_gate_service`
+- Twelve new privilege denials (twenty total): no role but `fde_gate_service`
   may write the reviewer tables, and even it may not DELETE a reviewer or
   rewrite a `principal` — gate decisions reference the row, so both would
   rewrite the audit trail. Its UPDATE is column-scoped to the columns the
