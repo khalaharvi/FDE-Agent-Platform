@@ -240,9 +240,12 @@ fde_prodops    → UPDATE wf.workflow SET status=...   must fail
 The other seventeen guard the surfaces added since: twelve for the reviewer
 roster (`db/016`) — nothing but the console may write it, and even the console
 may not delete a reviewer or rewrite a principal — and five for evidence
-intake (`db/017`), pinning the console's `INSERT` on `kg.source`/`kg.chunk`/
-`kg.embed_queue` so it never widens into `UPDATE`, `DELETE`, or the graph
-tables.
+intake (`db/017`). Four of those pin the console's `INSERT` on
+`kg.source`/`kg.chunk`/`kg.embed_queue` so it never widens into `UPDATE`,
+`DELETE`, or the graph tables. The fifth denies that same `INSERT` to a
+different role entirely — `fde_prodops`, which reads the graph and runs
+workflows — because widening it *because it is also the console* would land an
+evidence write on the role picked for being narrow.
 
 If any succeeds, an agent can write the graph, label its own training data, or
 appoint its own reviewer, and the platform's central guarantee is gone.
