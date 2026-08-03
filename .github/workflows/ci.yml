@@ -106,22 +106,42 @@ jobs:
           # one layer up. Only fde_gate_service writes these tables (db/016),
           # and even it may not DELETE a reviewer or rewrite a principal:
           # gate decisions reference the row, so both would rewrite history.
-          assert_denied fde_agent "INSERT INTO hitl.reviewer (principal,display_name) VALUES ('x','x');"
-          assert_denied fde_agent "UPDATE hitl.reviewer SET is_active = true;"
-          assert_denied fde_agent "INSERT INTO hitl.reviewer_authority (reviewer_id,engagement_id,gate_kind,granted_by) VALUES (1,gen_random_uuid(),'control','x');"
-          assert_denied fde_agent "UPDATE hitl.reviewer_authority SET revoked_at = NULL;"
+          #
+          # Every write below matches no rows on purpose -- `WHERE false` on
+          # the UPDATEs and the DELETE, a literal source on the INSERTs.
+          # Privileges are checked when a statement is planned rather than
+          # when a row is reached, so each one still fails for exactly one
+          # reason: the missing grant. Unqualified, they did not. The two
+          # INSERTs that named reviewer_id 1 failed on a foreign key EVEN FOR
+          # THE OWNER, a rebuilt database having no reviewer 1; against a
+          # populated roster the DELETE hits the authority and decision
+          # tables' foreign keys, and the principal and gate_kind UPDATEs hit
+          # a unique constraint; and the two identical reviewer INSERTs are
+          # asserted for two different roles, so a grant that widened for the
+          # first would leave the second colliding on the unique principal.
+          # Every one of those keeps assert_denied printing "ok" after the
+          # invariant is already broken.
+          #
+          # The INSERTs select literals rather than reading the target the
+          # way db/017's pair below does, because fde_prodops and
+          # fde_rl_rollout hold no SELECT on the roster at all -- that form
+          # would have them denying for the wrong reason.
+          assert_denied fde_agent "INSERT INTO hitl.reviewer (principal,display_name) SELECT 'x','x' WHERE false;"
+          assert_denied fde_agent "UPDATE hitl.reviewer SET is_active = true WHERE false;"
+          assert_denied fde_agent "INSERT INTO hitl.reviewer_authority (reviewer_id,engagement_id,gate_kind,granted_by) SELECT 1,gen_random_uuid(),'control','x' WHERE false;"
+          assert_denied fde_agent "UPDATE hitl.reviewer_authority SET revoked_at = NULL WHERE false;"
           assert_denied fde_agent "SELECT count(*) FROM hitl.reviewer_admin;"
-          assert_denied fde_prodops "INSERT INTO hitl.reviewer (principal,display_name) VALUES ('x','x');"
-          assert_denied fde_training "UPDATE hitl.reviewer SET is_active = false;"
-          assert_denied fde_rl_rollout "INSERT INTO hitl.reviewer_admin (reviewer_id,granted_by) VALUES (1,'x');"
-          assert_denied fde_gate_service "DELETE FROM hitl.reviewer;"
-          assert_denied fde_gate_service "UPDATE hitl.reviewer SET principal = 'x';"
+          assert_denied fde_prodops "INSERT INTO hitl.reviewer (principal,display_name) SELECT 'x','x' WHERE false;"
+          assert_denied fde_training "UPDATE hitl.reviewer SET is_active = false WHERE false;"
+          assert_denied fde_rl_rollout "INSERT INTO hitl.reviewer_admin (reviewer_id,granted_by) SELECT 1,'x' WHERE false;"
+          assert_denied fde_gate_service "DELETE FROM hitl.reviewer WHERE false;"
+          assert_denied fde_gate_service "UPDATE hitl.reviewer SET principal = 'x' WHERE false;"
           # The column-scoped UPDATE, asserted from the other side: the gate
           # service may stamp revoked_at/granted_by/granted_at and is_active,
           # and may not touch the primary key of an authority (moving one is
           # granting a different one) or a reviewer's display name.
-          assert_denied fde_gate_service "UPDATE hitl.reviewer_authority SET gate_kind = 'factual';"
-          assert_denied fde_gate_service "UPDATE hitl.reviewer SET display_name = 'x';"
+          assert_denied fde_gate_service "UPDATE hitl.reviewer_authority SET gate_kind = 'factual' WHERE false;"
+          assert_denied fde_gate_service "UPDATE hitl.reviewer SET display_name = 'x' WHERE false;"
 
           # db/017 lets the console accept a pasted transcript: INSERT on
           # kg.source, kg.chunk and kg.embed_queue, and nothing else. Chunks
@@ -143,7 +163,10 @@ jobs:
           # keep printing "ok" after a widened grant had already broken the
           # invariant. Selecting zero rows from the table itself inserts nothing,
           # succeeds trivially wherever the privilege is held, and can therefore
-          # fail for exactly one reason.
+          # fail for exactly one reason. One caveat comes with reading the
+          # target table: this form needs SELECT as well as INSERT, so
+          # revoking fde_gate_service's SELECT on kg.node or fde_prodops's on
+          # kg.chunk would leave both lines denying for the wrong reason.
           assert_denied fde_gate_service "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) SELECT engagement_id,node_key,node_type,label,commit_id FROM kg.node WHERE false;"
           assert_denied fde_prodops "INSERT INTO kg.chunk (engagement_id,source_id,ordinal,content) SELECT engagement_id,source_id,ordinal,content FROM kg.chunk WHERE false;"
           exit $fail
