@@ -1,0 +1,74 @@
+---
+title: "Status and honesty"
+description: "Exactly what is tested, what is not, and the public ledger of every bug found while building the platform."
+---
+
+This project's rule for itself: **every claim in the docs is either tested or
+labeled unverified.** This page is the split.
+
+## What is verified, and how
+
+| Claim | Evidence |
+|---|---|
+| 15 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate, run on every commit |
+| 25 end-to-end smoke tests pass | including fail-closed submit, unauthorized approval, review → edit → merge → label, workflow publish/run, observation dedup, and as-of traversal |
+| 599 of 609 Python tests pass in one run against live Postgres | across all five packages, in CI with the same pgvector image the quickstart uses. The other 10 skip cleanly rather than silently: 9 need the optional `train` extra and run in CI's separate `train-tests` job, and 1 needs `wal_level=logical`, which a CI service container cannot be started with — so that one never runs in CI, and this page says so rather than counting it |
+| 8 privilege-denial invariants hold | asserted in CI — eight statements that must all fail, or the build does |
+| Docs match code | a CI test parses the training doc's reward-weight table and kappa thresholds and asserts they equal the code's constants |
+
+## What is not validated
+
+<Warning>
+Anything requiring live AWS credentials has **not** been executed: Bedrock
+model and embedding calls, AgentCore control-plane and data-plane calls,
+Gateway and Memory provisioning, and RFT submission. All of it is written
+against verified API shapes — request and response formats checked against
+primary documentation, with every source URL recorded in the repo's
+`docs/99-sources.md` — but "the shapes are right" is a weaker claim than "it
+ran," and this project does not blur the two.
+</Warning>
+
+The sources ledger also lists, explicitly, the claims that could not be
+verified from primary sources at all (cold-start latency, RDS pgvector minor
+versions, Aurora HNSW memory behavior, and others). Check them before you
+build a release process around them.
+
+## The bug ledger
+
+Fourteen real bugs were found and fixed while building this, and they are
+recorded candidly — with root causes — in the repo's sources ledger
+(`docs/99-sources.md` §7–§8). A sample:
+
+- The merge function stamped rows with wall-clock time while reads used
+  transaction time — a read-your-own-write failure inside the platform's most
+  important function.
+- The same function later aborted on its own stale-pin housekeeping the
+  second time an engagement merged.
+- The one role meant to write training labels could not reach the training
+  schema at all.
+- A reward function paid an RL policy 0.85 for doing nothing.
+- Retrieval tournaments silently ranked noise because they ran on fake
+  embeddings.
+- pgvector compiled with the default `-march=native` crashed Postgres with
+  SIGILL when the host CPU changed.
+
+The ledger is a feature, not a confession. A project that shows you its
+failure modes is one whose passing tests you can believe — and contributors
+are asked to extend the ledger when they find the next one.
+
+## Release state
+
+The current release is v0.2.0 — the first public release. The schema is
+pre-production: migrations rebuild from scratch rather than tracking
+versions, and that stays true until a first production deployment freezes
+the schema. There are no production deployments to point to, and this page
+will say so until there are.
+
+## What this means for you
+
+- **Everything local is safe to rely on today**: the schema, the gates, the
+  MCP tools, the console, the training export. Run the
+  [quickstart](/quickstart) and the claims above reproduce on your machine.
+- **Everything AWS-shaped is a validated design, not a validated system.**
+  Budget real integration time for the first live deployment, and read the
+  [deployment page](/deployment) with its warnings intact.

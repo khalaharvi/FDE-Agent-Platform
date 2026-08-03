@@ -1,0 +1,174 @@
+---
+title: "Quickstart"
+description: "Clone to green tests and a running review console in about ten minutes, with no AWS account."
+---
+
+This walkthrough takes you from a fresh clone to a fully verified local
+installation: schema built, 599 of 609 tests green with the rest skipped by
+design, and the human review console running in your browser. Nothing here
+requires an AWS account.
+
+## Prerequisites
+
+- **Docker** (for the bundled Postgres), or your own PostgreSQL with
+  pgvector ≥ 0.8.0.
+- **Postgres client tools** on your PATH: the rebuild script shells out to
+  `psql`, `createdb`, and `dropdb` even when the server runs in Docker.
+
+<CodeGroup>
+
+```bash macOS
+brew install libpq
+brew link --force libpq
+```
+
+```bash Debian/Ubuntu
+sudo apt-get install postgresql-client
+```
+
+</CodeGroup>
+
+<Note>
+pgvector must be **0.8.0 or newer** — below that, filtered approximate-
+nearest-neighbor queries silently return incomplete results, which presents as
+"the graph doesn't know that." The first migration refuses to install on older
+versions. The bundled Docker image is already correct; this only matters if
+you bring your own Postgres.
+</Note>
+
+## Install and verify
+
+<Steps>
+  <Step title="Install the toolchain">
+    uv manages Python itself — you do not need a preinstalled Python 3.12.
+
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    uv sync --all-packages --frozen
+    ```
+  </Step>
+
+  <Step title="Start the database">
+    <Tabs>
+      <Tab title="Docker (recommended)">
+        This is the exact pgvector image CI uses, on port 55432 so it never
+        collides with a Postgres you already run.
+
+        ```bash
+        docker compose up -d db
+        export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
+        ```
+      </Tab>
+      <Tab title="Existing Postgres">
+        Requires pgvector ≥ 0.8.0 already installed in your server. Skip the
+        exports — the rebuild script uses whatever `psql` already reaches. In
+        the later steps, use your own connection string as the DSN, for
+        example:
+
+        ```bash
+        export FDE_DB_DSN="postgresql:///fde"
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Build the schema">
+    Applies all 15 migrations to an empty database, then runs the 25-test SQL
+    smoke suite — the same gate CI runs.
+
+    <CodeGroup>
+
+    ```bash With demo data (recommended)
+    ./db/rebuild.sh fde --with-demo
+    ```
+
+    ```bash Clean database
+    ./db/rebuild.sh fde
+    ```
+
+    </CodeGroup>
+
+    You should see each migration file apply in order, then the smoke test's
+    notices, ending in `ALL SMOKE TESTS PASSED`.
+
+    `--with-demo` additionally loads `db/seed_demo.sql`, which leaves one
+    quote-to-cash engagement mid-review: one merged proposal behind a sealed
+    commit holding six nodes and six edges, three proposals still pending in
+    the queue in three different states, and three reviewers with the
+    authorities those gates need. It is evaluation data for a local database,
+    never a production one — but it is what makes the review console worth
+    looking at on your first visit.
+  </Step>
+
+  <Step title="Run the test suite">
+    ```bash
+    export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
+    uv run pytest packages
+    ```
+
+    609 tests collect. The tail you should see is:
+
+    ```text
+    599 passed, 10 skipped
+    ```
+
+    Those 10 are skipped by design: nine need the optional `train` extra, which
+    CI installs in a separate job, and one needs `wal_level=logical`, which the
+    bundled image does not enable.
+
+    <Warning>
+    If you skip the `FDE_DB_DSN` export the run still passes — as
+    `488 passed, 121 skipped`, because every database-marked test skips. Judge
+    it by the skip count, not the clock: both runs finish in seconds, so a fast
+    run tells you nothing, and 121 skips means the DSN never reached Postgres.
+    </Warning>
+  </Step>
+
+  <Step title="Open the review console">
+    ```bash
+    FDE_GATE_DEV_PRINCIPAL=sme@example.com uv run fde-gate-dev
+    ```
+
+    Open `http://127.0.0.1:8787/ui`. This is the same code path the deployed
+    Lambda runs — the dev server synthesizes your principal from
+    `FDE_GATE_DEV_PRINCIPAL` and refuses to start anonymous.
+  </Step>
+</Steps>
+
+<Check>
+Schema built, tests green, console running.
+
+If you seeded with `--with-demo`, the queue holds three proposals: one nobody
+has opened, one part-reviewed, and one a compliance reviewer sent back. Open
+any of them to see what a reviewer actually decides on.
+
+If you built a clean database, the queue is empty — the smoke test rolls its
+scenario back, so your database contains the eight gate policies and nothing
+else. [Your first merge](/first-merge) is what fills it.
+</Check>
+
+## What you just verified
+
+- 15 migrations apply cleanly, in order, on an empty database.
+- The core invariant holds: the smoke suite includes a merge attempted before
+  gates clear (refused), an unauthorized approval (ignored), and a full
+  review → edit → merge → training-label pass.
+- The review console — the platform's actual product — serves locally through
+  the real Lambda handler.
+
+## Beyond the console
+
+```bash
+uv run fde-mcp --help                     # env contract for the MCP server
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp    # the MCP server, 21 tools
+uv run fde-training export-sft --stats    # training data from gate outcomes
+```
+
+The MCP server itself needs only `FDE_DB_DSN`. Tools that embed queries, such
+as `kg_search`, call Amazon Bedrock and will fail at call time without AWS
+credentials — that is expected in a local-only setup, not a bug.
+
+## Next step
+
+Reading a seeded queue is not the same as putting something in one:
+[make your first merge](/first-merge). It works the same on either database.

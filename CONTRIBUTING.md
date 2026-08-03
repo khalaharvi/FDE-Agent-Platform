@@ -74,3 +74,5 @@ Small and focused beats large and heroic. Include: what changed, why,
 test evidence (paste the pytest tail), and a CHANGELOG entry under
 `[Unreleased]`. If you found a bug, add it to the ledger in
 `docs/99-sources.md` §8 — the ledger is a feature.
+
+Cutting a release from `[Unreleased]` is a separate step — see `RELEASING.md`.

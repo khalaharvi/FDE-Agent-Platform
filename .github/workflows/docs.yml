@@ -1,0 +1,47 @@
+name: Docs
+
+# The public docs site is built by Mintlify from docs-site/. This job catches
+# the two failures that only show up after a deploy: a page that no longer
+# builds, and a link that points at a page that moved or never existed.
+#
+# Deliberately not a required check -- a broken external link should not block
+# an unrelated code merge. Read it, do not gate on it.
+on:
+  pull_request:
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mintlify:
+    name: validate docs site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: install mint
+        run: npm i -g mint
+
+      # Parses docs.json and every page it lists; fails on MDX that does not
+      # build and on pages missing from navigation.
+      - name: mint validate
+        working-directory: docs-site
+        run: mint validate
+
+      # Checks internal links resolve to real pages. Root-relative and
+      # extensionless, per the site's authoring convention.
+      - name: mint broken-links
+        working-directory: docs-site
+        run: mint broken-links
