@@ -69,7 +69,6 @@ from constructs import Construct
 from fde_cdk.params import (
     ECR_PUBLIC_BASE,
     LaunchParams,
-    dynamic_secret_env_value,
     fde_db_secrets_wildcard_arn,
 )
 
@@ -120,6 +119,88 @@ def _fargate_task_role(scope: Construct, construct_id: str, *, read_secret_sid: 
     return role
 
 
+def _wire_conditional_embed_api_key_secret(
+    scope: Construct,
+    construct_id_prefix: str,
+    *,
+    task_definition: ecs.FargateTaskDefinition,
+    secret: secretsmanager.ISecret,
+    condition: cdk.CfnCondition,
+) -> None:
+    """I6 fix (final-fix-report.md): `FDE_EMBED_API_KEY` used to be a plain
+    `environment` entry -- a `{{resolve:secretsmanager:...}}` dynamic
+    reference, which IS resolved into the live secret value and lands in
+    that revision's `TaskDefinition.ContainerDefinitions[].Environment`
+    property in plaintext (visible via `DescribeTaskDefinition`/the ECS
+    console, unlike a genuine ECS `Secrets` entry, which the platform
+    resolves at container-START time and never writes into the task
+    definition's own properties at all). This moves it to ECS `Secrets`
+    instead -- the mechanism `AWS::ECS::TaskDefinition` has specifically
+    so a container's execution role, not CloudFormation's own dynamic-
+    reference resolution, is what reads the secret.
+
+    Two things this does deliberately NOT do the "obvious" way:
+
+    1. NOT `ecs.Secret.from_secrets_manager(secret)` passed to
+       `add_container(secrets=...)`. That convenience API auto-grants the
+       execution role read access via `role.add_to_principal_policy(...)`
+       -- which reuses ONE lazily-created "DefaultPolicy" resource per
+       role, and `ecs.LogDriver.aws_logs(...)`'s OWN binding already put
+       this container's CloudWatch Logs write statement into that exact
+       resource (verified via a standalone synth). Conditioning that
+       shared resource on `HasProviderKey` would take logging down with it
+       whenever a launcher leaves `ProviderApiKey` blank -- a real
+       regression, not a no-op. A separate, explicitly-constructed
+       `iam.Policy` (below) is its own independent `AWS::IAM::Policy`
+       resource, safe to condition alone.
+    2. The container's `Secrets` property is set via the L1 escape hatch
+       (`add_property_override`, same pattern `database.py`'s tier
+       switching uses), wrapped in `Fn::If(HasProviderKey, [{Name,
+       ValueFrom}], Ref AWS::NoValue)` -- not a bare `ValueFrom` pointing
+       at a blank/placeholder ARN. ECS requires `ValueFrom` whenever a
+       `Secrets` entry exists at all; `HasProviderKey=false` means the
+       underlying `ProviderApiKeySecret` resource does not exist in the
+       deployed stack (`Condition: HasProviderKey`, `gate.py`'s
+       `provider_api_key_secret`), so the container must not require the
+       secret at all in that case -- `Ref: AWS::NoValue` removes the whole
+       `Secrets` property, exactly the "no key, no requirement" contract
+       `params.dynamic_secret_env_value` already holds every OTHER
+       `ProviderApiKey` consumer to.
+
+    `construct_id_prefix` names the standalone read-grant `iam.Policy`
+    construct (one per task definition -- MCP and embedder each call this
+    once, so their ids must not collide).
+    """
+    execution_role = task_definition.obtain_execution_role()
+    read_secret_policy = iam.Policy(
+        scope,
+        f"{construct_id_prefix}ReadProviderApiKeySecret",
+        roles=[execution_role],
+        statements=[
+            iam.PolicyStatement(
+                sid="ReadProviderApiKeySecret",
+                effect=iam.Effect.ALLOW,
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[secret.secret_arn],
+            )
+        ],
+    )
+    cfn_read_secret_policy = read_secret_policy.node.default_child
+    assert cfn_read_secret_policy is not None
+    cfn_read_secret_policy.cfn_options.condition = condition
+
+    cfn_task_definition = task_definition.node.default_child
+    assert cfn_task_definition is not None
+    cfn_task_definition.add_property_override(
+        "ContainerDefinitions.0.Secrets",
+        cdk.Fn.condition_if(
+            condition.logical_id,
+            [{"Name": "FDE_EMBED_API_KEY", "ValueFrom": secret.secret_arn}],
+            cdk.Aws.NO_VALUE,
+        ),
+    )
+
+
 class Services(Construct):
     """`cluster`: the one ECS cluster. `mcp_service` + `alb`: the MCP
     Fargate service behind an internal ALB (`mcp_url` = `http://{alb.dns}/
@@ -166,11 +247,18 @@ class Services(Construct):
         # embed-base-url parameter -- same v1 simplification as the shared
         # provider-api-key secret, see gate.py's provider_api_key_secret
         # docstring).
+        # I6 fix (final-fix-report.md): FDE_EMBED_API_KEY is deliberately
+        # NOT in this dict -- it used to be, as a dynamic-reference
+        # `environment` entry, which lands the live secret value in
+        # plaintext in the deployed task definition's own properties. It
+        # is wired onto each container separately, as a conditioned ECS
+        # `Secrets` entry, by `_wire_conditional_embed_api_key_secret`
+        # below (see that function's own docstring for the full
+        # reasoning).
         embed_env = {
             "FDE_EMBED_PROVIDER": params.embed_provider.value_as_string,
             "FDE_EMBED_MODEL_ID": params.embed_model_id.value_as_string,
             "FDE_EMBED_BASE_URL": params.compat_base_url.value_as_string,
-            "FDE_EMBED_API_KEY": dynamic_secret_env_value(provider_api_key_secret, params),
         }
 
         # --- MCP service ---
@@ -213,6 +301,13 @@ class Services(Construct):
                 **embed_env,
             },
             logging=ecs.LogDriver.aws_logs(stream_prefix="fde-mcp", log_group=mcp_log_group),
+        )
+        _wire_conditional_embed_api_key_secret(
+            self,
+            "Mcp",
+            task_definition=mcp_task_definition,
+            secret=provider_api_key_secret,
+            condition=params.has_provider_key,
         )
         self.mcp_service = ecs.FargateService(
             self,
@@ -299,6 +394,13 @@ class Services(Construct):
             logging=ecs.LogDriver.aws_logs(
                 stream_prefix="fde-embedder", log_group=embedder_log_group
             ),
+        )
+        _wire_conditional_embed_api_key_secret(
+            self,
+            "Embedder",
+            task_definition=embedder_task_definition,
+            secret=provider_api_key_secret,
+            condition=params.has_provider_key,
         )
         self.embedder_service = ecs.FargateService(
             self,

@@ -341,10 +341,31 @@ class GateService(Construct):
         jwt_issuer = (
             f"https://cognito-idp.{cdk.Aws.REGION}.amazonaws.com/{identity.user_pool.user_pool_id}"
         )
+        # C1 fix (final-fix-report.md): this authorizer's audience used to
+        # list ONLY `api_client` -- a client with no OAuth flows of its own,
+        # meaning it never authors a token through any live path except a
+        # scripted, non-hosted-UI Cognito auth call (see docs/13 §3's
+        # rewritten first-steps). A browser signing in through
+        # `console_client`'s hosted-UI authorization-code grant gets an ID
+        # token whose `aud` is `console_client`'s id -- which this
+        # authorizer rejected outright, making every browser-issued token
+        # fail here regardless of the separate "no code-exchange route in
+        # fde_gate" gap docs/13 §3 also names. `m2m_client`'s id is added
+        # for the same reason `Agents`' own Gateway authorizer needs
+        # `allowed_clients` (see agents.py): Cognito client-credentials
+        # tokens carry a `client_id` claim, and HttpJwtAuthorizer's Cognito
+        # handling matches EITHER `aud` or `client_id` against this list,
+        # so an M2M-flow caller hitting the gate API directly (not just the
+        # Gateway) is also covered. `api_client` stays -- it remains the
+        # scriptable, secret-free client for direct `curl`/CLI callers.
         authorizer = apigwv2_authorizers.HttpJwtAuthorizer(
             "GateJwtAuthorizer",
             jwt_issuer,
-            jwt_audience=[identity.api_client.user_pool_client_id],
+            jwt_audience=[
+                identity.api_client.user_pool_client_id,
+                identity.console_client.user_pool_client_id,
+                identity.m2m_client.user_pool_client_id,
+            ],
         )
         integration = apigwv2_integrations.HttpLambdaIntegration("GateIntegration", self.function)
 

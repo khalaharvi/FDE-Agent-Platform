@@ -252,3 +252,17 @@ positive to silence):
   reasoning, and the Task 7 report's "concerns" section for the follow-up
   this implies for `memory.py` itself (out of scope for this CDK-only
   task).
+
+**Final fix wave (`final-fix-report.md`): `F3033`, a false positive, not
+added to the `-i` list.** `uv run python app.py`'s own synth-time
+validation report (a separate check from the `cfn-lint` invocation above)
+flags `Migrations`/`GateService`'s `Code.S3Bucket` property with
+`F3033: length 0 is below minimum 3` on both Lambda functions. This is the
+validator naively substituting `AssetsBucket`'s `CfnParameter` DEFAULT
+(`""`, the documented "leave blank to use the region default" sentinel)
+directly into the `Fn::If(HasAssetsBucket, AssetsBucket, FindInMap(...))`
+it sits inside, without evaluating the condition — at real deploy time
+`HasAssetsBucket=false` engages the `FindInMap` branch instead, and the
+blank string is never actually used as an S3 bucket name. Present since
+Task 5 (`Migrations`) and Task 6 (`GateService`), just never named in this
+ledger until now.

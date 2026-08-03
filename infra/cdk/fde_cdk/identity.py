@@ -64,6 +64,11 @@ class Identity(Construct):
     m2m_client: cognito.UserPoolClient
     discovery_url: str
     hosted_ui_domain: cognito.UserPoolDomain
+    # I4(c) fix (final-fix-report.md): `m2m_client`'s generated secret,
+    # retrieved WITHOUT CDK's asset-publishing machinery -- see the
+    # assignment below for why the L2's own `user_pool_client_secret`
+    # convenience property cannot be used in this bootstrap-free stack.
+    m2m_client_secret: cdk.SecretValue
 
     def __init__(
         self,
@@ -226,4 +231,28 @@ class Identity(Construct):
         self.discovery_url = (
             f"https://cognito-idp.{cdk.Aws.REGION}.amazonaws.com/"
             f"{self.user_pool.user_pool_id}/.well-known/openid-configuration"
+        )
+
+        # I4(c) fix (final-fix-report.md): `UserPoolClient.
+        # user_pool_client_secret` (the L2 convenience property) resolves
+        # the secret via an `AwsCustomResource` (a `DescribeUserPoolClient`
+        # call at deploy time) -- which needs CDK's asset-publishing
+        # Provider framework, forbidden by this stack's bootstrap-free
+        # contract (`BootstraplessSynthesizer`, `stack.py`). Confirmed
+        # empirically: calling that property here raises
+        # `CannotAddAssetsStackUses` at synth time. `CfnUserPoolClient.
+        # attr_client_secret` is the identical value via a genuine native
+        # CloudFormation `Fn::GetAtt` (`AWS::Cognito::UserPoolClient`'s own
+        # resource-provider schema declares `ClientSecret` as a returned
+        # attribute) -- no asset, no custom resource, verified via a
+        # standalone synth. `SecretValue.resource_attribute(...)` is CDK's
+        # documented (non-"unsafe") wrapper for exactly this shape: a
+        # string token that is itself a resource-attribute reference, not
+        # literal plaintext -- used by `agents.py`'s `Agents` construct to
+        # provision the `fde-gateway-m2m` AgentCore Identity OAuth2
+        # credential provider.
+        cfn_m2m_client = self.m2m_client.node.default_child
+        assert cfn_m2m_client is not None
+        self.m2m_client_secret = cdk.SecretValue.resource_attribute(
+            cfn_m2m_client.attr_client_secret
         )

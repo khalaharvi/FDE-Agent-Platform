@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from tests.test_synth import synth_template
 
 # name -> (namespace, metric name, threshold, evaluation periods, period
@@ -194,21 +196,29 @@ def test_ops_budget_enabled_condition_is_and_of_ops_enabled_and_nonzero() -> Non
 # ---------------------------------------------------------------------
 
 
-def test_ops_topic_arn_output_present_and_value_is_fn_if_on_ops_enabled() -> None:
-    outs = synth_template().to_json()["Outputs"]
+def test_ops_topic_arn_output_present_and_conditioned_on_ops_enabled() -> None:
+    """I5 fix (final-fix-report.md): the OUTPUT itself now carries
+    `Condition: OpsEnabled` (CloudFormation's own documented mechanism for
+    a conditionally-present output -- the whole entry is omitted, not
+    printed blank, when the condition is false), and the VALUE is the
+    real, unwrapped topic ARN -- no more Fn::If-wrapped-to-"" value on an
+    unconditioned output (the shape that used to trip cfn-lint/CDK's own
+    synth validation W1001)."""
+    t = synth_template()
+    outs = t.to_json()["Outputs"]
     assert "OpsTopicArn" in outs
-    value = outs["OpsTopicArn"]["Value"]
-    assert value["Fn::If"][0] == "OpsEnabled"
-    assert value["Fn::If"][2] == ""
+    assert outs["OpsTopicArn"]["Condition"] == "OpsEnabled"
+    assert "Fn::If" not in json.dumps(outs["OpsTopicArn"]["Value"])
 
 
-def test_ops_dashboard_url_output_present_and_value_is_fn_if_on_ops_enabled() -> None:
-    outs = synth_template().to_json()["Outputs"]
+def test_ops_dashboard_url_output_present_and_conditioned_on_ops_enabled() -> None:
+    t = synth_template()
+    outs = t.to_json()["Outputs"]
     assert "OpsDashboardUrl" in outs
+    assert outs["OpsDashboardUrl"]["Condition"] == "OpsEnabled"
     value = outs["OpsDashboardUrl"]["Value"]
-    assert value["Fn::If"][0] == "OpsEnabled"
-    assert value["Fn::If"][2] == ""
-    joined = value["Fn::If"][1]["Fn::Join"][1]
+    assert "Fn::If" not in json.dumps(value)
+    joined = value["Fn::Join"][1]
     assert "cloudwatch/home" in "".join(str(part) for part in joined)
 
 

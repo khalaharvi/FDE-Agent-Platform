@@ -127,6 +127,12 @@ class OpsLayer(Construct):
     dashboard: cloudwatch.Dashboard
     topic_arn: str
     dashboard_url: str
+    # I5 fix (final-fix-report.md): exposed so `outputs.py` can put THIS
+    # SAME `OpsEnabled` condition directly on `OpsTopicArn`/`OpsDashboardUrl`
+    # (`CfnOutput(..., condition=...)`) instead of wrapping the VALUE in
+    # Fn::If -- see this construct's own `topic_arn`/`dashboard_url`
+    # assignment below for why the value no longer needs the wrap.
+    enabled_condition: cdk.CfnCondition
 
     def __init__(
         self,
@@ -145,6 +151,7 @@ class OpsLayer(Construct):
         super().__init__(scope, construct_id)
 
         ops_enabled = params.ops_enabled
+        self.enabled_condition = ops_enabled
 
         # --- The seam: SNS topic ---
         self.topic = sns.Topic(
@@ -365,17 +372,22 @@ class OpsLayer(Construct):
         # --- Outputs the stack prints (values, not the CfnOutputs
         # themselves -- outputs.py builds those, same separation-of-
         # concerns as every other construct's public attributes) ---
-        # `OpsTopicArn`: present in the template unconditionally per the
-        # brief ("Output OpsTopicArn always"), but its VALUE resolves to ""
-        # when OpsMode=off (the topic resource itself does not exist then)
-        # -- same Fn::If-wrapped-value-over-conditionally-absent-resource
-        # pattern `params.dynamic_secret_env_value` already documents and
-        # relies on (CloudFormation never evaluates the untaken Fn::If
-        # branch).
-        self.topic_arn = cdk.Token.as_string(
-            cdk.Fn.condition_if(ops_enabled.logical_id, self.topic.topic_arn, "")
-        )
-        dashboard_url = cdk.Fn.join(
+        # I5 fix (final-fix-report.md): these two used to be wrapped in
+        # `Fn::If(OpsEnabled, <real value>, "")` so the OUTPUT itself could
+        # stay unconditioned and print a blank string when OpsMode=off --
+        # but that is exactly the shape cfn-lint/CDK's own synth validation
+        # flags as W1001 ("Reference to '...' which is conditional on
+        # 'OpsEnabled' - target may not exist... Add a Condition to the
+        # output that implies the target's condition"). The values below
+        # are now the REAL, unwrapped tokens; `outputs.py` puts
+        # `condition=self.enabled_condition` on the `CfnOutput`s themselves
+        # instead, which is CloudFormation's own documented mechanism for a
+        # conditionally-present output (the whole Output entry is omitted,
+        # not printed blank, when the condition is false) and is
+        # structurally valid specifically because the Output carries the
+        # SAME condition as the resource it references.
+        self.topic_arn = self.topic.topic_arn
+        self.dashboard_url = cdk.Fn.join(
             "",
             [
                 "https://",
@@ -385,9 +397,6 @@ class OpsLayer(Construct):
                 "#dashboards:name=",
                 self.dashboard.dashboard_name,
             ],
-        )
-        self.dashboard_url = cdk.Token.as_string(
-            cdk.Fn.condition_if(ops_enabled.logical_id, dashboard_url, "")
         )
 
     @staticmethod

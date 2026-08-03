@@ -145,6 +145,43 @@ def test_runtime_role_has_supplemental_grant_on_fde_db_secrets() -> None:
     assert "fde/db/*" in str(read_login_secret["Resource"])
 
 
+def test_runtime_role_has_ecr_public_pull_through_cache_grant() -> None:
+    """C2 fix (final-fix-report.md): runtime_role's own template only
+    grants pulls on `repository/fde-*-agent` -- the wrong repo path
+    entirely (runtimes pull through the ECR-Public pull-through cache at
+    `repository/ecr-public/{alias}/fde-{agent}`). This supplemental
+    statement must exist with the pull actions AND the first-pull-only
+    import/create actions (cached repositories are not pre-existing)."""
+    t = synth_template()
+    template = t.to_json()
+    resources = template["Resources"]
+    runtime_role_id = next(
+        k
+        for k, v in resources.items()
+        if v["Type"] == "AWS::IAM::Role"
+        for policy in v["Properties"].get("Policies", [])
+        if policy["PolicyName"] == "runtime-permissions"
+    )
+    statements = []
+    for v in resources.values():
+        if v["Type"] == "AWS::IAM::Policy" and {"Ref": runtime_role_id} in v["Properties"].get(
+            "Roles", []
+        ):
+            statements.extend(v["Properties"]["PolicyDocument"]["Statement"])
+
+    ecr_grant = next(s for s in statements if s.get("Sid") == "PullThroughCacheEcrPublicImages")
+    actions = set(ecr_grant["Action"])
+    assert {
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchImportUpstreamImage",
+        "ecr:CreateRepository",
+    } <= actions
+    raw = str(ecr_grant["Resource"])
+    assert "repository/ecr-public/" in raw
+
+
 def test_runtimes_depend_on_pull_through_cache_rule() -> None:
     t = synth_template()
     template = t.to_json()
@@ -195,6 +232,60 @@ def test_gateway_jwt_audience_is_m2m_client_id() -> None:
     gw = next(iter(t.find_resources("AWS::BedrockAgentCore::Gateway").values()))
     audience = gw["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]["AllowedAudience"]
     assert audience == [{"Ref": m2m_client_id}]
+
+
+def test_gateway_jwt_authorizer_also_has_allowed_clients() -> None:
+    """I4(a) fix (final-fix-report.md): Cognito client-credentials tokens
+    carry a `client_id` claim, not (reliably) `aud` -- `allowed_clients`
+    must be set alongside `allowed_audience`, both naming the m2m client."""
+    t = synth_template()
+    template = t.to_json()
+    clients = {
+        k: v
+        for k, v in template["Resources"].items()
+        if v["Type"] == "AWS::Cognito::UserPoolClient"
+    }
+    m2m_client_id = next(
+        k
+        for k, v in clients.items()
+        if "client_credentials" in v["Properties"].get("AllowedOAuthFlows", [])
+    )
+    gw = next(iter(t.find_resources("AWS::BedrockAgentCore::Gateway").values()))
+    jwt = gw["Properties"]["AuthorizerConfiguration"]["CustomJWTAuthorizer"]
+    assert jwt["AllowedClients"] == [{"Ref": m2m_client_id}]
+
+
+def test_every_runtime_has_fde_gateway_scopes_env() -> None:
+    """I4(b) fix (final-fix-report.md): the code default
+    (`fde_agents/common/config.py`'s `GatewaySettings.scopes`) is
+    "gateway:invoke" (colon) when unset -- Cognito's own scope separator
+    is "/", so every runtime needs FDE_GATEWAY_SCOPES set explicitly."""
+    t = synth_template()
+    runtimes = t.find_resources("AWS::BedrockAgentCore::Runtime")
+    assert len(runtimes) == 3
+    for r in runtimes.values():
+        assert r["Properties"]["EnvironmentVariables"]["FDE_GATEWAY_SCOPES"] == "gateway/invoke"
+
+
+def test_gateway_m2m_credential_provider_exists_with_cognito_oauth2_config() -> None:
+    """I4(c) fix (final-fix-report.md): the `fde-gateway-m2m` AgentCore
+    Identity OAuth2 credential provider `IdentityClient.get_token(
+    provider_name="fde-gateway-m2m", ...)` (`mcp_tools.py`) needs to
+    already exist -- provisioned here rather than left as a manual step,
+    since the m2m client's secret IS retrievable without CDK assets (see
+    `identity.py`'s own `m2m_client_secret`)."""
+    t = synth_template()
+    providers = t.find_resources("AWS::BedrockAgentCore::OAuth2CredentialProvider")
+    assert len(providers) == 1
+    provider = next(iter(providers.values()))
+    props = provider["Properties"]
+    assert props["Name"] == "fde-gateway-m2m"
+    assert props["CredentialProviderVendor"] == "CognitoOauth2"
+    custom = props["Oauth2ProviderConfigInput"]["CustomOauth2ProviderConfig"]
+    assert ".well-known/openid-configuration" in str(custom["OauthDiscovery"]["DiscoveryUrl"])
+    assert custom["ClientSecretSource"] == "EXTERNAL"
+    assert custom["ClientSecretConfig"]["JsonKey"] == "client_secret"
+    assert isinstance(custom["ClientId"], dict)  # a real Ref, not a literal
 
 
 def test_gateway_target_points_at_mcp_alb_with_iam_role_credentials() -> None:

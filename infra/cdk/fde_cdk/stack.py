@@ -18,9 +18,10 @@ from fde_cdk.services import Services
 
 class FdePlatformStack(cdk.Stack):
     """Root stack behind the README Launch-Stack button. One template URL,
-    ten single-responsibility constructs: Network -> Database -> Identity
-    -> IamRoles -> Migrations -> Services -> Agents -> GateService ->
-    OpsLayer -> Outputs."""
+    nine single-responsibility constructs plus a plain `add_outputs`
+    function (not a tenth `Construct` -- see `outputs.py`'s own docstring
+    for why): Network -> Database -> Identity -> IamRoles -> Migrations ->
+    Services -> Agents -> GateService -> OpsLayer -> Outputs."""
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs: object) -> None:
         super().__init__(
@@ -64,6 +65,7 @@ class FdePlatformStack(cdk.Stack):
             db_secret=self.database.secret,
             db_cluster=self.database.cluster,
             migration_role=self.iam_roles.migration_role,
+            db_writer_instance=self.database.writer_instance,
         )
 
         # Task 6: the one Secrets Manager mirror of ProviderApiKey, shared
@@ -110,6 +112,7 @@ class FdePlatformStack(cdk.Stack):
             memory_role=self.iam_roles.memory_role,
             jwt_discovery_url=self.identity.discovery_url,
             jwt_allowed_audience=self.identity.m2m_client.user_pool_client_id,
+            m2m_client_secret=self.identity.m2m_client_secret,
             mcp_url=self.services.mcp_url,
             provider_api_key_secret=self.provider_api_key_secret,
         )

@@ -304,14 +304,16 @@ def test_fargate_task_roles_have_fde_db_wildcard_grant() -> None:
 def test_provider_api_key_secret_is_conditioned_on_has_provider_key() -> None:
     t = synth_template()
     secrets = t.find_resources("AWS::SecretsManager::Secret")
-    # 2 total: the RDS-managed master secret (Database) + this one.
-    assert len(secrets) == 2
+    # 3 total: the RDS-managed master secret (Database), this one, and
+    # I4(c)'s GatewayM2mClientSecretMirror (final-fix-report.md) -- see
+    # tests/test_network_db.py::test_db_secret_is_rds_managed_shape.
+    assert len(secrets) == 3
     conditional = [s for s in secrets.values() if s.get("Condition") == "HasProviderKey"]
     assert len(conditional) == 1
     assert conditional[0]["Properties"]["SecretString"] == {"Ref": "ProviderApiKey"}
 
 
-def test_provider_api_key_flows_into_gate_and_mcp_env_via_dynamic_reference() -> None:
+def test_provider_api_key_flows_into_gate_env_via_dynamic_reference() -> None:
     t = synth_template()
     fn = _gate_lambda(t.find_resources("AWS::Lambda::Function"))
     model_key = fn["Properties"]["Environment"]["Variables"]["FDE_MODEL_API_KEY"]
@@ -320,16 +322,61 @@ def test_provider_api_key_flows_into_gate_and_mcp_env_via_dynamic_reference() ->
     joined = model_key["Fn::If"][1]["Fn::Join"][1]
     assert joined[0] == "{{resolve:secretsmanager:"
 
+
+def test_mcp_and_embedder_containers_have_no_plaintext_embed_api_key_env() -> None:
+    """I6 fix (final-fix-report.md): FDE_EMBED_API_KEY moved from a plain
+    (dynamic-reference) `environment` entry to an ECS `Secrets` entry --
+    it must never appear as an `Environment` key on either container."""
+    t = synth_template()
     task_defs = t.find_resources("AWS::ECS::TaskDefinition")
-    mcp_containers = [
+    for td in task_defs.values():
+        for container in td["Properties"]["ContainerDefinitions"]:
+            env_names = {e["Name"] for e in container.get("Environment", [])}
+            assert "FDE_EMBED_API_KEY" not in env_names, container["Name"]
+
+
+def test_mcp_and_embedder_containers_embed_api_key_is_conditioned_secret() -> None:
+    """The container's `Secrets` property is Fn::If(HasProviderKey, [one
+    entry], Ref AWS::NoValue) -- present only when a launcher set
+    ProviderApiKey, never a bare ValueFrom pointing at nothing."""
+    t = synth_template()
+    task_defs = t.find_resources("AWS::ECS::TaskDefinition")
+    containers = [
         c
         for td in task_defs.values()
         for c in td["Properties"]["ContainerDefinitions"]
-        if c["Name"] == "fde-mcp"
+        if c["Name"] in ("fde-mcp", "fde-embedder")
     ]
-    env = {e["Name"]: e["Value"] for e in mcp_containers[0]["Environment"]}
-    embed_key = env["FDE_EMBED_API_KEY"]
-    assert embed_key["Fn::If"][0] == "HasProviderKey"
+    assert len(containers) == 2
+    for container in containers:
+        secrets = container["Secrets"]
+        assert secrets["Fn::If"][0] == "HasProviderKey"
+        assert secrets["Fn::If"][2] == {"Ref": "AWS::NoValue"}
+        entry = secrets["Fn::If"][1][0]
+        assert entry["Name"] == "FDE_EMBED_API_KEY"
+        assert "ValueFrom" in entry
+
+
+def test_mcp_and_embedder_execution_roles_have_conditioned_read_grant() -> None:
+    """The read grant on the provider-api-key secret is its OWN standalone
+    `AWS::IAM::Policy` (not merged into the execution role's shared,
+    logging-permission-holding "DefaultPolicy" -- see
+    `_wire_conditional_embed_api_key_secret`'s own docstring for why that
+    distinction matters), conditioned on HasProviderKey."""
+    t = synth_template()
+    template = t.to_json()
+    policies = [
+        v
+        for v in template["Resources"].values()
+        if v["Type"] == "AWS::IAM::Policy"
+        and any(
+            s.get("Sid") == "ReadProviderApiKeySecret"
+            for s in v["Properties"]["PolicyDocument"]["Statement"]
+        )
+    ]
+    assert len(policies) == 2  # one per execution role: MCP + embedder
+    for policy in policies:
+        assert policy["Condition"] == "HasProviderKey"
 
 
 # ---------------------------------------------------------------------

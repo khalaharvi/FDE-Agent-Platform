@@ -149,6 +149,7 @@ import aws_cdk.aws_iam as iam
 import aws_cdk.aws_secretsmanager as secretsmanager
 from constructs import Construct
 
+from fde_cdk.identity import GATEWAY_INVOKE_SCOPE_NAME, GATEWAY_RESOURCE_SERVER_ID
 from fde_cdk.params import (
     ECR_PUBLIC_ALIAS,
     LaunchParams,
@@ -228,6 +229,27 @@ _GATEWAY_TARGET_DESCRIPTION = (
 _MEMORY_NAME = "fde_agent_memory"
 _NAMESPACE_TEMPLATE = "/strategy/{memoryStrategyId}/actor/{actorId}/session/{sessionId}"
 
+# I4(b) fix (final-fix-report.md): built from `identity.py`'s own two
+# constants (never a second hand-copied literal) so this can never drift
+# from the resource-server/scope pair `m2m_client`'s own OAuth scope is
+# minted against. Cognito's own convention joins `ResourceServerIdentifier`
+# and `ScopeName` with "/" -- "gateway/invoke" -- which is NOT
+# `fde_agents.common.config.GatewaySettings.scopes`' own unset-env-var
+# default ("gateway:invoke", colon-separated: see that module's docstring,
+# `config.py:227-229`), so every deployed runtime needs FDE_GATEWAY_SCOPES
+# set explicitly to the real, slash-separated value or every M2M token
+# request would ask Cognito for a scope that does not exist.
+FDE_GATEWAY_SCOPE = f"{GATEWAY_RESOURCE_SERVER_ID}/{GATEWAY_INVOKE_SCOPE_NAME}"
+
+# I4(c) fix: the AgentCore Identity OAuth2 credential provider name
+# `fde_agents.common.config.GatewaySettings.identity_provider_name`
+# defaults to when `FDE_IDENTITY_PROVIDER_NAME` is unset -- this construct
+# provisions a real `CfnOAuth2CredentialProvider` under this exact name so
+# `IdentityClient.get_token(provider_name="fde-gateway-m2m", ...)`
+# (`fde_agents/common/mcp_tools.py`'s `_mint_gateway_bearer_token`) finds
+# it without any manual, out-of-band provisioning step.
+_GATEWAY_M2M_CREDENTIAL_PROVIDER_NAME = "fde-gateway-m2m"
+
 
 class Agents(Construct):
     """`pull_through_cache_rule`: the ECR-Public pull-through cache rule
@@ -248,6 +270,9 @@ class Agents(Construct):
     memory_arn: str
     runtimes: dict[str, bedrockagentcore.CfnRuntime]
     runtime_arns: dict[str, str]
+    # I4(c): the `fde-gateway-m2m` AgentCore Identity OAuth2 credential
+    # provider (see module-level `_GATEWAY_M2M_CREDENTIAL_PROVIDER_NAME`).
+    gateway_m2m_credential_provider: bedrockagentcore.CfnOAuth2CredentialProvider
 
     def __init__(
         self,
@@ -260,6 +285,7 @@ class Agents(Construct):
         memory_role: iam.Role,
         jwt_discovery_url: str,
         jwt_allowed_audience: str,
+        m2m_client_secret: cdk.SecretValue,
         mcp_url: str,
         provider_api_key_secret: secretsmanager.ISecret,
     ) -> None:
@@ -312,10 +338,97 @@ class Agents(Construct):
                     # so its client id is both the only member of this list
                     # here.
                     allowed_audience=[jwt_allowed_audience],
+                    # I4(a) fix (final-fix-report.md): `allowed_clients`
+                    # checks the token's `client_id` claim, not `aud` --
+                    # Cognito's client-credentials grant (what `m2m_client`
+                    # uses) mints a token carrying `client_id`, and does
+                    # not reliably carry an `aud` claim matching it the way
+                    # a user-pool ID token does. Without this, a real M2M
+                    # token could fail the CUSTOM_JWT authorizer even
+                    # though `allowed_audience` already names the same
+                    # client id. Verified via local introspection:
+                    # `CustomJWTAuthorizerConfigurationProperty` accepts
+                    # `allowed_clients` on this pinned lib version.
+                    allowed_clients=[jwt_allowed_audience],
                 ),
             ),
         )
         self.gateway_url = self.gateway.attr_gateway_url
+
+        # --- I4(c) fix (final-fix-report.md): the fde-gateway-m2m
+        # AgentCore Identity OAuth2 credential provider ---
+        # `IdentityClient.get_token(provider_name="fde-gateway-m2m", ...,
+        # auth_flow="M2M")` (`fde_agents/common/mcp_tools.py`'s
+        # `_mint_gateway_bearer_token`) needs a credential provider by this
+        # exact name to already exist -- without it, every deployed
+        # runtime's first Gateway call fails outright (no way to mint a
+        # bearer token at all). `CfnOAuth2CredentialProvider` exists on
+        # this pinned lib version (`infra/cdk/README.md`'s own `dir()`
+        # dump) and its shape was cross-checked three ways, matching this
+        # module's own established practice for every other AgentCore
+        # resource: (1) local introspection of the installed
+        # `aws-cdk-lib` (`Oauth2ProviderConfigInputProperty`/
+        # `CustomOauth2ProviderConfigInputProperty`/`Oauth2DiscoveryProperty`/
+        # `SecretReferenceProperty`); (2) the CDK L2 enum
+        # `OAuth2CredentialProviderVendor.COGNITO.value ==
+        # "CognitoOauth2"`; (3) the installed `botocore` service model for
+        # `bedrock-agentcore-control` (`CredentialProviderVendorType`
+        # includes `"CognitoOauth2"`; `Oauth2ProviderConfigInput` is a
+        # union with NO dedicated Cognito-specific member -- Cognito, like
+        # Okta/Auth0/PingOne, is meant to pair with the generic
+        # `customOauth2ProviderConfig` shape, not a bespoke one).
+        # `DiscoveryUrlType`'s own pattern
+        # (`.+/\.well-known/(openid-configuration|oauth-authorization-
+        # server)`) matches `jwt_discovery_url` (`identity.discovery_url`)
+        # exactly.
+        #
+        # The client secret: Cognito does not put a user pool client's
+        # generated secret into Secrets Manager on its own, but
+        # `CfnUserPoolClient` DOES expose it as a real CloudFormation
+        # attribute (`attr_client_secret`, wrapped by the L2 as
+        # `UserPoolClient.user_pool_client_secret` -- verified via local
+        # introspection) -- retrievable, so this is provisioned for real,
+        # not left as a manual step. The value is mirrored into a
+        # dedicated Secrets Manager secret (`secret_object_value`, the same
+        # `cdk.SecretValue`-carrying L2 API `gate.py`'s
+        # `provider_api_key_secret` uses) and referenced via
+        # `client_secret_config`/`SecretReferenceProperty`
+        # (`client_secret_source="EXTERNAL"`) rather than passed as the
+        # plain-string `client_secret` property directly -- the same
+        # never-let-a-secret-value-sit-in-a-resource's-own-properties
+        # discipline `params.dynamic_secret_env_value` already holds this
+        # stack to for `ProviderApiKey`.
+        m2m_secret_mirror = secretsmanager.Secret(
+            self,
+            "GatewayM2mClientSecretMirror",
+            description=(
+                "Mirrors Identity.m2m_client's Cognito-generated client "
+                "secret so the fde-gateway-m2m AgentCore Identity OAuth2 "
+                "credential provider can read it via clientSecretConfig "
+                "(EXTERNAL) instead of the value sitting directly in that "
+                "resource's own CloudFormation properties."
+            ),
+            secret_object_value={"client_secret": m2m_client_secret},
+        )
+        self.gateway_m2m_credential_provider = bedrockagentcore.CfnOAuth2CredentialProvider(
+            self,
+            "GatewayM2mCredentialProvider",
+            name=_GATEWAY_M2M_CREDENTIAL_PROVIDER_NAME,
+            credential_provider_vendor=bedrockagentcore.OAuth2CredentialProviderVendor.COGNITO.value,
+            oauth2_provider_config_input=bedrockagentcore.CfnOAuth2CredentialProvider.Oauth2ProviderConfigInputProperty(
+                custom_oauth2_provider_config=bedrockagentcore.CfnOAuth2CredentialProvider.CustomOauth2ProviderConfigInputProperty(
+                    oauth_discovery=bedrockagentcore.CfnOAuth2CredentialProvider.Oauth2DiscoveryProperty(
+                        discovery_url=jwt_discovery_url,
+                    ),
+                    client_id=jwt_allowed_audience,
+                    client_secret_config=bedrockagentcore.CfnOAuth2CredentialProvider.SecretReferenceProperty(
+                        secret_id=m2m_secret_mirror.secret_arn,
+                        json_key="client_secret",
+                    ),
+                    client_secret_source="EXTERNAL",
+                )
+            ),
+        )
 
         # --- Gateway target: the MCP ALB, not the runtimes (see module
         # docstring's circular-dependency note) ---
@@ -464,6 +577,57 @@ class Agents(Construct):
             self, "RuntimeDbSecretRef", _RUNTIME_DB_SECRET_NAME
         )
 
+        # --- C2 fix (final-fix-report.md): runtimes cannot pull images ---
+        # `runtime-permissions-policy.json`'s own `ECRPullForContainerArtifact`
+        # statement grants `ecr:BatchGetImage`/`ecr:GetDownloadUrlForLayer`
+        # on `repository/fde-*-agent` -- a repo PATH this stack's runtimes
+        # never pull from. Every runtime's real `container_uri` (below)
+        # resolves through the ECR-Public pull-through cache at
+        # `repository/ecr-public/{alias}/fde-{agent}`, an entirely
+        # different repository path the template's own IAM grant does not
+        # cover at all -- every runtime's first (and every subsequent)
+        # image pull would fail with `AccessDenied`. A pull-through cache's
+        # cached repository is also not a pre-existing resource: the FIRST
+        # pull of any given tag additionally needs
+        # `ecr:BatchImportUpstreamImage` (import the layer from
+        # `public.ecr.aws` into the private cache) and
+        # `ecr:CreateRepository` (the cached repo is created lazily, on
+        # that first pull, not by `CfnPullThroughCacheRule` itself -- see
+        # this module's own docstring). `ecr:GetAuthorizationToken` is
+        # already granted, unconditionally, by the SAME template's
+        # `ECRAuthToken` statement (`Resource: "*"`, since that action has
+        # no resource-level permissions) -- verified by reading the
+        # rendered policy before adding anything here, so it is not
+        # duplicated. Supplemental grant, same pattern as
+        # `ReadRuntimeLoginSecret` immediately above: a separate,
+        # CDK-auto-generated `AWS::IAM::Policy`, not merged into the
+        # existing `runtime-permissions` inline policy.
+        runtime_role.add_to_principal_policy(
+            iam.PolicyStatement(
+                sid="PullThroughCacheEcrPublicImages",
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:BatchImportUpstreamImage",
+                    "ecr:CreateRepository",
+                ],
+                resources=[
+                    cdk.Fn.join(
+                        "",
+                        [
+                            "arn:aws:ecr:",
+                            cdk.Aws.REGION,
+                            ":",
+                            cdk.Aws.ACCOUNT_ID,
+                            f":repository/ecr-public/{ECR_PUBLIC_ALIAS}/*",
+                        ],
+                    )
+                ],
+            )
+        )
+
         self.runtimes = {}
         self.runtime_arns = {}
         for agent_name in AGENT_NAMES:
@@ -533,6 +697,16 @@ class Agents(Construct):
                     # `fde_agents/common/config.py`) -- deployed runtimes
                     # always get a real URL here, never blank.
                     "FDE_GATEWAY_URL": self.gateway_url,
+                    # I4(b) fix (final-fix-report.md): without this,
+                    # `GatewaySettings.scopes` falls back to its own
+                    # unset-env-var default ("gateway:invoke", COLON --
+                    # `fde_agents/common/config.py:227-229`), which is not
+                    # a scope `m2m_client` was ever minted against
+                    # (Cognito's own separator is "/" -- `identity.py`).
+                    # Every M2M token request would then ask for a scope
+                    # that doesn't exist and fail. See module-level
+                    # `FDE_GATEWAY_SCOPE`.
+                    "FDE_GATEWAY_SCOPES": FDE_GATEWAY_SCOPE,
                 },
             )
             # No CDK-inferred dependency exists between a runtime and the

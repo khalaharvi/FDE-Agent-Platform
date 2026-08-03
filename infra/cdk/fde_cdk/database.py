@@ -50,6 +50,15 @@ class Database(Construct):
     cluster: rds.DatabaseCluster
     secret: secretsmanager.ISecret
     security_group: ec2.SecurityGroup
+    # C3 fix (final-fix-report.md): the writer's own L1 `CfnDBInstance`,
+    # exposed as a proper construct attribute rather than making every
+    # caller re-derive it via `cluster.node.find_child("Writer")` (brittle:
+    # it depends on the internal, undocumented construct id CDK's own
+    # `ClusterInstance.serverless_v2("Writer")` happens to register the
+    # instance under). `Migrations` needs this to add an explicit
+    # `DependsOn` so its custom resource never invokes before the writer
+    # instance has finished provisioning (see `migrations.py`).
+    writer_instance: rds.CfnDBInstance
 
     def __init__(
         self,
@@ -135,6 +144,7 @@ class Database(Construct):
         writer_child = self.cluster.node.find_child("Writer")
         cfn_writer = writer_child.node.default_child
         assert cfn_writer is not None
+        self.writer_instance = cfn_writer
         cfn_writer.add_property_override(
             "DBInstanceClass",
             cdk.Fn.condition_if(

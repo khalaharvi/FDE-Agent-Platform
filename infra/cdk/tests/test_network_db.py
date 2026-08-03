@@ -35,4 +35,7 @@ def test_db_secret_is_rds_managed_shape() -> None:
     # mirror (see gate.py's provider_api_key_secret and
     # tests/test_services.py::test_provider_api_key_secret_is_conditioned_on_has_provider_key,
     # which pins the RDS-managed one apart from the conditional one).
-    t.resource_count_is("AWS::SecretsManager::Secret", 2)
+    # I4(c) (final-fix-report.md) added the third: `Agents`'
+    # GatewayM2mClientSecretMirror, mirroring Identity.m2m_client's
+    # Cognito-generated secret for the fde-gateway-m2m credential provider.
+    t.resource_count_is("AWS::SecretsManager::Secret", 3)

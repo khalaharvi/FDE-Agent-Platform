@@ -79,8 +79,11 @@ pool) fronting the internal MCP ALB; one AgentCore Memory resource (three
 always-on strategies: semantic, summary, user-preference; 90-day event
 expiry); three AgentCore Runtimes (Engagement, Workflow, Development —
 `PUBLIC` network mode, container image resolved through the pull-through
-cache). See §6 for the one named reachability risk this network mode
-creates.
+cache); one AgentCore Identity OAuth2 credential provider (`fde-gateway-m2m`,
+wired against `m2m_client`'s Cognito discovery URL/id/secret) so every
+runtime's `IdentityClient.get_token(provider_name="fde-gateway-m2m", ...)`
+call succeeds with no manual, out-of-band provisioning step. See §6 for the
+one named reachability risk `PUBLIC` network mode creates.
 
 **GateService** (`gate.py`) — the `fde-gate-service` Lambda (VPC-attached,
 python3.12/arm64), an `apigatewayv2.HttpApi` (JWT-authorized `ANY
@@ -154,30 +157,81 @@ secret into `FDE_MODEL_API_KEY` (the model provider's key) **and**
 
 ## 3. First steps after launch
 
-1. Open the stack's **Outputs** tab. Follow `CognitoLoginUrl`; check the
-   `AdminEmail` inbox for Cognito's temporary-password email, sign in, set a
-   real password.
-2. **Before you rely on the review console for anything:** do the principal
+**Known gap, fixed during live-test iteration: the zero-config browser
+console does not work yet.** `ReviewConsoleUrl` is the gate API's `/ui`
+route, behind the SAME JWT authorizer as every other `/{proxy+}` route — a
+bare browser navigation carries no `Authorization` header, and
+`packages/fde-gate` has no server-side OAuth code-exchange route today that
+would turn a Cognito hosted-UI redirect into an attached bearer token.
+Clicking `CognitoLoginUrl` gets you a real sign-in and a redirect back to
+`ReviewConsoleUrl?code=...`, and then a 401 — nothing in this stack sets a
+session or attaches the token for you yet. That real fix is a
+`packages/fde-gate` change (a server-side callback route), out of scope for
+this CDK-only fix wave; it is fixed during the live-test iteration. Until
+then, use the scripted path below to get a bearer token and drive the gate
+API directly.
+
+1. Open `CognitoLoginUrl` and sign in (check the `AdminEmail` inbox for
+   Cognito's temporary-password email, set a real password). This confirms
+   the seeded account works; it will NOT leave you inside a working console
+   session — see the gap above.
+2. Get a bearer ID token one of two ways (both authorizer-audience paths are
+   now accepted — see this fix wave's `gate.py` change):
+   - **Hosted-UI code exchange, using `console_client`** (has a secret):
+     after step 1's redirect, copy the `code` query parameter from the
+     browser's address bar (`ReviewConsoleUrl?code=...`), then exchange it
+     directly against Cognito's own token endpoint:
+
+     ```bash
+     # one-time: find console_client's id + secret (stack Resources tab
+     # names the logical id; DescribeUserPoolClient returns both)
+     aws cognito-idp describe-user-pool-client \
+       --user-pool-id <UserPoolId> --client-id <ConsoleClient id> \
+       --query 'UserPoolClient.[ClientId,ClientSecret]'
+
+     curl -s -X POST "https://<hosted-ui-domain>.auth.<region>.amazoncognito.com/oauth2/token" \
+       -H "Content-Type: application/x-www-form-urlencoded" \
+       -u "<console_client_id>:<console_client_secret>" \
+       -d "grant_type=authorization_code&code=<code-from-the-redirect>&redirect_uri=<ApiEndpoint>/ui" \
+       | jq -r .id_token
+     ```
+   - **Scripted SRP against `api_client`** (no hosted UI, no secret —
+     `generate_secret=False`): `api_client` sets no `explicit_auth_flows`,
+     so Cognito's own documented default applies (`ALLOW_REFRESH_TOKEN_AUTH`,
+     `ALLOW_USER_SRP_AUTH`, `ALLOW_CUSTOM_AUTH` — verified directly against
+     the CDK library's bundled CloudFormation property docs), so
+     `USER_SRP_AUTH` is available. The AWS CLI does not implement the SRP
+     challenge-response math itself — use an SRP-capable Cognito client
+     library (e.g. Python's `pycognito`/`warrant`, or
+     `amazon-cognito-identity-js`) authenticating `AdminEmail`/your password
+     against `api_client`'s id. The resulting ID token's `aud` is
+     `api_client`'s id.
+3. `curl -H "Authorization: Bearer <id-token>" <ApiEndpoint>/...` for every
+   gate API call (merge, workflow run, drift resolution, etc.) — this is
+   the console's actual API surface today. Driving the interactive `/ui`
+   pages the same way needs the header attached to every request a browser
+   makes (a request-modifying extension, or a small local proxy) until the
+   code-exchange route ships.
+4. **Before you rely on any of this for anything:** do the principal
    reconciliation in §5.1. Skip this and every approval you attempt will be
    rejected — not because anything is broken, but because the platform's own
    fail-closed design (docs/07) requires an authorized reviewer identity to
    match exactly.
-3. Open `ReviewConsoleUrl` (also reachable via the login redirect above) —
-   this is the HITL review console (docs/07, docs/10).
-4. Run one agent task through the Gateway (e.g. the engagement flow described
+5. Run one agent task through the Gateway (e.g. the engagement flow described
    in docs/12 §3, pointed at the deployed `ApiEndpoint`/Gateway rather than a
    local stdio MCP server) so a real proposal lands in the queue.
-5. Approve it in the console. Confirm the merged commit is visible.
-6. Confirm `kg_search`/the console's search surface returns fused results —
+6. Approve it (via the bearer-token `curl` path above). Confirm the merged
+   commit is visible.
+7. Confirm `kg_search`/the console's search surface returns fused results —
    this is docs/09's own phase-2 "done when," now checked against a live
    stack instead of a local one.
-7. If you left `OpsMode=email` (the default), **confirm the SNS subscription
+8. If you left `OpsMode=email` (the default), **confirm the SNS subscription
    email** in the `OpsAlertEmail` (or, if blank, `AdminEmail`) inbox — AWS
    sends a "Subscription Confirmation" email for every new SNS subscription,
    and it does nothing (no alarms reach you) until someone clicks confirm.
    This is easy to miss on a first launch because nothing *looks* broken in
    the meantime.
-8. If you plan to rely on the AgentCore GenAI observability dashboards,
+9. If you plan to rely on the AgentCore GenAI observability dashboards,
    **enable CloudWatch Transaction Search once** in this account/region —
    the stack does not do this for you (it is an account-level setting, not a
    stack resource); without it the dashboards have no data (docs/09 §8).
@@ -201,6 +255,15 @@ topic depends on anything downstream of it.
 | `email` (default) | yes | yes, to `OpsAlertEmail` or `AdminEmail` | yes | yes | yes, if `MonthlyBudgetUsd != 0` |
 | `topic-only` | yes | **no** | yes | yes | yes, if `MonthlyBudgetUsd != 0` |
 | `off` | no | no | no | no | no |
+
+**Note on the Budget column:** the Budget's own threshold notification
+(`MonthlyBudgetUsd`'s 80%-actual-spend alert, `ops.py`'s `CfnBudget`) always
+emails `OpsAlertEmail`/`AdminEmail` **directly**, via AWS Budgets' own native
+email mechanism — it never routes through the `fde-ops` SNS topic, in any
+`OpsMode`. So the "Default email subscription: no" row for `topic-only`
+describes the *alarm* path only; a launcher who set `MonthlyBudgetUsd != 0`
+still gets budget-threshold emails with no SNS email subscription anywhere
+in the stack.
 
 Set `OpsMode=topic-only` if you already run Datadog, PagerDuty, or a SIEM:
 subscribe your own integration directly to the `OpsTopicArn` output
@@ -349,6 +412,15 @@ and this repo's own boto3-based deploy scripts (three independent sources —
 see `agents.py`'s own docstring) — but "verified API shapes" is not the same
 claim as "deployed and observed." Budget iteration time for the first real
 launch, per the SDD plan's Task 10.
+
+**The `fde-gateway-m2m` OAuth2 credential provider (`CfnOAuth2CredentialProvider`,
+`agents.py`) is new in this fix wave and carries the same label.** Its
+shape was cross-checked three ways (local CDK introspection, the CDK L2's
+own `OAuth2CredentialProviderVendor.COGNITO` enum value, and the installed
+`botocore` service model for `bedrock-agentcore-control`) but has not been
+created against a live account — if a live test finds the vendor/config
+pairing (`CognitoOauth2` + the generic `customOauth2ProviderConfig` shape)
+rejected, that is the first place to look.
 
 **Costs are estimated, not observed.** Aurora Serverless v2 at the 2-ACU
 floor and a single NAT gateway dominate a `demo`-tier month; see docs/09 §9

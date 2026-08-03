@@ -13,6 +13,17 @@ on:
   push:
     tags:
       - "v*"
+  # Minor 8 (final-fix-report.md): re-run this pipeline for a tag that
+  # ALREADY exists (e.g. a failed release run, or re-publishing assets
+  # after a one-time AWS-side fix) without needing to delete and re-push
+  # the git tag. `tag` is required: unlike a `push` trigger, `workflow_
+  # dispatch` has no ref of its own that names which release this is.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to re-run this pipeline for (e.g. v0.2.0)"
+        required: true
+        type: string
 
 # id-token: write is REQUIRED for aws-actions/configure-aws-credentials'
 # OIDC role-assumption in both jobs below -- GITHUB_TOKEN's id-token scope
@@ -37,7 +48,12 @@ env:
   # context (unlike `needs`/`matrix`/`env` itself) is valid at the
   # workflow-level `env:` block, and `github.ref_name` on a `refs/tags/*`
   # push is the bare tag (e.g. `v0.3.0`), not the full ref.
-  RELEASE_TAG: ${{ github.ref_name }}
+  #
+  # Minor 8 (final-fix-report.md): on a `workflow_dispatch` run,
+  # `github.event.inputs.tag` carries the operator-supplied tag;
+  # `github.event.inputs.tag` is empty/absent on a `push` trigger, so the
+  # `||` falls through to `github.ref_name` there, unchanged from before.
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   # -------------------------------------------------------------------
@@ -57,6 +73,13 @@ jobs:
           - { name: fde-sor,         dockerfile: packages/fde-sor/Dockerfile,    agent: "" }
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Minor 8: on a tag push this is already `env.RELEASE_TAG`'s own
+          # ref (`github.ref_name` resolves it from `github.ref`), a no-op
+          # override; on `workflow_dispatch` it is the ONLY thing that
+          # makes this job check out the tagged commit instead of
+          # whatever the default branch currently is.
+          ref: ${{ env.RELEASE_TAG }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: aws-actions/configure-aws-credentials@v4
@@ -91,6 +114,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Minor 8: on a tag push this is already `env.RELEASE_TAG`'s own
+          # ref (`github.ref_name` resolves it from `github.ref`), a no-op
+          # override; on `workflow_dispatch` it is the ONLY thing that
+          # makes this job check out the tagged commit instead of
+          # whatever the default branch currently is.
+          ref: ${{ env.RELEASE_TAG }}
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true

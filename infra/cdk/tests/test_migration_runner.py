@@ -10,7 +10,12 @@ import pytest
 # is importable here at all without `psycopg`/`boto3` installed in this
 # venv (both are imported lazily, inside the functions that need them).
 sys.path.insert(0, str(Path(__file__).parents[1] / "lambdas" / "migration_runner"))
-from handler import is_ops_metrics_event, plan_migrations, watchdog_should_fire
+from handler import (
+    is_ops_metrics_event,
+    plan_migrations,
+    should_retry_connect,
+    watchdog_should_fire,
+)
 
 from tests.test_synth import synth_template
 
@@ -117,6 +122,30 @@ def test_watchdog_fires_for_zero_or_negative_remaining_time() -> None:
     # got scheduled -- still must fail fast, not silently pass.
     assert watchdog_should_fire(0) is True
     assert watchdog_should_fire(-1) is True
+
+
+# ---------------------------------------------------------------------
+# C3 fix (final-fix-report.md): should_retry_connect -- the pure decision
+# function `_connect_with_retry`'s loop calls after each failed connect
+# attempt, bounding the migration custom resource's initial connect
+# against the Aurora-writer-instance race (see migrations.py's own
+# DependsOn fix and handler.py's `_connect_with_retry` docstring).
+# ---------------------------------------------------------------------
+
+
+def test_should_retry_connect_true_while_attempts_remain() -> None:
+    assert should_retry_connect(1) is True
+    assert should_retry_connect(9) is True
+
+
+def test_should_retry_connect_false_once_max_attempts_reached() -> None:
+    assert should_retry_connect(10) is False
+    assert should_retry_connect(11) is False
+
+
+def test_should_retry_connect_max_attempts_is_configurable() -> None:
+    assert should_retry_connect(2, max_attempts=3) is True
+    assert should_retry_connect(3, max_attempts=3) is False
 
 
 # ---------------------------------------------------------------------
@@ -238,3 +267,18 @@ def test_no_provider_framework_lambda_in_template() -> None:
 def test_has_assets_bucket_condition_present_and_used() -> None:
     template = synth_template().to_json()
     assert "HasAssetsBucket" in template["Conditions"]
+
+
+def test_custom_resource_depends_on_the_aurora_writer_instance() -> None:
+    """C3 fix (final-fix-report.md): without this, CloudFormation may
+    invoke this custom resource before the Aurora writer instance has
+    finished provisioning and started accepting connections -- the race
+    that sent fresh launches to FAILED and rolled back the whole stack."""
+    t = synth_template()
+    template = t.to_json()
+    writer_ids = [
+        k for k, v in template["Resources"].items() if v["Type"] == "AWS::RDS::DBInstance"
+    ]
+    assert len(writer_ids) == 1
+    resource = next(iter(t.find_resources("AWS::CloudFormation::CustomResource").values()))
+    assert writer_ids[0] in resource.get("DependsOn", [])

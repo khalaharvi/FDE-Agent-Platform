@@ -28,6 +28,7 @@ import os
 import secrets
 import string
 import threading
+import time
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -61,6 +62,19 @@ _OPS_METRICS_METRIC_NAME = "EmbedQueueDepth"
 # own figure -- generous for a small, same-region HTTPS PUT.
 _WATCHDOG_THRESHOLD_MS = 10_000
 _WATCHDOG_POLL_INTERVAL_S = 1.0
+
+# C3 fix (final-fix-report.md): bounded connect-retry around the CUSTOM
+# RESOURCE's initial connection only (see `_connect_with_retry`'s own
+# docstring for why NOT `_handle_ops_metrics_event`'s connect too). 10
+# attempts, 15s between them (9 sleeps for 10 attempts), plus a 5s
+# per-attempt `connect_timeout` so a single unreachable attempt can't
+# itself blow the budget -- worst case ~3 minutes, comfortably inside the
+# Lambda's 900s timeout and `_WATCHDOG_THRESHOLD_MS`'s 10-second-remaining
+# margin, leaving the rest of the invocation for the actual migration/
+# role/secret work.
+_CONNECT_MAX_ATTEMPTS = 10
+_CONNECT_RETRY_SLEEP_S = 15.0
+_CONNECT_TIMEOUT_S = 5
 
 _LEDGER_DDL = (
     "CREATE SCHEMA IF NOT EXISTS ops;\n"
@@ -134,6 +148,57 @@ def _run_watchdog(
             fire()
             return
         stop.wait(_WATCHDOG_POLL_INTERVAL_S)
+
+
+def should_retry_connect(attempts_made: int, *, max_attempts: int = _CONNECT_MAX_ATTEMPTS) -> bool:
+    """Pure decision function `_connect_with_retry`'s loop calls after each
+    FAILED connect attempt: True while `attempts_made` (the count of
+    attempts already made, including the one that just failed) has not yet
+    reached `max_attempts`. Kept pure and separate from the actual
+    sleep/connect loop so it is unit-testable without a live Postgres
+    connection (`tests/test_migration_runner.py`), the same split
+    `watchdog_should_fire`/`_run_watchdog` already use above."""
+    return attempts_made < max_attempts
+
+
+def _connect_with_retry(dsn: str) -> psycopg.Connection:
+    """Bounded connect-retry around the CUSTOM RESOURCE's initial
+    connection ONLY -- not `_handle_ops_metrics_event`'s (a frequent,
+    low-stakes probe invocation, not the one-shot deploy-time race this
+    guards against; retrying it here would only pile up concurrent
+    invocations for no benefit).
+
+    Fixes the race `fde_cdk/migrations.py`'s own comment names: without an
+    explicit `DependsOn` on the Aurora writer instance (see that module),
+    CloudFormation can mark the `AWS::RDS::DBCluster` resource
+    CREATE_COMPLETE well before its writer `AWS::RDS::DBInstance` finishes
+    provisioning and starts accepting connections -- on a fresh launch,
+    connecting exactly once (this function's previous behavior) reliably
+    lost that race, sending this custom resource to FAILED and rolling
+    back the entire stack. The `migrations.py` DependsOn is the primary
+    fix; this retry is defense in depth for the residual window where the
+    writer instance reports available but is not yet accepting
+    connections for a few more seconds.
+
+    Each attempt logs its own failure (CloudWatch captures Lambda stdout)
+    so a stuck launch is diagnosable from the custom resource's own log
+    group, not just a bare "FAILED" in the CloudFormation console.
+    """
+    import psycopg  # local import -- see module docstring
+
+    attempts_made = 0
+    while True:
+        attempts_made += 1
+        try:
+            return psycopg.connect(dsn, autocommit=True, connect_timeout=_CONNECT_TIMEOUT_S)
+        except Exception as exc:
+            if not should_retry_connect(attempts_made):
+                raise
+            print(
+                f"migration runner: connect attempt {attempts_made}/{_CONNECT_MAX_ATTEMPTS} "
+                f"failed ({type(exc).__name__}) -- retrying in {_CONNECT_RETRY_SLEEP_S}s"
+            )
+            time.sleep(_CONNECT_RETRY_SLEEP_S)
 
 
 def _embed_queue_depth(conn: psycopg.Connection) -> int:
@@ -329,11 +394,12 @@ def _put_login_secret(
     try:
         client.create_secret(Name=name, SecretString=payload, Description=description)
     except client.exceptions.ResourceExistsException:
-        # Reached only when a PRIOR invocation created this secret and then
-        # crashed before finishing this user's role/ledger work -- on
-        # retry `_login_role_exists` is still False, a fresh password is
-        # generated, and the secret write must overwrite the stale one
-        # rather than fail.
+        # Minor 11 fix (final-fix-report.md): reached when a PRIOR
+        # invocation minted this secret and then crashed BEFORE
+        # `_create_login_role` ran (the secret is now minted first, see
+        # `_ensure_login_users`) -- on retry `_login_role_exists` is still
+        # False, a fresh password is generated, and the secret write must
+        # overwrite the stale one rather than fail.
         client.put_secret_value(SecretId=name, SecretString=payload)
 
 
@@ -346,17 +412,27 @@ def _ensure_login_users(conn: psycopg.Connection, *, host: str, port: int, dbnam
     if the login role already exists, this run leaves its secret untouched
     (skips Secrets Manager entirely for that user) instead of writing a
     freshly generated password the role was never actually given, which
-    would desync the secret from the role's real password. The only path
-    that writes to Secrets Manager is "the role did not exist, so it was
-    just created with this exact password" -- see `_put_login_secret`'s
-    `ResourceExistsException` handling for the one case where that path
-    still needs to overwrite an existing secret.
+    would desync the secret from the role's real password.
+
+    Minor 11 fix (final-fix-report.md): the secret is minted BEFORE
+    `CREATE ROLE`, not after -- the reverse of this function's prior
+    order. With the role created first, a crash between `_create_login_role`
+    and `_put_login_secret` left the role permanently existing (so
+    `_login_role_exists` is True on every retry, skipping this whole block
+    forever) with a password recorded nowhere -- unrecoverable without a
+    manual fix. Minting the secret first closes that gap: the only state a
+    crash can leave behind is "secret written, role not yet created" (the
+    inverse case still starts fresh next time, since `_login_role_exists`
+    is still False), and a retry from there regenerates a NEW password,
+    overwrites the stale secret via `_put_login_secret`'s own
+    `ResourceExistsException` handling, and creates the role with that
+    SAME new password -- secret and role can never disagree at the end of
+    any invocation, successful or retried.
     """
     for secret_name, login_role, group_role in _LOGIN_USERS:
         if _login_role_exists(conn, login_role):
             continue
         password = _generate_password()
-        _create_login_role(conn, login_role, group_role, password)
         _put_login_secret(
             secret_name,
             host=host,
@@ -365,6 +441,7 @@ def _ensure_login_users(conn: psycopg.Connection, *, host: str, port: int, dbnam
             login_role=login_role,
             password=password,
         )
+        _create_login_role(conn, login_role, group_role, password)
 
 
 def _ensure_admin_principal(conn: psycopg.Connection, admin_email: str) -> None:
@@ -506,8 +583,6 @@ def handler(event: dict[str, Any], context: Any) -> None:
             _send_once("SUCCESS")
             return
 
-        import psycopg  # local import -- see module docstring
-
         properties = event.get("ResourceProperties", {})
         admin_email = properties["AdminEmail"]
 
@@ -517,7 +592,7 @@ def handler(event: dict[str, Any], context: Any) -> None:
         port = int(secret_json.get("port", 5432))
         dbname = secret_json.get("dbname") or "fde"
 
-        with psycopg.connect(dsn, autocommit=True) as conn:
+        with _connect_with_retry(dsn) as conn:
             _ensure_ledger(conn)
             applied = _applied_migrations(conn)
             available = _available_migrations()

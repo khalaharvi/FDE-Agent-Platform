@@ -90,7 +90,11 @@ def add_outputs(
         value=login_url,
         description=(
             "Cognito hosted-UI sign-in page for the seeded admin user "
-            "(AdminEmail) -- check that inbox for the temporary password."
+            "(AdminEmail) -- check that inbox for the temporary password. "
+            "Signing in here proves the account works but does NOT by "
+            "itself grant ReviewConsoleUrl a working session (fde_gate has "
+            "no server-side OAuth code-exchange route yet) -- see docs/13 "
+            "§3 for the scripted-token path this stack supports today."
         ),
     )
 
@@ -120,23 +124,40 @@ def add_outputs(
         description="Launch-day walkthrough: seed data, first login, first proposal.",
     )
 
-    # Task 7.5: the ops layer's own two outputs. Both are unconditioned
-    # `CfnOutput`s carrying Fn::If-wrapped VALUES (see `ops.py`'s own
-    # `topic_arn`/`dashboard_url` docstring) -- present in every synth,
-    # resolving to "" when OpsMode=off.
+    # I5 fix (final-fix-report.md): these two used to be UNCONDITIONED
+    # `CfnOutput`s carrying an Fn::If-wrapped VALUE that resolved to ""
+    # when OpsMode=off (see git history for the prior `ops.py` shape) --
+    # which is exactly the pattern cfn-lint/CDK's own synth validation
+    # report flags as W1001 ("Reference to '...' which is conditional on
+    # 'OpsEnabled' - target may not exist... Add a Condition to the output
+    # that implies the target's condition"). `ops.topic_arn`/
+    # `ops.dashboard_url` are now the REAL, unwrapped values (a plain
+    # `Fn::GetAtt`/`Fn::Join`, no `Fn::If`), and `condition=ops.
+    # enabled_condition` on the `CfnOutput` itself is what CloudFormation's
+    # own docs recommend for exactly this case: an Output with a Condition
+    # is entirely omitted from the stack's output list (not merely blank)
+    # when that condition is false, and referencing a same-condition'd
+    # resource from a same-condition'd Output is structurally valid
+    # (no Fn::If needed) the same way any other equally-conditioned pair
+    # of resources may reference each other directly.
     cdk.CfnOutput(
         stack,
         "OpsTopicArn",
         value=ops.topic_arn,
+        condition=ops.enabled_condition,
         description=(
             "The fde-ops SNS topic -- the integration seam. Subscribe your own "
             "Datadog/PagerDuty/SIEM here; set OpsMode=topic-only to skip the "
-            "default email subscription. Blank when OpsMode=off."
+            "default email subscription. Absent from Outputs entirely when "
+            "OpsMode=off."
         ),
     )
     cdk.CfnOutput(
         stack,
         "OpsDashboardUrl",
         value=ops.dashboard_url,
-        description="The FdeOps CloudWatch dashboard. Blank when OpsMode=off.",
+        condition=ops.enabled_condition,
+        description=(
+            "The FdeOps CloudWatch dashboard. Absent from Outputs entirely when OpsMode=off."
+        ),
     )

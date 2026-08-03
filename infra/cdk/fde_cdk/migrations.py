@@ -71,6 +71,7 @@ class Migrations(Construct):
         db_secret: secretsmanager.ISecret,
         db_cluster: rds.DatabaseCluster,
         migration_role: iam.IRole,
+        db_writer_instance: rds.CfnDBInstance,
     ) -> None:
         super().__init__(scope, construct_id)
 
@@ -153,3 +154,20 @@ class Migrations(Construct):
                 "AdminEmail": params.admin_email.value_as_string,
             },
         )
+
+        # --- C3 fix (final-fix-report.md): DependsOn the Aurora writer ---
+        # Nothing in this custom resource's `properties`/`service_token`
+        # references the writer instance's own attributes, so CDK's
+        # automatic Ref/GetAtt dependency inference never adds a
+        # `DependsOn` on it. Without this, CloudFormation can consider the
+        # `AWS::RDS::DBCluster` resource CREATE_COMPLETE well before its
+        # writer `AWS::RDS::DBInstance` finishes provisioning and starts
+        # accepting connections -- on a fresh launch this custom resource's
+        # Lambda (which, before this same fix wave, connected to Postgres
+        # exactly once with no retry) reliably lost that race, sending the
+        # custom resource to FAILED and rolling back the entire stack.
+        # `handler.py`'s new bounded connect-retry (`_connect_with_retry`)
+        # is defense in depth for the residual race (writer reports
+        # available but is not yet accepting connections for a few more
+        # seconds) -- this explicit DependsOn is the primary fix.
+        self.resource.node.add_dependency(db_writer_instance)

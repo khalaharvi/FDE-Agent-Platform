@@ -50,6 +50,26 @@ region: ECR Public's control-plane API and its `get-login-password` auth
 endpoint both live only in `us-east-1`, regardless of where any other
 resource in this stack runs.
 
+**Priming the ECR-Public pull-through cache (optional).** The three
+AgentCore Runtimes (`agents.py`) pull their container images through an
+`AWS::ECR::PullThroughCacheRule`, not directly from `public.ecr.aws` — the
+cached private-ECR repository for each tag (`ecr-public/<alias>/fde-{agent}`)
+does not exist until its first pull, at which point ECR imports the layer
+from the upstream public repository automatically (`ecr:BatchImportUpstreamImage`,
+granted to `runtime_role` alongside the pull actions — see this fix wave's
+`agents.py` change). So the very first runtime launch after a release
+already self-heals the cache with no extra step. If you want to avoid
+paying that import latency on a runtime's first invocation, you can prime
+it once per release tag instead:
+
+```bash
+aws ecr get-login-password --region us-east-1 \
+  | docker login --username AWS --password-stdin "<account-id>.dkr.ecr.us-east-1.amazonaws.com"
+for agent in engagement workflow development; do
+  docker pull "<account-id>.dkr.ecr.us-east-1.amazonaws.com/ecr-public/<alias>/fde-$agent:<tag>"
+done
+```
+
 ## 2. Assets bucket
 
 Create the bucket that holds every release's template + zips, in
