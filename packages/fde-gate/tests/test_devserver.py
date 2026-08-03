@@ -4,6 +4,7 @@ routes, same authz semantics -- only the JWT authorizer is synthesized.
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import urllib.request
@@ -26,12 +27,36 @@ def test_synth_event_matches_apigw_v2_shape() -> None:
     )
     assert event["rawPath"] == "/api/proposals"
     assert event["queryStringParameters"] == {"status": "submitted"}
-    assert event["body"] == '{"x": 1}'
+    # Base64, as API Gateway sends any body it does not recognise as text --
+    # including the multipart/form-data the New source page posts. Decoding
+    # here instead would kill a non-UTF-8 upload in the dev server rather
+    # than in the handler that has a sentence to say about it.
+    assert event["isBase64Encoded"] is True
+    assert base64.b64decode(event["body"]).decode() == '{"x": 1}'
     claims = event["requestContext"]["authorizer"]["jwt"]["claims"]
     assert claims["sub"] == "sme@example.com"
     # The HTTP API JWT authorizer's flattened multi-value rendering.
     assert claims["cognito:groups"] == "[prodops admins]"
     assert event["requestContext"]["http"]["method"] == "POST"
+
+
+def test_synth_event_carries_bytes_the_handler_must_judge_for_itself() -> None:
+    """A body that is not valid UTF-8 has to reach the handler intact.
+
+    The New source page's upload is the case: rejecting a PDF is a sentence
+    the operator needs to read, and the dev server cannot produce it if the
+    bytes died on the way in.
+    """
+    raw = b"%PDF-1.4\x00\xff\xfe not text at all"
+    event = _synth_event(
+        "POST",
+        "/ui/sources/preview",
+        headers={"content-type": "multipart/form-data; boundary=b"},
+        body=raw,
+        principal="sme@example.com",
+        groups="",
+    )
+    assert base64.b64decode(event["body"]) == raw
 
 
 def test_synth_event_no_groups_omits_claim() -> None:

@@ -20,6 +20,7 @@ Run:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -46,6 +47,12 @@ def _synth_event(
     """A minimal API Gateway v2 (payload 2.0) event -- exactly the fields
     `http.parse_apigw_event` reads, with claims shaped the way the HTTP API
     JWT authorizer flattens them (`cognito:groups` as "[a b]").
+
+    The body is always base64-encoded, which is what API Gateway itself does
+    for any content type it does not recognise as text -- including the
+    `multipart/form-data` the New source page posts. Decoding it here instead
+    would mean a file upload that is not valid UTF-8 died in the dev server
+    rather than reaching the handler that has a sentence to say about it.
     """
     split = urlsplit(target)
     claims: dict[str, Any] = {"sub": principal}
@@ -55,8 +62,8 @@ def _synth_event(
         "rawPath": split.path,
         "headers": headers,
         "queryStringParameters": dict(parse_qsl(split.query, keep_blank_values=True)),
-        "body": body.decode() if body else None,
-        "isBase64Encoded": False,
+        "body": base64.b64encode(body).decode("ascii") if body else None,
+        "isBase64Encoded": bool(body),
         "requestContext": {
             "http": {"method": method, "path": split.path},
             "authorizer": {"jwt": {"claims": claims}},
