@@ -1,0 +1,140 @@
+name: Release
+
+# The Launch button's supply chain. On every `v*` tag: build + push the 5
+# ARM64 images to ECR Public, package the two Lambda zips, synthesize the
+# launch template pinned to this tag, and publish all four artifacts to
+# `s3://$FDE_ASSETS_BUCKET/releases/$TAG/` -- the exact prefix the hosted
+# CloudFormation template URL and the CDK stack's own `CodeConfiguration`/
+# `s3.from_bucket` references expect (infra/cdk/fde_cdk/params.py,
+# services.py). See infra/cdk/RELEASING.md for the one-time setup this
+# workflow assumes already exists (ECR Public repos, assets bucket + its
+# public-read policy, the OIDC role, and the repo vars/secrets below).
+on:
+  push:
+    tags:
+      - "v*"
+
+# id-token: write is REQUIRED for aws-actions/configure-aws-credentials'
+# OIDC role-assumption in both jobs below -- GITHUB_TOKEN's id-token scope
+# defaults to `none` even when the repo's default token permissions are
+# "read and write", so it must be requested explicitly (mirrors ci.yml's
+# `deploy` job auth pattern, which uses the same action/role-assume shape).
+permissions:
+  id-token: write
+  contents: read
+
+# Unlike CI's per-push builds, a release run should never be cancelled
+# out from under itself by a second push to the same tag -- there isn't
+# one (tags don't move), but `cancel-in-progress: false` documents that
+# intent rather than relying on tags being immutable in practice.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.12"
+  # Available in every job below via `env.RELEASE_TAG`; the `github`
+  # context (unlike `needs`/`matrix`/`env` itself) is valid at the
+  # workflow-level `env:` block, and `github.ref_name` on a `refs/tags/*`
+  # push is the bare tag (e.g. `v0.3.0`), not the full ref.
+  RELEASE_TAG: ${{ github.ref_name }}
+
+jobs:
+  # -------------------------------------------------------------------
+  # Same 5-image ARM64 matrix as ci.yml's `images` job, now with
+  # `push: true` and an ECR Public login instead of `push: false`.
+  # -------------------------------------------------------------------
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: fde-mcp,         dockerfile: packages/fde-mcp/Dockerfile,    agent: "" }
+          - { name: fde-engagement,  dockerfile: packages/fde-agents/Dockerfile, agent: engagement }
+          - { name: fde-workflow,    dockerfile: packages/fde-agents/Dockerfile, agent: workflow }
+          - { name: fde-development, dockerfile: packages/fde-agents/Dockerfile, agent: development }
+          - { name: fde-sor,         dockerfile: packages/fde-sor/Dockerfile,    agent: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: log in to ECR Public
+        # ECR Public's auth endpoint is ALWAYS us-east-1, regardless of the
+        # target repo's own region or this account's default region.
+        run: |
+          aws ecr-public get-login-password --region us-east-1 \
+            | docker login --username AWS --password-stdin public.ecr.aws
+      - name: build + push ${{ matrix.name }} (linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/arm64
+          build-args: ${{ matrix.agent && format('AGENT={0}', matrix.agent) || '' }}
+          push: true
+          tags: public.ecr.aws/${{ vars.FDE_ECR_PUBLIC_ALIAS }}/${{ matrix.name }}:${{ env.RELEASE_TAG }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # -------------------------------------------------------------------
+  # The two Lambda zips + the hosted launch template, uploaded to
+  # releases/$TAG/. Gated on `images` so the template is never published
+  # pointing at a tag whose images don't exist yet on ECR Public.
+  # -------------------------------------------------------------------
+  assets:
+    needs: [images]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_RELEASE_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: package fde-gate lambda zip
+        # From the repo root, deliberately: fde_gate/deploy/package.py's
+        # `uv export --package fde-gate` needs the root workspace's
+        # pyproject.toml/uv.lock to resolve third-party pins, and
+        # `fde-gate-deploy` is a workspace-member console script only
+        # installed into the ROOT venv `uv sync --all-packages` builds.
+        run: |
+          uv sync --all-packages --frozen
+          uv run fde-gate-deploy package --out dist/fde-gate.zip
+      - name: build migration-runner zip + synth the launch template
+        # infra/cdk is its own uv project (package = false, own uv.lock),
+        # never touched by the root `uv sync` above -- same isolation
+        # ci.yml's `cdk-lint` job relies on. These three env vars are how
+        # params.py bakes the release tag / assets bucket / ECR Public
+        # alias into the template's defaults at synth time; without them
+        # the template falls back to obvious dev placeholders.
+        working-directory: infra/cdk
+        env:
+          FDE_RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          FDE_ASSETS_BUCKET: ${{ vars.FDE_ASSETS_BUCKET }}
+          FDE_ECR_PUBLIC_ALIAS: ${{ vars.FDE_ECR_PUBLIC_ALIAS }}
+        run: |
+          uv sync --frozen
+          uv run python lambdas/migration_runner/build.py
+          uv run python app.py
+      - name: upload release assets
+        run: |
+          set -eu
+          prefix="s3://${{ vars.FDE_ASSETS_BUCKET }}/releases/${{ env.RELEASE_TAG }}"
+          aws s3 cp infra/cdk/cdk.out/FdePlatform.template.json "$prefix/FdePlatform.template.json"
+          aws s3 cp dist/fde-gate.zip "$prefix/fde-gate.zip"
+          aws s3 cp infra/cdk/dist/migration-runner.zip "$prefix/migration-runner.zip"
+      - name: job summary
+        run: |
+          {
+            echo "### Launch \`${{ env.RELEASE_TAG }}\`"
+            echo
+            echo "https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://${{ vars.FDE_ASSETS_BUCKET }}.s3.amazonaws.com/releases/${{ env.RELEASE_TAG }}/FdePlatform.template.json&stackName=fde-platform"
+          } >> "$GITHUB_STEP_SUMMARY"
