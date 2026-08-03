@@ -9,6 +9,31 @@ tracking table) until the first production deployment freezes the schema.
 
 ### Added
 
+- **Transcript intake in the console** (`/ui/sources`,
+  `db/017_console_evidence_intake.sql`). An operator can paste or upload an
+  interview or SOP (`.txt` / `.md`) and see, before anything is saved, how it
+  will be split and how much of it retrieval will actually be able to reach.
+  Ingestion previously meant hand-written chunked JSON over MCP, which put
+  the start of the funnel out of reach of the person who conducts the
+  interview.
+- **The anchor guardrail.** `kg.hybrid_search` keeps only chunks with at
+  least one anchor (`db/008_retrieval.sql:317`), so an unanchored ingestion
+  has always been storable, embeddable and permanently unsearchable. That
+  fact now has a number on it — anchor coverage on every source list and
+  detail page — and a 0% source renders a banner naming the consequence and
+  the next step instead of a warning that died in an MCP response. A
+  **Re-ingest dark chunks** action carries the still-invisible passages into
+  a new source version once the nodes they evidence exist. Only dark chunks
+  are ever carried forward, so a passage is anchored in at most one version
+  and retrieval cannot double-count.
+- Five new privilege denials (twenty-five total): `fde_gate_service` gains
+  INSERT — and only INSERT — on `kg.source`, `kg.chunk` and
+  `kg.embed_queue`, and CI asserts it still cannot UPDATE or DELETE a chunk,
+  rewrite a source, or touch `kg.node`. Evidence is propose-side; the graph
+  is still written only by `hitl.merge_proposal`.
+- `multipart/form-data` support in the gate's request parsing, for the file
+  upload. A part that is not valid UTF-8 is refused by name rather than
+  stored as replacement characters.
 - **Reviewer and authority administration in the console** (`/ui/reviewers`,
   `db/016_reviewer_admin.sql`). Onboarding a reviewer, granting or revoking a
   gate authority, and deactivating someone who has left were the one

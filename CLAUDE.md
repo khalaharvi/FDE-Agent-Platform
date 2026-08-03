@@ -10,8 +10,8 @@ check it before "fixing" something that was already reconciled.
 
 ```bash
 uv sync --all-packages --frozen          # never plain `uv lock` casually; lock is CI-checked
-createdb fde && ./db/rebuild.sh fde      # 16 migrations + 25 smoke tests, rebuilds from scratch
-FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 661 tests; without DSN the db-marked ones skip
+createdb fde && ./db/rebuild.sh fde      # 17 migrations + 25 smoke tests, rebuilds from scratch
+FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 733 tests; without DSN the db-marked ones skip
 uv run ruff check packages && uv run ruff format --check packages
 uv run mypy                              # strict; covers fde-mcp, fde-agents, fde-gate, fde-sor
 uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task ... (docs/12)
@@ -20,9 +20,9 @@ uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task
 ## The invariant (do not weaken)
 
 Agents propose, humans dispose; only `hitl.merge_proposal` writes the graph.
-CI asserts twenty privilege denials (`.github/workflows/ci.yml`, "core
+CI asserts twenty-five privilege denials (`.github/workflows/ci.yml`, "core
 invariants must hold"). Any new grant or SECURITY DEFINER function must keep
-all twenty failing and must `REVOKE ALL ... FROM PUBLIC` (functions default to
+all twenty-five failing and must `REVOKE ALL ... FROM PUBLIC` (functions default to
 PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 
 ## Workspace map
@@ -32,7 +32,7 @@ PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 | fde-mcp | MCP server (21 tools) + embedder worker | `fde_agent` / `fde_ingest` |
 | fde-agents | 3 AgentCore runtimes + deploy CLI | (tools arrive over MCP) |
 | fde-training | offline training pipeline (NOT mypy-strict, by policy) | `fde_training` / `fde_rl_rollout` |
-| fde-gate | Lambda gate service: review console, merge, wf publish/run | `fde_gate_service` / `fde_prodops` |
+| fde-gate | Lambda gate service: review console, evidence intake, merge, wf publish/run | `fde_gate_service` / `fde_prodops` |
 | fde-sor | SoR adapters, drift scan, backfill | `fde_ingest` |
 
 ## Gotchas that have already cost time
@@ -49,7 +49,13 @@ PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 - HNSW probes need the double `::halfvec(1024)` cast or the planner falls
   back to a sequential scan (expression indexes, `db/003`).
 - `kg.hybrid_search`'s chunk arm drops chunks with empty `anchor_keys` —
-  ingest without anchors and retrieval silently never sees them.
+  ingest without anchors and retrieval silently never sees them. The console
+  surfaces this as anchor coverage (`/ui/sources`); do not "fix" it in SQL.
+- Evidence writes are single-sourced in `fde_mcp.ingest` (size caps, the
+  INSERTs, the checksum-dedupe behaviour, the warning text). Two writers run
+  them under different roles — `fde_agent` via the MCP tools (db/014),
+  `fde_gate_service` via console intake (db/017) — and must stay identical;
+  change the contract there, never in one caller.
 - Retrieval logic lives in SQL only (`db/008`); `fde_mcp` tools and
   `rollout_env` must stay byte-identical — `test_parity.py` enforces it and
   its divergence whitelist must be updated deliberately, never loosened.
