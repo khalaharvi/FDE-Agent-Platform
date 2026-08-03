@@ -75,12 +75,28 @@ you bring your own Postgres.
     Applies all 15 migrations to an empty database, then runs the 25-test SQL
     smoke suite — the same gate CI runs.
 
-    ```bash
+    <CodeGroup>
+
+    ```bash With demo data (recommended)
+    ./db/rebuild.sh fde --with-demo
+    ```
+
+    ```bash Clean database
     ./db/rebuild.sh fde
     ```
 
+    </CodeGroup>
+
     You should see each migration file apply in order, then the smoke test's
     notices, ending in `ALL SMOKE TESTS PASSED`.
+
+    `--with-demo` additionally loads `db/seed_demo.sql`, which leaves one
+    quote-to-cash engagement mid-review: one merged proposal behind a sealed
+    commit holding six nodes and six edges, three proposals still pending in
+    the queue in three different states, and three reviewers with the
+    authorities those gates need. It is evaluation data for a local database,
+    never a production one — but it is what makes the review console worth
+    looking at on your first visit.
   </Step>
 
   <Step title="Run the test suite">
@@ -110,9 +126,15 @@ you bring your own Postgres.
 </Steps>
 
 <Check>
-Schema built, tests green, console running. The queue is empty because the
-smoke test rolls its scenario back — your database contains the gate policies
-and nothing else. That is what the next page fixes.
+Schema built, tests green, console running.
+
+If you seeded with `--with-demo`, the queue holds three proposals: one nobody
+has opened, one part-reviewed, and one a compliance reviewer sent back. Open
+any of them to see what a reviewer actually decides on.
+
+If you built a clean database, the queue is empty — the smoke test rolls its
+scenario back, so your database contains the eight gate policies and nothing
+else. [Your first merge](/first-merge) is what fills it.
 </Check>
 
 ## What you just verified
@@ -138,4 +160,5 @@ credentials — that is expected in a local-only setup, not a bug.
 
 ## Next step
 
-Put something in that empty queue: [make your first merge](/first-merge).
+Reading a seeded queue is not the same as putting something in one:
+[make your first merge](/first-merge). It works the same on either database.
