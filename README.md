@@ -78,7 +78,7 @@ Docker: `brew install libpq` (then add its `bin` to `PATH`) or
 `command not found: dropdb`.
 
 Already running Postgres with pgvector ≥ 0.8? Skip compose:
-`createdb fde && ./db/rebuild.sh fde --with-demo && export FDE_DB_DSN=postgresql:///fde`.
+`./db/rebuild.sh fde --with-demo && export FDE_DB_DSN=postgresql:///fde`.
 
 <details>
 <summary><b>Beyond hello world: MCP server, pipelines, deploy</b></summary>
