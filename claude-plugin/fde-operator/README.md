@@ -54,12 +54,23 @@ createdb fde && ./db/rebuild.sh fde --with-demo
 export FDE_DB_DSN=postgresql:///fde
 ```
 
-Then add `claude-plugin/fde-operator` as a plugin in Claude Code and restart the
-session. Verify the server starts before you do:
+Verify the server starts before going further — this is the command `.mcp.json`
+runs, and it prints the tool count:
 
 ```bash
 uv run --all-packages --frozen fde-mcp --help
 ```
+
+Then install the plugin from this checkout. The repository is its own plugin
+marketplace (`.claude-plugin/marketplace.json` at the repo root), so in Claude
+Code:
+
+```
+/plugin marketplace add ~/FDE-Agent-Platform
+/plugin install fde-operator@fde-agent-platform
+```
+
+Restart the session afterwards so the MCP server and commands load.
 
 `.mcp.json` resolves the repository as `${CLAUDE_PLUGIN_ROOT}/../..`, which is
 correct whenever the plugin is loaded from the checkout — the only supported v1

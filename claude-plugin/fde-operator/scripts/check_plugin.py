@@ -115,6 +115,44 @@ def check_plugin_name() -> None:
         fail(".claude-plugin/plugin.json", f"name {name!r} != directory {PLUGIN.name!r}")
 
 
+def check_marketplace() -> None:
+    """The repo-root marketplace entry must point at this plugin and agree with
+    its manifest. Without the entry there is no `/plugin install` command; with
+    a stale one, the install resolves to nothing.
+    """
+    path = REPO / ".claude-plugin/marketplace.json"
+    if not path.is_file():
+        fail(".claude-plugin/marketplace.json", "missing -- nothing can install this plugin")
+        return
+    try:
+        market = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        fail(".claude-plugin/marketplace.json", f"does not parse: {exc}")
+        return
+
+    entry = next((p for p in market.get("plugins", []) if p.get("name") == PLUGIN.name), None)
+    if entry is None:
+        fail(".claude-plugin/marketplace.json", f"has no entry named {PLUGIN.name!r}")
+        return
+
+    source = (REPO / entry.get("source", "")).resolve()
+    if source != PLUGIN:
+        fail(
+            ".claude-plugin/marketplace.json", f"source {entry.get('source')!r} is not this plugin"
+        )
+    if not (source / ".claude-plugin/plugin.json").is_file():
+        fail(".claude-plugin/marketplace.json", "source has no .claude-plugin/plugin.json")
+
+    manifest = PLUGIN / ".claude-plugin/plugin.json"
+    if manifest.is_file():
+        declared = json.loads(manifest.read_text()).get("version")
+        if entry.get("version") != declared:
+            fail(
+                ".claude-plugin/marketplace.json",
+                f"version {entry.get('version')!r} != plugin.json {declared!r}",
+            )
+
+
 def check_cited_paths() -> None:
     """Every `repo/relative/path` in any plugin file resolves in the repo."""
     for path in sorted(PLUGIN.rglob("*")):
@@ -149,6 +187,7 @@ def main() -> int:
     check_expected_files()
     check_frontmatter()
     check_plugin_name()
+    check_marketplace()
     check_cited_paths()
     check_no_absolute_paths()
 
@@ -163,6 +202,7 @@ def main() -> int:
     for ok in (
         f"json parses ({len(JSON_FILES)} files)",
         "expected files present",
+        "marketplace entry resolves to this plugin",
         "command + skill frontmatter parses as YAML",
         "every cited repo path exists",
         "no absolute paths or email addresses",
