@@ -4,8 +4,9 @@ description: "Clone to green tests and a running review console in about ten min
 ---
 
 This walkthrough takes you from a fresh clone to a fully verified local
-installation: schema built, 609 tests green, and the human review console
-running in your browser. Nothing here requires an AWS account.
+installation: schema built, 599 of 609 tests green with the rest skipped by
+design, and the human review console running in your browser. Nothing here
+requires an AWS account.
 
 ## Prerequisites
 
@@ -105,12 +106,21 @@ you bring your own Postgres.
     uv run pytest packages
     ```
 
-    609 tests run against your live database in a few minutes.
+    609 tests collect. The tail you should see is:
+
+    ```text
+    599 passed, 10 skipped
+    ```
+
+    Those 10 are skipped by design: nine need the optional `train` extra, which
+    CI installs in a separate job, and one needs `wal_level=logical`, which the
+    bundled image does not enable.
 
     <Warning>
-    If you skip the `FDE_DB_DSN` export, the run still passes — but every
-    database-marked test silently skips. A fast, quiet green run usually means
-    the DSN is missing, not that everything works.
+    If you skip the `FDE_DB_DSN` export the run still passes — as
+    `488 passed, 121 skipped`, because every database-marked test skips. Judge
+    it by the skip count, not the clock: both runs finish in seconds, so a fast
+    run tells you nothing, and 121 skips means the DSN never reached Postgres.
     </Warning>
   </Step>
 
