@@ -44,7 +44,9 @@ from fde_gate.http import (
     Response,
     Router,
     error_response,
+    event_path,
     parse_apigw_event,
+    principal_from_event,
     to_apigw_response,
 )
 from fde_gate.rows import fetchone
@@ -411,11 +413,25 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         # on the dev server) instead of the sentence naming what to do. The
         # message is the whole point of refusing, so it is mapped here the
         # same way the router maps a handler's.
+        #
+        # Which SURFACE it is mapped for is decided by the path, because there
+        # is no `Request` to ask. The console's own refusals already render as
+        # pages (`ui._forbidden`), and every refusal the parser raises belongs
+        # to a form: the PDF dropped into the upload box is posted to
+        # /ui/sources. Sending the JSON envelope back for those put a wall of
+        # braces where the page should be -- the exact case `_forbidden`'s
+        # docstring names.
         try:
             request = parse_apigw_event(event)
         except GateError as exc:
-            log.info("gate_unparseable_request", status=exc.status, message=exc.message)
-            return to_apigw_response(error_response(exc))
+            path = event_path(event)
+            log.info("gate_unparseable_request", status=exc.status, message=exc.message, path=path)
+            refusal = (
+                ui.request_refused(exc, principal=principal_from_event(event))
+                if ui.is_console_path(path)
+                else error_response(exc)
+            )
+            return to_apigw_response(refusal)
         response = _LOOP.run_until_complete(ROUTER.dispatch(request))
         log.info(
             "gate_request",

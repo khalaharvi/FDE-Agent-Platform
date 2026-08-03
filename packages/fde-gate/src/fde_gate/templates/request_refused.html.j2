@@ -1,0 +1,13 @@
+{% extends "base.html.j2" %}
+{% block title %}Could not read that request{% endblock %}
+{% block content %}
+<h1>That request could not be read</h1>
+{# The parser's own message, which names the thing to fix -- a file that is
+   not UTF-8 text, a form whose boundary went missing. It is the entire
+   content of the response; a browser that got the JSON envelope instead got
+   a wall of braces where the page should be. #}
+<div class="banner error">{{ reason }}</div>
+<p class="muted">Nothing was stored. Go back, correct the submission, and
+  send it again.</p>
+<p><a href="/ui">Back to the review queue</a></p>
+{% endblock %}
