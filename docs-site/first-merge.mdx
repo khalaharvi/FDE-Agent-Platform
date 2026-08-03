@@ -1,0 +1,309 @@
+---
+title: "Your first merge"
+description: "Hand-write a proposal, watch deterministic gates fire, approve it in the review console, and merge it into the knowledge graph."
+---
+
+After the [quickstart](/quickstart), your review console is running. This page
+walks the platform's core loop by hand: you play the agent (propose), then the
+reviewer (dispose), and end with a sealed commit in the graph. It takes about
+five minutes, all local, no AWS.
+
+<Note>
+The sequence below is adapted from the platform's own end-to-end smoke test
+(`db/tests/smoke_test.sql`), which runs this exact flow — including the
+attempts to cheat — on every CI build, then rolls back. Here you get to keep
+the result.
+</Note>
+
+Everything on this page works whether you built a bare database with
+`./db/rebuild.sh fde` or loaded the demo engagement with
+`./db/rebuild.sh fde --with-demo`. The demo seed leaves three proposals in the
+queue and one merged commit; the proposal you are about to write is a fourth,
+in an engagement of its own, so the two never collide.
+
+## Play the agent: propose
+
+Connect with the same environment you exported in the quickstart:
+
+```bash
+psql -d fde
+```
+
+Create an engagement's genesis commit, one evidence source, one reviewer with
+authority, and a one-item proposal — then submit it. Submitting is the moment
+the gate set is computed and frozen.
+
+```sql
+DO $$
+DECLARE
+  eng      uuid := '22222222-2222-2222-2222-222222222222';
+  genesis  bigint;
+  src      bigint;
+  rev      bigint;
+  prop     bigint;
+BEGIN
+  INSERT INTO kg.commit (status, engagement_id, title, authored_by, sealed_by, sealed_at)
+  VALUES ('sealed', eng, 'genesis', 'you@example.com', 'you@example.com', now())
+  RETURNING commit_id INTO genesis;
+
+  INSERT INTO kg.source (engagement_id, source_kind, title, captured_at, captured_by)
+  VALUES (eng, 'interview', 'RevOps lead interview', now() - interval '1 day', 'you@example.com')
+  RETURNING source_id INTO src;
+
+  -- The reviewer roster is global, not per-engagement, and `principal` is
+  -- unique. The demo seed already registers this person, so upsert rather
+  -- than insert.
+  INSERT INTO hitl.reviewer (principal, display_name)
+  VALUES ('sme@example.com', 'RevOps SME')
+  ON CONFLICT (principal) DO UPDATE SET is_active = true
+  RETURNING reviewer_id INTO rev;
+
+  -- Authority IS per-engagement, so it has to be granted for this one.
+  INSERT INTO hitl.reviewer_authority (reviewer_id, engagement_id, gate_kind, granted_by)
+  VALUES (rev, eng, 'ontology', 'bootstrap'),
+         (rev, eng, 'factual',  'bootstrap')
+  ON CONFLICT DO NOTHING;
+
+  INSERT INTO hitl.proposal (engagement_id, title, rationale, authored_by, agent_name, base_commit_id)
+  VALUES (eng, 'Map the discount review step',
+          'Hand-written first proposal from the walkthrough.',
+          'you@example.com', 'engagement', genesis)
+  RETURNING proposal_id INTO prop;
+
+  INSERT INTO hitl.proposal_item
+    (proposal_id, ordinal, op, node_type, subject_key, payload, source_ids, agent_confidence)
+  VALUES
+    (prop, 1, 'add_node', 'activity', 'act.discount_review',
+     '{"label":"Discount Review","summary":"Deal desk reviews quotes discounted beyond policy.","attributes":{}}',
+     ARRAY[src], 0.90);
+
+  PERFORM hitl.submit_proposal(prop);
+  RAISE NOTICE 'submitted proposal %', prop;
+END $$;
+```
+
+```text
+NOTICE:  submitted proposal 11
+DO
+```
+
+<Note>
+Every id on this page — proposal, commit, gate — is a Postgres identity value,
+so the exact numbers depend on what your database has done before. On a bare
+`./db/rebuild.sh fde` the same block prints `submitted proposal 7`, because the
+smoke test consumed the earlier ids before rolling back. Read the numbers as
+"whatever yours says," and note the proposal id — the queries below find it for
+you, but the console needs it.
+</Note>
+
+Note what you could not skip: the item carries `source_ids`. A proposal item
+with no evidence source is refused at submit — evidence is mandatory, not
+encouraged.
+
+## See the gate decision as data
+
+Ask the database which approvals this proposal needs, and why. The gate set
+lives in `hitl.proposal_gate`; the rule that produced each gate lives in
+`hitl.gate_policy`, so join them to see the reason next to the requirement:
+
+```sql
+SELECT g.gate_kind, g.quorum, pol.name AS policy, pol.sla_hours
+FROM hitl.proposal_gate g
+JOIN hitl.gate_policy pol USING (policy_id)
+WHERE g.proposal_id = (SELECT proposal_id FROM hitl.proposal
+                       WHERE engagement_id = '22222222-2222-2222-2222-222222222222'
+                       ORDER BY proposal_id DESC LIMIT 1)
+ORDER BY g.gate_id;
+```
+
+```text
+ gate_kind | quorum |                 policy                  | sla_hours
+-----------+--------+-----------------------------------------+-----------
+ ontology  |      1 | catch-all ontology review               |        72
+ factual   |      1 | weak evidence requires SME confirmation |        72
+(2 rows)
+```
+
+Two gates, and both are worth understanding:
+
+- **`ontology`** comes from the shipped catch-all policy, which fires on
+  everything. That is what keeps the fail-closed check in
+  `hitl.submit_proposal` reachable rather than a permanent exception.
+- **`factual`** comes from the weak-evidence policy, and it fires here for a
+  reason that surprises people: `kg.evidence_strength` aggregates the evidence
+  already recorded in the *merged* graph for a subject key, not the sources
+  attached to the proposal in front of you. `act.discount_review` is brand new,
+  so its strength is exactly `0`, which is below the policy's `0.65` threshold.
+  Every net-new node therefore collects a factual gate, and corroboration only
+  starts counting once it is in the graph.
+
+You can check that number directly:
+
+```sql
+SELECT kg.evidence_strength('22222222-2222-2222-2222-222222222222', 'node', 'act.discount_review');
+```
+
+```text
+ evidence_strength
+-------------------
+                 0
+(1 row)
+```
+
+Your reviewer holds authority for both gate kinds, so you can clear both.
+
+This is the load-bearing property of the whole platform: the gate set is the
+output of `hitl.compute_required_gates()`, a pure SQL function over a policy
+table. Same proposal, same policy, same gates, every time — the two-row result
+above is byte-identical on a bare database and on a demo-seeded one, even
+though the ids differ. No model participates in the decision, so no agent can
+negotiate its way to a lighter review. See
+[Human gates](/concepts/human-gates) for the full model.
+
+## Play the reviewer: dispose
+
+Refresh the review console at `http://127.0.0.1:8787/ui`. Your proposal is now
+in the queue, listed last — the queue is ordered oldest-first, so on a
+demo-seeded database it sits below the three seeded ones.
+
+<Steps>
+  <Step title="Open it">
+    Click through to `/ui/proposals/<id>`. You get the item and its payload,
+    the evidence source it cites, and a gate table showing kind, quorum,
+    approvals so far, and who is authorized to clear each one. Both of your
+    gates show `RevOps SME sme@example.com` as an eligible reviewer.
+  </Step>
+
+  <Step title="Approve each gate">
+    The decision form's gate dropdown lists only gates you can actually clear,
+    so approve them one at a time. Your decisions record under the
+    `sme@example.com` principal you started the dev server with.
+
+    Watch the status move as the gates clear: `submitted` after the first
+    approval becomes `in_review`, and after the last one it becomes `approved`.
+  </Step>
+
+  <Step title="Merge">
+    The **Merge into the graph** button only renders once the proposal reaches
+    `approved` — until then the page shows the decision form and no merge
+    path at all. Merging re-checks gate quorum inside its own transaction, so
+    an approval revoked between your click and the commit would still block it.
+
+    The console confirms with the new commit id: `merged as commit 10`.
+  </Step>
+</Steps>
+
+<Tip>
+Instead of approving as-is, try editing the item first — reword the summary,
+then approve and merge. The original and edited payloads are now a paired
+(wrong, right) example on identical input:
+
+```sql
+SELECT item_status, edited_by,
+       original_payload->>'summary' AS agent_wrote,
+       payload->>'summary'          AS reviewer_wrote
+FROM hitl.proposal_item
+WHERE proposal_id = <your proposal id>;
+```
+
+```text
+ item_status |    edited_by    |                    agent_wrote                     |                                 reviewer_wrote
+-------------+-----------------+----------------------------------------------------+--------------------------------------------------------------------------------
+ edited      | sme@example.com | Deal desk reviews quotes discounted beyond policy. | Deal desk reviews any quote discounted more than 20 percent before it is sent.
+(1 row)
+```
+
+The graph gets the reviewer's text; `original_payload` keeps the agent's, once
+and never overwritten. That pair is the most valuable event the platform
+produces: a free preference dataset from a reviewer doing their job. See
+[The training flywheel](/concepts/training-flywheel).
+</Tip>
+
+## Verify the graph changed
+
+Back in `psql`:
+
+```sql
+SELECT node_key, node_type, label
+FROM kg.node_current
+WHERE engagement_id = '22222222-2222-2222-2222-222222222222';
+
+SELECT proposal_id, status
+FROM hitl.proposal
+ORDER BY proposal_id DESC
+LIMIT 1;
+```
+
+```text
+      node_key       | node_type |      label
+---------------------+-----------+-----------------
+ act.discount_review | activity  | Discount Review
+(1 row)
+
+ proposal_id | status
+-------------+--------
+          11 | merged
+(1 row)
+```
+
+One live node and one merged proposal. The commit the merge sealed carries a
+content digest over what it wrote:
+
+```sql
+SELECT commit_id, status, authored_by, sealed_by, content_digest
+FROM kg.commit
+WHERE engagement_id = '22222222-2222-2222-2222-222222222222'
+  AND status = 'sealed'
+ORDER BY commit_id DESC
+LIMIT 1;
+```
+
+```text
+ commit_id | status |   authored_by   |    sealed_by    |                          content_digest
+-----------+--------+-----------------+-----------------+------------------------------------------------------------------
+        10 | sealed | you@example.com | sme@example.com | 7612dae8e492a6231e104ea5f2c51403d3aa8ddbcf8e33d6882d84a8bf824578
+(1 row)
+```
+
+Your `commit_id` will differ, but the digest should not: it is a rolling
+SHA-256 over each item's operation, subject key, and merged payload — no ids,
+no timestamps — so an unedited run of this page produces exactly the digest
+above. If you took the edit detour in the tip, yours differs, which is the
+point of hashing the content.
+
+`authored_by` and `sealed_by` are different people, which is the whole point:
+the graph row exists because a human decided it should, and the decision record
+(who, what, how long they looked) is now queryable history.
+
+## Try to cheat
+
+The invariant is worth feeling, not just reading. Impersonate the agent role
+and write to the graph directly:
+
+```sql
+SET ROLE fde_agent;
+INSERT INTO kg.node (engagement_id, node_key, node_type, label, commit_id)
+VALUES (gen_random_uuid(), 'x', 'activity', 'x', 1);
+```
+
+```text
+ERROR:  permission denied for table node
+```
+
+```sql
+RESET ROLE;
+```
+
+That denial is not an application check someone could forget to call — the
+role never had the privilege. CI asserts eight denials like this one on every
+build, so a change that quietly grants an agent write access fails the build
+before it ships.
+
+## Where to go next
+
+- [Human gates](/concepts/human-gates) — the four enforcement layers and the
+  four gate kinds you just used.
+- [The knowledge graph](/concepts/knowledge-graph) — what you just wrote into,
+  and how agents retrieve from it.
+- [The three agents](/concepts/agents) — what does the proposing in
+  production, so you don't have to hand-write SQL.

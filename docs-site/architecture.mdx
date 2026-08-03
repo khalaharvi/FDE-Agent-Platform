@@ -1,0 +1,94 @@
+---
+title: "Architecture"
+description: "Five packages, one Postgres database, and the roles that keep every component inside its privilege boundary."
+---
+
+The platform is a uv workspace of five Python packages over a single
+PostgreSQL database. The database is not a storage detail — it is where the
+security model lives. Each component connects as a role that holds exactly
+the privileges its job requires, and the [core invariant](/concepts/human-gates)
+is a fact about grants before it is a fact about code.
+
+## The five packages
+
+| Package | Role in the system | Database role it runs as |
+|---|---|---|
+| `fde-mcp` | MCP server (21 tools) and the embedder worker | `fde_agent` / `fde_ingest` |
+| `fde-agents` | The three AgentCore runtimes and the deploy CLI | none — tools arrive over MCP |
+| `fde-training` | Offline training pipeline: SFT export, trainers, rollout env, judge calibration | `fde_training` / `fde_rl_rollout` |
+| `fde-gate` | Gate service: review console, merge, workflow publish and run | `fde_gate_service` / `fde_prodops` |
+| `fde-sor` | System-of-record adapters, drift scan, backfill | `fde_ingest` |
+
+Two boundaries worth noticing:
+
+- **The agents hold no database credentials.** They reach the graph only
+  through the MCP tool surface, so the blast radius of a compromised or
+  confused agent is bounded by what `fde_agent` can do — which does not
+  include writing the graph, merging proposals, publishing workflows, or
+  labeling training data. CI asserts all of those denials on every build.
+- **Only `fde-mcp` holds a database connection string in the agent path**,
+  which is why its dependency set is the smallest in the workspace.
+
+## The database
+
+Fifteen migrations build the schema from scratch; a 25-test SQL smoke suite
+proves the invariant end to end on every rebuild. There is no migration
+tracking table yet — the pre-production story is rebuild-from-scratch, which
+is also the CI gate: migrations must apply cleanly, in order, on an empty
+database.
+
+The schema groups into a few families:
+
+- `kg.*` — the [knowledge graph](/concepts/knowledge-graph): nodes, edges,
+  commits, sources, evidence, embeddings, and the retrieval functions.
+- `hitl.*` — proposals, gate policies, reviewers, decisions, and the one
+  function allowed to write the graph.
+- `wf.*` — workflows pinned to graph commits, with publish and run state
+  machines in SQL.
+- `sor.*` — observations from systems of record and the drift detectors.
+- `trn.*` — traces and training labels.
+
+Retrieval, gating, faithfulness, and drift logic live in SQL only. The Python
+packages are thin typed wrappers, which is what lets a parity test guarantee
+that production inference and RL rollouts see byte-identical behavior.
+
+## Quality gates
+
+Every commit passes: ruff lint and format checks, strict mypy on the four
+production packages, a frozen lockfile check, the full schema rebuild with
+smoke tests, 599 Python tests against live Postgres plus nine more in the
+`train`-extra job, which needs no database (the last of the 609 needs
+`wal_level=logical` and runs in no CI environment), ARM64 image builds for
+all five deployable artifacts, and the eight privilege-denial assertions.
+
+Documentation is tested too: a CI job parses the training doc's reward-weight
+table and kappa thresholds and asserts they match the code's constants. A doc
+that claims to be verified and is not would be worse than one that admits it
+is prose.
+
+## Where things run
+
+Locally, everything runs from the checkout: Dockerized Postgres, the MCP
+server over stdio, and the review console through the same Lambda handler
+that deploys to AWS. In the deployed shape, the agents run as AgentCore
+runtimes (container or CodeZip), the gate service and backfill run as
+Lambdas behind API Gateway, and the SoR jobs run on EventBridge/SQS or EKS.
+
+<Frame caption="The deployed AWS topology. The violet lines are the only paths that touch a write.">
+  <img
+    src="/images/diagram-01-system-topology.png"
+    alt="AWS deployment topology in one account in us-west-2. Three Bedrock AgentCore runtimes — fde-engagement, fde-workflow and fde-development — reach the platform only through a shared MCP Gateway with three targets, alongside the AgentCore Memory, Identity, Observability and Evaluations capabilities. One Aurora PostgreSQL 16 instance with pgvector holds all five schemas: kg, hitl, wf, sor and trn. Around it sit the KG MCP server on ECS Fargate, the gate service on Lambda behind API Gateway, the embedder worker, an EventBridge-driven drift monitor, the SageMaker training path and the prod-ops console. Cognito, CloudWatch, external systems of record and the human reviewers sit outside the account boundary. The fde_agent role is annotated as SELECT-only on kg.node, kg.edge and kg.commit with inserts, updates and deletes explicitly revoked, and the gate service is marked as the only principal permitted to call hitl.merge_proposal."
+  />
+</Frame>
+
+<Info>
+The deployed shape is written against verified AWS API shapes but has not
+been executed against live AWS. The local shape is fully tested. See
+[Deployment](/deployment) and [Status and honesty](/status).
+</Info>
+
+## Next step
+
+If you have not already, run the [quickstart](/quickstart) — the whole local
+architecture assembles itself in about ten minutes, and the
+[first merge](/first-merge) walks you across every boundary described here.

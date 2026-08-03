@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Single uv workspace, single root lockfile -- one entry covers the
+  # root pyproject.toml and all five packages/* members.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this repo. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-the project is pre-release, so everything currently lives under 0.1.0 and Unreleased.
+the project is pre-1.0, so minor releases may include breaking changes — see `RELEASING.md` for how a release gets cut.
 The migration story is rebuild-from-scratch (`./db/rebuild.sh`, no migration
 tracking table) until the first production deployment freezes the schema.
 
