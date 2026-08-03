@@ -60,9 +60,17 @@ sections carry their own triggers:
 | "Choosing models (the budget dial)" | presets, the override order, the kappa floor | `packages/fde-agents/src/fde_agents/common/config.py` — **and `0.78` here is pinned by `test_docs_sync.py`** |
 | "Status and honesty" | the verified / not-validated split and its evidence table | test and migration counts, the CI gates, the AWS honesty rule |
 
-Keep the README and the site consistent with each other: they state the same
-counts, the same presets, and the same honesty split. Fixing one and not the
-other is how they start contradicting each other.
+`CONTRIBUTING.md` is a public doc too — it is what a first-time contributor reads
+— and it restates the same numbers:
+
+| Doc | What it claims | Rewrite it when this changes |
+|---|---|---|
+| `CONTRIBUTING.md` | its own build-and-verify block, and the invariant a contributor must not break | test count, migration and smoke counts, the eight privilege denials, the gate commands (`db/rebuild.sh`, `uv run pytest packages`) |
+
+Keep all three consistent with each other: the site, the README, and
+`CONTRIBUTING.md` state the same counts, and the first two state the same presets
+and honesty split. Fixing one and not the others is how they start contradicting
+each other.
 
 Diagrams: `docs-site/images/*.png` are headless-Chrome exports of
 `diagrams/0*.html`. Changing the source HTML means re-exporting the PNG, not
@@ -75,14 +83,26 @@ silently, they rot on pages your diff never pointed at, and the same count is
 usually stated on three or four pages at once. Sweep first, unconditionally:
 
 ```bash
-grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|[0-9]+) ([a-z]+ )?(tests|migrations|smoke tests|(MCP )?tools|packages|agents|pages|layers|denials|gate kinds|time axes)' docs-site/ README.md
+grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+) ([a-z]+ )?(tests|migrations|smoke tests|tools|packages|agents|pages|layers|denials|kinds|types|policies|axes|bugs|documents|diagrams|reviewers|tables|images|runtimes|traces)' docs-site/ README.md CONTRIBUTING.md
 ```
 
-Two things that pattern is built for. Counts are spelled out as often as they are
-digits — "five packages", "eight denials", "three agents". And the noun is often
-a word away from the number — "four **enforcement** layers", "609 **Python**
-tests", "21 **typed** tools — so it tolerates one word in between. Extend the
-noun list when the docs start claiming a count it misses.
+Three things that pattern is built for:
+
+- **Counts are spelled out as often as they are digits** — "five packages",
+  "Fifteen migrations", "Fourteen real bugs". The word list runs to twenty
+  because the docs use it that far up; extend it if they go higher.
+- **The noun is usually a word away from the number** — "four *enforcement*
+  layers", "609 *Python* tests", "21 *MCP* tools", "eight *gate* policies" — so
+  one word is tolerated in between. That is also why the list holds base nouns
+  (`types`, `kinds`, `axes`) rather than phrases: `types` already catches "15
+  node types" and "fifteen edge types".
+- **`CONTRIBUTING.md` is in the file set**, not only the pathspec in step 1. It
+  is a public doc that states the test, migration, smoke and denial counts in its
+  own quickstart block, and nothing else sweeps it.
+
+Extend the noun list when the docs start claiming a count it misses. Verify an
+extension the way you would verify a code change: run it, and read every new hit
+to confirm it is a real claim and not a coincidence.
 
 Then derive each hit from the repo. Never copy a number from another page:
 

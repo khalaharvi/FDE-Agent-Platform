@@ -17,7 +17,7 @@ description: |
   user: "Plan out what a Mintlify docs site for this project should look like"
   assistant: "I'll use the marketing-strategist agent to map the existing docs/ into a Mintlify information architecture and identify the missing adoption-focused pages."
   <commentary>
-  Docs-site IA is a marketing/education deliverable: the agent knows the 13 internal docs and how to restructure them for outsiders.
+  Docs-site IA is a marketing/education deliverable: the agent knows the 14 internal docs and how to restructure them for outsiders.
   </commentary>
   </example>
 
