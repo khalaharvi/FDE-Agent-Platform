@@ -14,11 +14,12 @@ docker compose up -d db                            # pgvector 0.8, port 55432
 export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
 ./db/rebuild.sh fde                                # 15 migrations + 25 smoke tests
 export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
-uv run pytest packages                             # 545 tests
+uv run pytest packages                             # 609 tests
 ```
 
 Already run Postgres locally with pgvector ≥ 0.8? Skip compose and use
-`createdb fde && ./db/rebuild.sh fde` as in the README.
+`./db/rebuild.sh fde` instead. The README adds `--with-demo`
+to seed a reviewable engagement; the gates do not need it either way.
 
 ## The gates your PR must pass
 
