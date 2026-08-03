@@ -37,6 +37,27 @@ jobs:
         run: uv lock --check
 
   # -------------------------------------------------------------------
+  # The CDK launch stack: its own uv project (infra/cdk/pyproject.toml +
+  # uv.lock), deliberately NOT a workspace member -- `uv sync --frozen`
+  # here must never touch the packages/* venv. Synth uses no AWS
+  # credentials and no CDK bootstrap; cfn-lint validates the emitted
+  # template. Not yet in the branch-protection required list -- add it
+  # when this PR merges.
+  # -------------------------------------------------------------------
+  cdk-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: synth and lint the launch stack (no AWS credentials)
+        working-directory: infra/cdk
+        run: |
+          uv sync --frozen
+          uv run pytest tests
+          uv run python app.py
+          uv run cfn-lint cdk.out/FdePlatform.template.json
+
+  # -------------------------------------------------------------------
   # The database contract: migrations must apply IN ORDER on an EMPTY
   # database and all smoke tests must pass. This is the gate that protects
   # the platform's core invariant.
