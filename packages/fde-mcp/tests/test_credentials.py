@@ -95,15 +95,17 @@ def test_store_and_delete_roundtrip(
     assert credentials.delete_api_key("openai-compat") is False
 
 
-def test_keyring_delete_handles_no_keyring_error(
-    monkeypatch: pytest.MonkeyPatch, fake_keychain: dict[str, str]
-) -> None:
-    """Verify delete_api_key returns False when keyring backend raises NoKeyringError."""
+def test_keyring_delete_handles_no_keyring_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify delete_api_key returns False when keyring backend raises NoKeyringError.
+
+    Does NOT use fake_keychain fixture so the REAL _keyring_delete runs and exercises
+    the KeyringError exception handler.
+    """
     import keyring  # noqa: PLC0415
     import keyring.errors  # noqa: PLC0415
 
     def _raise_no_keyring(service: str, account: str) -> None:
-        raise keyring.errors.NoKeyringError()
+        raise keyring.errors.NoKeyringError("no backend")
 
     monkeypatch.setattr(keyring, "delete_password", _raise_no_keyring)
     assert credentials.delete_api_key("openai") is False
