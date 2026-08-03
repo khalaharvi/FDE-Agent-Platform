@@ -370,6 +370,15 @@ jobs:
     needs: [static, database, tests, train-tests, images]
     runs-on: ubuntu-latest
     environment: production
+    # id-token: write is REQUIRED for aws-actions/configure-aws-credentials'
+    # OIDC role-assumption below -- GITHUB_TOKEN's id-token scope defaults
+    # to `none` regardless of the repo's default token-permission setting,
+    # so it must be requested explicitly. Unlisted scopes default to
+    # `none` too once any `permissions:` key is present, hence `contents:
+    # read` alongside it (actions/checkout needs it).
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: check AWS secrets present

@@ -84,6 +84,8 @@ attach this bucket policy:
 }
 ```
 
+Save the JSON above as `bucket-policy.json`, then:
+
 ```bash
 aws s3api put-bucket-policy \
   --bucket fde-platform-assets-us-east-1 \
@@ -151,6 +153,14 @@ able to push production images and a public template:
 }
 ```
 
+Save the JSON above as `release-trust-policy.json`, then:
+
+```bash
+aws iam create-role \
+  --role-name fde-release-pipeline \
+  --assume-role-policy-document file://release-trust-policy.json
+```
+
 Permissions the role needs (attach as an inline or managed policy — scope
 tightened to the two resources this workflow touches):
 
@@ -164,14 +174,14 @@ tightened to the two resources this workflow touches):
   settings require it) on
   `arn:aws:s3:::fde-platform-assets-us-east-1/releases/*`.
 
-```bash
-aws iam create-role \
-  --role-name fde-release-pipeline \
-  --assume-role-policy-document file://release-trust-policy.json
-```
+Attach that list to `fde-release-pipeline` as an inline policy (e.g. `aws
+iam put-role-policy --role-name fde-release-pipeline --policy-name
+release-pipeline-access --policy-document file://release-permissions.json`
+with the actions above turned into a standard `Statement` JSON) before
+first use.
 
-Record the resulting role ARN — it is `secrets.AWS_RELEASE_ROLE_ARN` in
-step 4.
+Record the role ARN from the `create-role` call above — it is
+`secrets.AWS_RELEASE_ROLE_ARN` in step 4.
 
 ## 4. GitHub repo variables and secret
 
