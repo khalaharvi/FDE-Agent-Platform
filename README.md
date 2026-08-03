@@ -189,9 +189,9 @@ fde-platform/
 └── .github/workflows/   CI: static → database → tests → train-tests → ARM64 images → gated deploy
 ```
 
-**Gates, all green:** `ruff check` (171 files) + `ruff format --check` (168) ·
-`mypy --strict` on the four production packages (84 files, 0 issues) ·
-`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 629 Python tests
+**Gates, all green:** `ruff check` (174 files) + `ruff format --check` (172) ·
+`mypy --strict` on the four production packages (85 files, 0 issues) ·
+`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 661 Python tests
 against live Postgres · twenty privilege-denial invariants, all correctly denied.
 
 </details>
@@ -310,7 +310,7 @@ model — the one to read if you read only one**), and
 |---|---|
 | 16 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate |
 | 25 end-to-end smoke tests pass | incl. fail-closed submit, unauthorised approval, review→edit→merge→label, workflow publish/run/human-response, observation dedup, as-of traversal |
-| 629 Python tests, 619 of them in one run against live Postgres | fde-mcp 90 · fde-agents 117 · fde-training 183 · fde-gate 69 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
+| 661 Python tests, 651 of them in one run against live Postgres | fde-mcp 110 · fde-agents 117 · fde-training 183 · fde-gate 81 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
 | 20 privilege-denial invariants hold | asserted in CI, not trusted |
 | 6 diagrams screenshot-verified | both colour schemes |
 

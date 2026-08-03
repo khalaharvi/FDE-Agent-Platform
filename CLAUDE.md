@@ -11,7 +11,7 @@ check it before "fixing" something that was already reconciled.
 ```bash
 uv sync --all-packages --frozen          # never plain `uv lock` casually; lock is CI-checked
 createdb fde && ./db/rebuild.sh fde      # 16 migrations + 25 smoke tests, rebuilds from scratch
-FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 629 tests; without DSN the db-marked ones skip
+FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 661 tests; without DSN the db-marked ones skip
 uv run ruff check packages && uv run ruff format --check packages
 uv run mypy                              # strict; covers fde-mcp, fde-agents, fde-gate, fde-sor
 uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task ... (docs/12)
