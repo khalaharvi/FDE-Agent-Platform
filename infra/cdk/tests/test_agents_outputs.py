@@ -102,6 +102,49 @@ def test_runtime_model_id_env_is_fn_if_on_is_bedrock_model() -> None:
         assert env["FDE_MODEL_ID"] == {"Fn::If": ["IsBedrockModel", "", {"Ref": "ModelId"}]}
 
 
+def test_every_runtime_has_aws_region_and_db_secret_arn() -> None:
+    """Fix-report finding: AWS_REGION (mcp_tools._mint_gateway_bearer_token
+    raises RuntimeError without it -- the only MCP-connection path a
+    deployed runtime takes) and FDE_DB_SECRET_ARN (tracing.py's raw_sql
+    writes otherwise have no DSN source and silently no-op) must be
+    present on EVERY runtime's env, not just one."""
+    t = synth_template()
+    runtimes = t.find_resources("AWS::BedrockAgentCore::Runtime")
+    assert len(runtimes) == 3
+    for r in runtimes.values():
+        env = r["Properties"]["EnvironmentVariables"]
+        assert env["AWS_REGION"] == {"Ref": "AWS::Region"}
+        db_secret_arn = env["FDE_DB_SECRET_ARN"]
+        assert isinstance(db_secret_arn, dict)
+        assert "fde/db/agent" in str(db_secret_arn)
+
+
+def test_runtime_role_has_supplemental_grant_on_fde_db_secrets() -> None:
+    """The gap this fix closes: runtime_role's OWN template only grants
+    read on the Aurora cluster's master secret, not fde/db/agent -- same
+    class of bug (and same fix shape) as gate.py's supplemental grant on
+    gate_role (test_gate_role_has_supplemental_grant_on_fde_db_secrets)."""
+    t = synth_template()
+    template = t.to_json()
+    resources = template["Resources"]
+    runtime_role_id = next(
+        k
+        for k, v in resources.items()
+        if v["Type"] == "AWS::IAM::Role"
+        for policy in v["Properties"].get("Policies", [])
+        if policy["PolicyName"] == "runtime-permissions"
+    )
+    statements = []
+    for v in resources.values():
+        if v["Type"] == "AWS::IAM::Policy" and {"Ref": runtime_role_id} in v["Properties"].get(
+            "Roles", []
+        ):
+            statements.extend(v["Properties"]["PolicyDocument"]["Statement"])
+
+    read_login_secret = next(s for s in statements if s.get("Sid") == "ReadRuntimeLoginSecret")
+    assert "fde/db/*" in str(read_login_secret["Resource"])
+
+
 def test_runtimes_depend_on_pull_through_cache_rule() -> None:
     t = synth_template()
     template = t.to_json()

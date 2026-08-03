@@ -58,16 +58,64 @@ code expects in `FDE_GATEWAY_URL` (`GatewaySettings.url`,
 `fde_agents/common/config.py`), since both read the same control-plane
 response shape.
 
-A known, undocumented-here gap: `CfnGateway` in this lib version has no VPC/
-network property at all (confirmed: no such field in its constructor
-signature) -- an AgentCore Gateway is a fully-managed, non-VPC-attached
-service, so its `mcpServer` target reaching `services.py`'s INTERNAL ALB
-(no public IP, no IGW route) is a real reachability question this CDK layer
-does not resolve, the same way `gateway.py`'s own boto3 script does not
-either (it just takes `--mcp-server-endpoint` as an opaque URL). This is the
-same class of "written against verified API shapes, not validated against
-live AWS" gap the repo's honesty rule already names for other AWS-touching
-code; flagged here as a launch-readiness follow-up, not fixed in this task.
+Known launch-readiness gap -- ONE named Task-10 live-test risk, three
+surfaces
+---------------------------------------------------------------------------
+Both the Gateway and all three Runtimes are, by this task's own design,
+OUTSIDE the VPC: `CfnGateway` has no VPC/network property at all in this
+lib version (confirmed: no such field in its constructor signature) -- an
+AgentCore Gateway is always a fully-managed, non-VPC-attached service -- and
+every `CfnRuntime` here is built with `network_mode="PUBLIC"` (the brief's
+own required shape). That single fact creates a reachability question on
+THREE distinct network paths into this stack's VPC-internal resources, not
+one:
+
+  1. **Gateway -> internal ALB.** The Gateway's `mcpServer` target
+     (`self.gateway_target`) points at `services.mcp_url`, which is
+     `services.py`'s INTERNAL ALB (no public IP, no IGW route). Whether a
+     non-VPC Gateway can reach it at all is unresolved here, the same way
+     `gateway.py`'s own boto3 script does not resolve it either (it just
+     takes `--mcp-server-endpoint` as an opaque URL with no network wiring
+     of its own).
+  2. **Runtime -> Aurora, for tracing.** Every deployed runtime's
+     `FDE_DB_SECRET_ARN` env (added below) points `tracing.py`'s direct
+     `fde_mcp.db`/`raw_sql` writes (`mcp_tools.py`'s own docstring: "the
+     one sanctioned exception... writes those two tables directly") at the
+     Aurora cluster -- but that cluster lives in `network.py`'s VPC private
+     subnets with no public endpoint, and a PUBLIC-network-mode runtime has
+     no private route to it.
+  3. **Runtime -> Aurora, for the local-stdio MCP fallback.**
+     `GatewaySettings.url` (`fde_agents/common/config.py`) selects
+     Gateway-vs-stdio transport by presence; every runtime here always gets
+     `FDE_GATEWAY_URL` set (below), so this path should never trigger in
+     this deployment -- but the code path exists (`mcp_tools.build_mcp_
+     client`'s dev-mode branch spawns `python -m fde_mcp` as a local
+     subprocess, and THAT process needs its own DB connection), and it
+     would share the identical PUBLIC-network-mode reachability gap the
+     moment it ever did trigger (e.g. a future change that leaves
+     `FDE_GATEWAY_URL` unset).
+
+All three share one root cause (PUBLIC network mode = no VPC attachment =
+no private route to anything in `network.py`'s VPC) and are recorded here
+as a single follow-up rather than three separate ones. This is the same
+class of "written against verified API shapes, not validated against live
+AWS" gap the repo's honesty rule already names for other AWS-touching code.
+
+**The documented fix path, if a live test confirms the failure:**
+`CfnRuntime.NetworkConfigurationProperty` has an optional
+`network_mode_config` field accepting a `VpcConfigProperty(security_groups:
+Sequence[str], subnets: Sequence[str])` (confirmed via introspection: both
+types exist on this installed `aws-cdk-lib==2.263.0`) -- i.e. this lib
+version's schema DOES structurally support attaching a runtime to a VPC,
+mirroring the `subnets`/`security_groups` shape `ec2.SubnetSelection`
+already produces for every other VPC-attached compute in this stack
+(`Migrations`/`GateService`/`Services`). This would fix surfaces 2 and 3
+directly (a VPC-attached runtime reaching Aurora the same way the gate
+Lambda already does) and, if AgentCore Gateway ever gains an equivalent
+VPC-attachment property in a later lib version, surface 1 the same way.
+NOT changed here (out of scope for this task, and `network_mode`'s exact
+non-"PUBLIC" enum string was not itself verified -- only that the
+`network_mode_config` property exists and accepts a VPC shape).
 
 The ECR pull-through cache rule
 --------------------------------
@@ -101,7 +149,13 @@ import aws_cdk.aws_iam as iam
 import aws_cdk.aws_secretsmanager as secretsmanager
 from constructs import Construct
 
-from fde_cdk.params import ECR_PUBLIC_ALIAS, LaunchParams, dynamic_secret_env_value, model_id_env
+from fde_cdk.params import (
+    ECR_PUBLIC_ALIAS,
+    LaunchParams,
+    dynamic_secret_env_value,
+    fde_db_secrets_wildcard_arn,
+    model_id_env,
+)
 
 # Matches `fde_agents.deploy.runtimes.AGENT_NAMES` exactly (lowercase --
 # the AgentCore API's own `agentRuntimeName`/`FDE_AGENT_NAME` case).
@@ -109,6 +163,15 @@ from fde_cdk.params import ECR_PUBLIC_ALIAS, LaunchParams, dynamic_secret_env_va
 # `runtime_arns` dict keys use, matching what `GateSettings.runtime_arn_for`
 # looks up.
 AGENT_NAMES = ("engagement", "workflow", "development")
+
+# The login secret infra/cdk/lambdas/migration_runner/handler.py's
+# LOGIN_SECRETS mints for the `fde_agent` role -- the SAME secret
+# `services.py`'s `_MCP_DB_SECRET_NAME` uses for the MCP server container,
+# because a runtime's own IAM permissions template
+# (`runtime-permissions-policy.json`'s `IamDbAuthFallback` statement,
+# scoped to `dbuser:.../fde_agent`) makes explicit that a runtime connects
+# to Postgres AS `fde_agent`, the identical DB role the MCP server uses.
+_RUNTIME_DB_SECRET_NAME = "fde/db/agent"
 
 # Same ceilings `fde_agents.deploy.runtimes` provisions with by default
 # (`DEFAULT_IDLE_TIMEOUT_S`/`DEFAULT_MAX_LIFETIME_S`, that module's own
@@ -374,6 +437,33 @@ class Agents(Construct):
         resolved_model_id = model_id_env(params)
         provider_api_key = dynamic_secret_env_value(provider_api_key_secret, params)
 
+        # --- Supplemental read grant + secret reference for FDE_DB_SECRET_ARN ---
+        # Same mismatch class `gate.py`'s own module docstring documents and
+        # fixes for `gate_role`: `runtime_role`'s OWN template
+        # (`runtime-permissions-policy.json`'s `ReadTheDbSecret` statement)
+        # only grants `secretsmanager:GetSecretValue` on the Aurora
+        # cluster's MASTER secret (`iam_roles.py`'s `FDE_DB_SECRET_ARN`
+        # substitution = `db_secret.secret_arn`), not `fde/db/agent` (the
+        # migration-minted login secret this construct points
+        # `FDE_DB_SECRET_ARN` at below). Left alone, every runtime's direct
+        # DB access -- `tracing.py`'s `raw_sql` writes, per `mcp_tools.py`'s
+        # own docstring -- would get a `GetSecretValue` `AccessDenied`
+        # rather than a working DSN. `add_to_principal_policy` lands this
+        # in a separate, CDK-auto-generated `AWS::IAM::Policy` (not merged
+        # into the existing `runtime-permissions` inline policy), same as
+        # `gate.py`'s identical fix does for `gate_role`.
+        runtime_role.add_to_principal_policy(
+            iam.PolicyStatement(
+                sid="ReadRuntimeLoginSecret",
+                effect=iam.Effect.ALLOW,
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[fde_db_secrets_wildcard_arn()],
+            )
+        )
+        runtime_db_secret = secretsmanager.Secret.from_secret_name_v2(
+            self, "RuntimeDbSecretRef", _RUNTIME_DB_SECRET_NAME
+        )
+
         self.runtimes = {}
         self.runtime_arns = {}
         for agent_name in AGENT_NAMES:
@@ -401,6 +491,26 @@ class Agents(Construct):
                 ),
                 environment_variables={
                     "FDE_AGENT_NAME": agent_name,
+                    # `runtimes.py`'s own `_environment_variables()` sets
+                    # this whenever `--region`/`AWS_REGION` is available,
+                    # for exactly the reason it must be set here
+                    # unconditionally: `mcp_tools._mint_gateway_bearer_
+                    # token` (the only MCP-connection path a deployed
+                    # runtime takes, since `FDE_GATEWAY_URL` is always set
+                    # below) resolves the region through `fde_mcp.config.
+                    # DatabaseSettings`, which reads `AWS_REGION`/
+                    # `AWS_DEFAULT_REGION` and raises `RuntimeError` if
+                    # neither is set -- unlike ECS/Lambda, an AgentCore
+                    # Runtime container does not get this injected for
+                    # free, so it must be an explicit env var here.
+                    "AWS_REGION": cdk.Aws.REGION,
+                    # `fde/db/agent`'s ARN -- see `_RUNTIME_DB_SECRET_NAME`
+                    # and the supplemental `ReadRuntimeLoginSecret` grant
+                    # above. Needed for `tracing.py`'s direct `raw_sql`
+                    # writes (`mcp_tools.py`'s own docstring); without it
+                    # every trace write has no DSN source and silently
+                    # no-ops rather than recording the turn.
+                    "FDE_DB_SECRET_ARN": runtime_db_secret.secret_arn,
                     # Baked for audit parity (brief's own phrase, matching
                     # `runtimes.py`'s `_resolved_model_id` docstring: "every
                     # provisioned runtime carries a concrete FDE_MODEL_ID
