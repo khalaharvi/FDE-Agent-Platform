@@ -265,8 +265,10 @@ and every other temporal read filters on `now()` (the transaction timestamp,
 fixed for the life of the transaction). Inside a single transaction the wall
 clock has necessarily moved past the transaction timestamp by the time the
 merge runs, so rows the merge just inserted carry a `valid_from` fractionally
-*after* the reading snapshot's `now()` and fall outside the
-`valid_from <= now() < valid_to` window every read applies. The merge
+*after* the reading snapshot's `now()` and fall outside the window every read
+applies — `valid_from <= now()` and `valid_to` either NULL or still ahead of
+it, NULL being the open-interval sentinel (`db/008:83`). It is the first
+clause that fails: the row is stamped in the reader's future. The merge
 succeeds, the rows are genuinely there, and the next query in the same
 transaction returns nothing. Nothing raises — the symptom is a zero-row
 result, which reads as "that node doesn't exist" rather than "your writer and

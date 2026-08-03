@@ -44,8 +44,10 @@ Anthropic has no embeddings API, and neither do some `openai-compat`
 endpoints. So `FDE_MODEL_PROVIDER` and `FDE_EMBED_PROVIDER` are separate
 settings, and if your chat provider cannot embed you **must** name a
 different one for embeddings. Workable pairings: Anthropic chat with OpenAI
-embeddings, Gemini for both, or Bedrock for both — Bedrock being the only
-single-provider option today.
+embeddings, or a single provider for both — Bedrock, OpenAI, and Gemini each
+cover chat and embeddings on their own. What sets Bedrock apart is reach
+rather than pairing: it is the only provider the offline training pipeline can
+use at all (see the scope limit below).
 
 This fails loudly rather than quietly. The preflight check names the exact
 `fde-providers login` command you are missing instead of falling back to
