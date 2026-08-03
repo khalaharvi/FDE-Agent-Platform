@@ -86,7 +86,13 @@ jobs:
         # node_commit_id_fkey; the two SECURITY DEFINER calls pass a proposal
         # and a workflow id that do not exist, so the body raises "not found"
         # even for a caller that holds EXECUTE. All three now match no rows,
-        # which leaves the privilege as the only thing left to fail on. The
+        # which leaves the privilege as the only thing left to fail on. One
+        # constraint if the two function lines are ever rewritten: the call
+        # must stay in the TOP-LEVEL target list, because wrapping it --
+        # `SELECT * FROM (SELECT fn(...) AS r) t WHERE false` -- lets the
+        # planner discard the subquery's target list under the constant-false
+        # qual, and the EXECUTE check then never fires at all. That failure is
+        # at least loud: the line succeeds and trips INVARIANT BROKEN. The
         # standard they were held to, and that any new line should be held
         # to, is both directions: denied for the role under test, and
         # SUCCEEDING once the privilege is granted. The twelve after them
