@@ -36,7 +36,7 @@
 - [ ] **Step 1: Copy plan + add deps.** Copy this plan into the repo as `docs/superpowers/plans/2026-08-02-multi-provider-llm.md`. Then:
 
 ```bash
-cd /Users/krishnahalaharvi/Downloads/fde-platform-2
+cd "$(git rev-parse --show-toplevel)"
 uv add --package fde-mcp "keyring>=25" "httpx>=0.27"
 uv sync --all-packages
 git add docs/superpowers/plans/2026-08-02-multi-provider-llm.md packages/fde-mcp/pyproject.toml uv.lock
