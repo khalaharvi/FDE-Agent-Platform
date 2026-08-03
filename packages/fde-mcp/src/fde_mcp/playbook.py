@@ -113,10 +113,17 @@ def _text(value: Any) -> str:
     return "\n".join(line.rstrip() for line in normalised.split("\n")).strip()
 
 
-def _keys(values: Any) -> str:
-    """A sorted, comma-separated list of graph keys as inline code."""
-    items = sorted(str(item) for item in (values or []))
-    return ", ".join(f"`{item}`" for item in items)
+def _code_list(values: Any, *, sort: bool) -> str:
+    """A comma-separated list of values as inline code.
+
+    `sort` is the caller's answer to "is this order data, or an accident?".
+    `kg.process_flow` builds its key arrays with a bare `ARRAY(SELECT ...)`
+    and no ORDER BY, so their order is the planner's business and sorting is
+    what makes the document stable. `runnable_by` is a column the author
+    wrote, and reordering it would be editing what they said.
+    """
+    items = [str(item) for item in (values or [])]
+    return ", ".join(f"`{item}`" for item in (sorted(items) if sort else items))
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +163,7 @@ def _header(workflow: Mapping[str, Any]) -> list[str]:
 
     runnable_by = [str(group) for group in (workflow.get("runnable_by") or [])]
     lines += [
-        f"Runnable by: {_keys(runnable_by)}."
+        f"Runnable by: {_code_list(runnable_by, sort=False)}."
         if runnable_by
         else "Runnable by: anyone in the product-operations group.",
         "",
@@ -235,7 +242,7 @@ def _process_context(
             ("Followed by", row.get("next_keys")),
         ):
             if values:
-                lines.append(f"    - {caption}: {_keys(values)}")
+                lines.append(f"    - {caption}: {_code_list(values, sort=True)}")
     lines.append("")
     return lines
 

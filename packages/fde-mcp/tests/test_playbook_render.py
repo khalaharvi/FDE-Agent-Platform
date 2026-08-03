@@ -488,10 +488,12 @@ def test_runnable_by_names_the_groups_or_says_anyone() -> None:
     anyone = render_playbook(_MINIMAL_WORKFLOW, [_step()], {}, [])
     assert "Runnable by: anyone in the product-operations group." in anyone
 
-    restricted = {**_MINIMAL_WORKFLOW, "runnable_by": ["deal-desk", "revops"]}
+    # Author order, not alphabetical: a list somebody wrote is data, and the
+    # prose line and the front matter must not disagree about it.
+    restricted = {**_MINIMAL_WORKFLOW, "runnable_by": ["revops", "deal-desk"]}
     rendered = render_playbook(restricted, [_step()], {}, [])
-    assert "Runnable by: `deal-desk`, `revops`." in rendered
-    assert 'runnable_by: ["deal-desk", "revops"]' in rendered
+    assert "Runnable by: `revops`, `deal-desk`." in rendered
+    assert 'runnable_by: ["revops", "deal-desk"]' in rendered
 
 
 def test_an_empty_process_walk_says_so_instead_of_showing_nothing() -> None:
