@@ -89,6 +89,14 @@ BEGIN
     (rev_owner, eng, 'factual',    'bootstrap'),
     (rev_owner, eng, 'automation', 'bootstrap');
 
+  -- The first administrator (db/016). Written here as the owner, by hand,
+  -- because that is the only way a first admin can ever exist: /ui/reviewers
+  -- requires an admin to grant admin. A real deployment does this once,
+  -- against its own principal, and then never touches SQL again -- docs/10
+  -- carries the statement.
+  INSERT INTO hitl.reviewer_admin (reviewer_id, granted_by) VALUES
+    (rev_owner, 'bootstrap');
+
   ------------------------------------------------------------------
   RAISE NOTICE '--- fde_agent: the Engagement Agent proposes the Q2C mapping';
   ------------------------------------------------------------------
@@ -328,6 +336,19 @@ BEGIN
     RAISE EXCEPTION 'every demo proposal item must cite at least one kg.source';
   END IF;
 
+  -- Exactly one admin, and it is the principal the console instructions
+  -- name. A demo whose /ui/reviewers page 403s the account the README tells
+  -- the reader to sign in as would look like a broken feature.
+  IF NOT hitl.is_reviewer_admin('owner@example.com') THEN
+    RAISE EXCEPTION 'owner@example.com must hold the admin authority, or the '
+                    'demo console shows no Reviewers page';
+  END IF;
+
+  SELECT count(*) INTO n FROM hitl.reviewer_admin WHERE revoked_at IS NULL;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'expected exactly 1 live admin in the demo seed, got %', n;
+  END IF;
+
   RAISE NOTICE '';
   RAISE NOTICE '================================';
   RAISE NOTICE '  DEMO DATA SEEDED';
@@ -335,6 +356,7 @@ BEGIN
   RAISE NOTICE '    merged commit %', c.commit_id;
   RAISE NOTICE '    review queue  3 proposals (submitted, in_review, changes_requested)';
   RAISE NOTICE '    reviewers     sme@ / compliance@ / owner@example.com';
+  RAISE NOTICE '    admin         owner@example.com (sign in as them for /ui/reviewers)';
   RAISE NOTICE '================================';
 END $$;
 
