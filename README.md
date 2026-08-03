@@ -98,6 +98,11 @@ docker buildx build --platform linux/arm64 --build-arg AGENT=engagement \
   -f packages/fde-agents/Dockerfile -t $ECR/fde-engagement:$TAG --push .
 ```
 
+<!-- LAUNCH BUTTON (enable after live validation, Task 10): [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?templateURL=https://fde-platform-assets-us-east-1.s3.amazonaws.com/releases/v0.1.0/FdePlatform.template.json&stackName=fde-platform) -->
+A one-click CDK launch stack (VPC, Aurora, Cognito, the three AgentCore
+runtimes, a pluggable ops layer) is written and CI-linted but not yet
+live-validated — see [`docs/13-launch-stack.md`](docs/13-launch-stack.md).
+
 Lint, types, and the full gate list are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 </details>
@@ -281,7 +286,7 @@ model — the one to read if you read only one**), and
 [`docs/09-deployment.md`](docs/09-deployment.md) (AgentCore, IAM, CI/CD, cost).
 
 <details>
-<summary><b>Full reading list (14 documents)</b></summary>
+<summary><b>Full reading list (15 documents)</b></summary>
 
 | # | Document | What it answers |
 |---|---|---|
@@ -298,6 +303,7 @@ model — the one to read if you read only one**), and
 | 10 | [`docs/10-prodops-runbook.md`](docs/10-prodops-runbook.md) | for the product operations group |
 | 11 | [`docs/11-python-conventions.md`](docs/11-python-conventions.md) | uv workspace, package boundaries, logging, what the tooling enforces |
 | 12 | [`docs/12-providers.md`](docs/12-providers.md) | bring-your-own model provider: login, provider matrix, local full-flow walkthrough |
+| 13 | [`docs/13-launch-stack.md`](docs/13-launch-stack.md) | the one-click CDK launch stack: what it deploys, parameters, break-glass ops, honest known risks |
 | — | [`docs/99-sources.md`](docs/99-sources.md) | every external claim → a URL, plus what could not be verified |
 
 </details>

@@ -1,6 +1,6 @@
 # One-click AWS deploy (Launch Stack) — design
 
-**Date:** 2026-08-02 · **Status:** approved by user, pre-implementation
+**Date:** 2026-08-02 · **Status:** implemented on feat/one-click-deploy (pre-live-validation)
 **Sub-project 2 of 2** (follows the multi-provider spec, which shipped the provider seam this stack parameterizes). Branch `feat/one-click-deploy`, stacked on `feat/multi-provider-llm`; rebase onto `main` after PR #1 merges.
 
 ## Problem

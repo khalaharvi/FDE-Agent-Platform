@@ -15,6 +15,7 @@ FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 867 tests; without DSN t
 uv run ruff check packages && uv run ruff format --check packages
 uv run mypy                              # strict; covers fde-mcp, fde-agents, fde-gate, fde-sor
 uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task ... (docs/12)
+cd infra/cdk && uv run pytest tests && uv run python app.py  # synth the launch stack (docs/13)
 ```
 
 ## The invariant (do not weaken)
