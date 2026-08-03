@@ -20,11 +20,20 @@ Public's own auth endpoint are all pinned to for v1 — see
 
 ECR Public (`public.ecr.aws`) is a single global registry per account, not
 a per-region resource — one **alias** for the account, then one repository
-per image name underneath it. If this account has never used ECR Public
-before, create the alias first (console: ECR → Public → "Get started",
-or `aws ecr-public create-registry-alias` where supported by your account
-type) and note the alias string; it is the value of `FDE_ECR_PUBLIC_ALIAS`
-in step 3.
+per image name underneath it. There is no `create-registry-alias` API/CLI
+call (checked against `botocore`'s `ecr-public` service model: the only
+registry-level operations are `DescribeRegistries`,
+`GetRegistryCatalogData`, `PutRegistryCatalogData`) — the alias is chosen
+once, through the console, the first time this account creates a public
+repository (ECR console → Public → "Get started"). Once set, confirm it
+without the console:
+
+```bash
+aws ecr-public describe-registries --region us-east-1 \
+  --query "registries[].aliases[].name"
+```
+
+That alias string is the value of `FDE_ECR_PUBLIC_ALIAS` in step 4.
 
 Then create the 5 repositories the release workflow pushes to — the names
 must match `release.yml`'s matrix (`fde-mcp`, `fde-engagement`,
