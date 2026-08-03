@@ -367,6 +367,38 @@ def test_outputs_complete() -> None:
 
 ---
 
+### Task 7.5: Ops layer — unconditional hygiene + a pluggable, replaceable ops package
+
+**Added after a prod-ops design review (see ledger). Design stance (user-set): the ops package must be drop-in replaceable by the end user's own ops/health stack — the SNS topic is the integration seam; AWS-specific delivery (email, dashboard, budget) is default-on but cleanly detachable. Correctness hygiene is NOT optional and lives in the existing constructs.**
+
+**Files:**
+- Create: `infra/cdk/fde_cdk/ops.py`, `infra/cdk/tests/test_ops.py`
+- Modify: `infra/cdk/fde_cdk/params.py` (add `OpsMode` allowed-values `email|topic-only|off` default `email`; `OpsAlertEmail` default "" → falls back to AdminEmail; `MonthlyBudgetUsd` default 300, 0 = no budget), `database.py`, `gate.py`, `services.py`, `migrations.py`, `app.py`, `infra/cdk/lambdas/migration_runner/handler.py`, `.github/workflows/ci.yml` only if lint codes change
+
+**Part A — unconditional hygiene (existing constructs, not conditioned on OpsMode):**
+- Explicit `logs.LogGroup` (retention ONE_MONTH, `RemovalPolicy.DESTROY`) passed via `log_group=` on the gate + migration Lambdas (**never `log_retention=`** — it synthesizes an asset Lambda and violates the bootstrap-free contract) and via `log_group=` inside both `aws_logs` drivers in services.py (kills the TWO_YEARS/RETAIN orphan defaults).
+- One `sqs.Queue` `fde-ops-dlq` as `dead_letter_queue=` + `retry_attempts=2` on BOTH EventBridge rule targets in gate.py.
+- `database.py`: `backup=rds.BackupProps(retention=cdk.Duration.days(7))`; `enable_data_api=True` (verify prop support for Serverless v2/PG16 in this lib version; if the L2 lacks it, L1 `EnableHttpEndpoint` override) — this is the break-glass path the Task-5 principal reconciliation requires.
+- `migrations.py`/`handler.py`: watchdog — send FAILED to the cfn response URL when `context.get_remaining_time_in_millis() < 10_000` (thread timer or pre-check loop), so a timeout never hangs CloudFormation for an hour; unit-test the pure decision function.
+- `app.py`: `cdk.Tags.of(app).add("app", "fde-platform")` + `add("stack-tier", ...)`.
+
+**Part B — the pluggable ops package (`OpsLayer` construct in ops.py; every resource in it carries the `OpsEnabled` condition = OpsMode != "off"):**
+- `sns.Topic` `fde-ops` — THE seam. Output `OpsTopicArn` always (docs/13: "subscribe Datadog/PagerDuty/your SIEM here; set OpsMode=topic-only to skip email"). Email subscription only under condition OpsMode == "email" (address = OpsAlertEmail if set else AdminEmail).
+- Seven alarms, all → the topic (names/metrics/thresholds fixed): `FdeGateErrors` (gate Lambda Errors ≥3 over 3×1min), `FdeMigrationRunnerErrors` (≥1), `FdeMcpUnhealthyHosts` (≥1 for 3×1min), `FdeMcpTarget5xx` (≥5/5min), `FdeDbAcuCeiling` (ServerlessDatabaseCapacity avg ≥7.5 for 15min), `FdeDbConnections` (≥80% of the 2-ACU cap), `FdeEmbedQueueBacklog` (custom `FDE/Platform` `EmbedQueueDepth` ≥500 for 15min), plus `FdeOpsDlqMessages` (DLQ visible ≥1) — 8 total with the DLQ alarm.
+- Embed-queue metric: EventBridge `rate(5 minutes)` rule → the migration-runner Lambda with input `{"source":"fde.ops.metrics"}`; handler branch runs `SELECT count(*) FROM kg.embed_queue WHERE completed_at IS NULL` and `PutMetricData`; add namespace-conditioned `cloudwatch:PutMetricData` to migration_role. Unit-test the branch dispatch.
+- One `cloudwatch.Dashboard` `FdeOps` (5 rows: gate, MCP/ALB, embedder+queue depth, Aurora, migration runner) + Output `OpsDashboardUrl`.
+- `AWS::Budgets::Budget` (condition: OpsMode != off AND MonthlyBudgetUsd != 0) notifying the same email.
+
+**Tests (test_ops.py):** topic + 8 alarms exist and target the topic; every alarm's namespace/metric/threshold pinned; all OpsLayer resources carry the OpsEnabled condition; email subscription conditioned on the email mode; log groups exist with 30-day retention for all four services; both rules carry the DLQ; `enable_data_api`/`EnableHttpEndpoint` present; budget conditioned. Plus the hygiene assertions in existing test files where they fit better.
+
+- [ ] Steps follow the established TDD cycle (failing tests → implement → gates → commit `feat: ops layer -- pluggable alarm package + unconditional hygiene`).
+
+**Task 9 additions (absorb):** docs/13 gains: "Bring your own ops stack" section (topic seam, OpsMode matrix), SNS-subscription-confirmation first-step, CloudWatch Transaction Search manual enablement note, break-glass section (Data API query editor: the principal-reconciliation UPDATE, the embed-queue probe, `admin-set-user-password` for Cognito lockout), the docs/10 §4 compliance-channel retraction for launch-stack deployments, escalation-table → actual-surface mapping, deferred-by-name list (business-metrics dashboard, drift→SNS wiring, restore drill, per-runtime alarms, MCP /healthz route, orphaned-resource teardown sweep: fde/db/* secrets + any pre-7.5 service-created log groups + pull-through-cache repos).
+
+**Task 10 additions (absorb):** acceptance also requires — kill the embedder task and break the DB-creds path → confirm the alarm email arrives; confirm the dashboard populates; perform the principal reconciliation via the Data API query editor; verify OpsMode=topic-only launch produces no email subscription.
+
+---
+
 ### Task 8: Release pipeline + CI deploy-job fix
 
 **Files:**
