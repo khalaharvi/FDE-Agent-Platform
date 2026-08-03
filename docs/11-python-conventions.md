@@ -222,7 +222,7 @@ Two markers: `requires_db` (skips cleanly without `FDE_DB_DSN`) and
 rather than silently skipping — a skipped test suite that reports green is
 worse than no suite.
 
-**The invariant tests are not pytest.** Twenty-five SQL statements in the CI
+**The invariant tests are not pytest.** Twenty-nine SQL statements in the CI
 `database` job that must all be *denied*. The first eight are the four-layer
 invariant itself and are not to be edited:
 
@@ -237,20 +237,29 @@ fde_agent      → wf.publish_workflow                 must fail
 fde_prodops    → UPDATE wf.workflow SET status=...   must fail
 ```
 
-The other seventeen guard the surfaces added since: twelve for the reviewer
+The other twenty-one guard the surfaces added since: twelve for the reviewer
 roster (`db/016`) — nothing but the console may write it, and even the console
-may not delete a reviewer or rewrite a principal — and five for evidence
-intake (`db/017`). Four of those pin the console's `INSERT` on
+may not delete a reviewer or rewrite a principal — five for evidence
+intake (`db/017`), and four for the agent-launch record (`db/018`). Four of
+the evidence five pin the console's `INSERT` on
 `kg.source`/`kg.chunk`/`kg.embed_queue` so it never widens into `UPDATE`,
 `DELETE`, or the graph tables. The fifth denies that same `INSERT` to a
 different role entirely — `fde_prodops`, which reads the graph and runs
 workflows — because widening it *because it is also the console* would land an
 evidence write on the role picked for being narrow.
 
+The launch-record four are the same shape one table over. `wf.agent_launch`
+says who asked for which agent task, so an agent that could `INSERT` there
+could attribute its own work to a human who never asked for it, and one that
+could `UPDATE` could mark its own launch succeeded — the invariant defeated in
+the audit trail rather than in the graph. The console writes the row and may
+stamp only how it ended; rewriting `principal` is denied for the same reason
+`db/016` denies it on `hitl.reviewer`, and nothing holds `DELETE`.
+
 If any succeeds, an agent can write the graph, label its own training data, or
 appoint its own reviewer, and the platform's central guarantee is gone.
 Asserted every run rather than trusted. Adding a grant means adding a denial
-that proves its boundary; all twenty-five must keep failing.
+that proves its boundary; all twenty-nine must keep failing.
 
 ---
 

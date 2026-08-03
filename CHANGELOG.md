@@ -9,6 +9,27 @@ tracking table) until the first production deployment freezes the schema.
 
 ### Added
 
+- **Agent launches leave a record** (`db/018_agent_launch_records.sql`,
+  `/ui/runs` → Agent launches). A console launch is synchronous, and the
+  deployed front door is an API Gateway HTTP API whose integration times out
+  well before the service's own step timeout does — so a long task returned
+  an error to the browser while the agent kept running, and nothing anywhere
+  said whether it had finished. `wf.agent_launch` now records who asked for
+  which task on which engagement, written **before** the dispatch, so a
+  launch that outlives its request still leaves a row. A `running` record
+  with no completion means what it says: dispatched, and nothing reported
+  back. The launch itself is still synchronous — the record is what makes
+  waiting survivable, not a replacement for it. The transcript is not stored
+  alongside the record; evidence stays in `kg.chunk`, and the launch keeps a
+  character count.
+- Four new privilege denials (twenty-nine total): `fde_gate_service` gains
+  INSERT and a column-scoped UPDATE on `wf.agent_launch` — status, session,
+  error, completion and nothing else — and CI asserts that `fde_agent` can
+  neither file a launch record nor mark one succeeded, that the console
+  cannot rewrite the principal a launch is attributed to, and that no role
+  holds DELETE. Each of the four was proven in both directions before it was
+  written down: denied as written, and succeeding once the privilege it
+  names had been granted.
 - **Transcript intake in the console** (`/ui/sources`,
   `db/017_console_evidence_intake.sql`). An operator can paste or upload an
   interview or SOP (`.txt` / `.md`) and see, before anything is saved, how it

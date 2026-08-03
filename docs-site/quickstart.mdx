@@ -73,7 +73,7 @@ you bring your own Postgres.
   </Step>
 
   <Step title="Build the schema">
-    Applies all 17 migrations to an empty database, then runs the 25-test SQL
+    Applies all 18 migrations to an empty database, then runs the 25-test SQL
     smoke suite — the same gate CI runs.
 
     <CodeGroup>
@@ -149,7 +149,7 @@ else. [Your first merge](/first-merge) is what fills it.
 
 ## What you just verified
 
-- 17 migrations apply cleanly, in order, on an empty database.
+- 18 migrations apply cleanly, in order, on an empty database.
 - The core invariant holds: the smoke suite includes a merge attempted before
   gates clear (refused), an unauthorized approval (ignored), and a full
   review → edit → merge → training-label pass.

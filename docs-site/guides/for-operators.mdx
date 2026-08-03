@@ -102,9 +102,21 @@ against a local database with no AWS account.
 </Warning>
 
 <Info>
-A launch can outlast the browser request that started it. The outcome shows
-up in the review queue rather than on the page you launched from, which is
-why a successful launch sends you to the queue.
+A launch can outlast the browser request that started it — a long transcript
+can take minutes, and the front door gives up first. When that happens the
+page shows you an error while the agent carries on working.
+
+The console records every launch **before** it dispatches, so that case is
+readable rather than silent. **`/ui/runs`** has an **Agent launches**
+section: your launch is there either way, with who started it and how it
+ended. A record still marked *running* means exactly what it says — nothing
+has reported back, so either the agent is still working or the request that
+was waiting for it is gone. Check there before launching the same task
+again.
+
+What the agent *proposes* still shows up in the review queue rather than on
+the page you launched from, which is why a successful launch sends you to
+the queue.
 </Info>
 </Step>
 
