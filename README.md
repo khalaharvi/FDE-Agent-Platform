@@ -3,6 +3,7 @@
 [![CI](https://github.com/khalaharvi/FDE-Agent-Platform/actions/workflows/ci.yml/badge.svg)](https://github.com/khalaharvi/FDE-Agent-Platform/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](pyproject.toml)
+[![Docs](https://img.shields.io/badge/docs-fde--agent--platform-6f42c1.svg)](https://fde-agent-platform.mintlify.app)
 
 Three forward-deployed-engineering agents on Amazon Bedrock AgentCore, over a
 knowledge graph in PostgreSQL, with deterministic human gates between the
@@ -11,6 +12,21 @@ agents and the graph.
 > **The invariant: agents propose. Humans dispose. Only `hitl.merge_proposal`
 > writes the graph** — enforced at four independent layers and asserted by
 > eight privilege-denial checks in CI.
+
+**Who this is for.** Forward-deployed and solutions engineers who rebuild the
+same engagement scaffolding for every client; platform leads who must answer
+"what can the agent write, and who approved it?" — the answer here is a
+`SELECT`, not a model output; and practitioners who came for one extractable
+idea, human gates in pure SQL. **Not for you** if you want a general agent
+framework: without governed writes to shared state, you don't need this.
+
+![The review console: a proposal moves from the queue through two SQL-computed gates into a sealed commit](docs-site/images/console.gif)
+
+The review console on a demo-seeded database (`./db/rebuild.sh fde --with-demo`).
+Neither gate there was a model's decision — `hitl.compute_required_gates()`
+computed both — and the merge re-checked their quorum inside its own
+transaction. Walk it yourself:
+[your first merge](https://fde-agent-platform.mintlify.app/first-merge).
 
 ```mermaid
 flowchart LR
@@ -47,7 +63,7 @@ uv sync --all-packages --frozen
 # database (CI's exact pgvector image, port 55432)
 docker compose up -d db
 export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
-./db/rebuild.sh fde
+./db/rebuild.sh fde --with-demo   # drop --with-demo if you want an empty graph
 export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
 
 # prove it works, then open the review console
@@ -55,8 +71,14 @@ uv run pytest packages
 FDE_GATE_DEV_PRINCIPAL=sme@example.com uv run fde-gate-dev   # → http://127.0.0.1:8787/ui
 ```
 
+`./db/rebuild.sh` runs `dropdb`, `createdb`, and `psql` on your machine, so the
+Postgres **client tools** have to be on `PATH` even when the server itself is in
+Docker: `brew install libpq` (then add its `bin` to `PATH`) or
+`apt-get install postgresql-client`. Without them the first command fails with
+`command not found: dropdb`.
+
 Already running Postgres with pgvector ≥ 0.8? Skip compose:
-`createdb fde && ./db/rebuild.sh fde && export FDE_DB_DSN=postgresql:///fde`.
+`createdb fde && ./db/rebuild.sh fde --with-demo && export FDE_DB_DSN=postgresql:///fde`.
 
 <details>
 <summary><b>Beyond hello world: MCP server, pipelines, deploy</b></summary>
@@ -167,9 +189,9 @@ fde-platform/
 └── .github/workflows/   CI: static → database → tests → train-tests → ARM64 images → gated deploy
 ```
 
-**Gates, all green:** `ruff check` + `ruff format --check` across 152 files ·
-`mypy --strict` on the four production packages (78 files, 0 issues) ·
-`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 545 Python tests
+**Gates, all green:** `ruff check` + `ruff format --check` across 166 files ·
+`mypy --strict` on the four production packages (83 files, 0 issues) ·
+`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 609 Python tests
 against live Postgres · eight privilege-denial invariants, all correctly denied.
 
 </details>
@@ -190,6 +212,12 @@ time. No model in that decision. That buys an auditable answer to "why did
 this need compliance sign-off," an agent that cannot negotiate its way to a
 lighter review, and a training label that is genuinely human, not the model
 grading itself.
+
+![A merged proposal in the console: both gates cleared, with the reviewer, the comment, and how long they looked recorded against each one](docs-site/images/console-merged.png)
+
+That is the whole audit trail for one merge — which gates were required, who
+cleared each, what they said, and the commit it sealed — and none of it is
+reconstructed after the fact.
 
 </details>
 
@@ -282,7 +310,7 @@ model — the one to read if you read only one**), and
 |---|---|
 | 15 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate |
 | 25 end-to-end smoke tests pass | incl. fail-closed submit, unauthorised approval, review→edit→merge→label, workflow publish/run/human-response, observation dedup, as-of traversal |
-| 545 Python tests pass against live Postgres | fde-mcp 66 · fde-agents 92 · fde-training 174 · fde-gate 44 · fde-sor 169 (183 with the `train` extra, in its own CI job) |
+| 609 Python tests, 599 of them in one run against live Postgres | fde-mcp 90 · fde-agents 117 · fde-training 183 · fde-gate 49 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
 | 8 privilege-denial invariants hold | asserted in CI, not trusted |
 | 6 diagrams screenshot-verified | both colour schemes |
 
