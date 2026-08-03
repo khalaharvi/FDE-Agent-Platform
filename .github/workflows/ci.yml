@@ -136,8 +136,16 @@ jobs:
           assert_denied fde_gate_service "UPDATE kg.chunk SET content = 'x';"
           assert_denied fde_gate_service "DELETE FROM kg.chunk;"
           assert_denied fde_gate_service "UPDATE kg.source SET title = 'x';"
-          assert_denied fde_gate_service "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) VALUES (gen_random_uuid(),'x','activity','x',1);"
-          assert_denied fde_prodops "INSERT INTO kg.chunk (engagement_id,source_id,ordinal,content) VALUES (gen_random_uuid(),1,0,'x');"
+          # These two are `SELECT ... WHERE false` rather than VALUES, and the
+          # difference decides whether they test anything. A literal VALUES row
+          # has to name a commit_id and a source_id, which do not exist -- so it
+          # fails on a foreign key EVEN FOR THE OWNER, and assert_denied would
+          # keep printing "ok" after a widened grant had already broken the
+          # invariant. Selecting zero rows from the table itself inserts nothing,
+          # succeeds trivially wherever the privilege is held, and can therefore
+          # fail for exactly one reason.
+          assert_denied fde_gate_service "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) SELECT engagement_id,node_key,node_type,label,commit_id FROM kg.node WHERE false;"
+          assert_denied fde_prodops "INSERT INTO kg.chunk (engagement_id,source_id,ordinal,content) SELECT engagement_id,source_id,ordinal,content FROM kg.chunk WHERE false;"
           exit $fail
 
   # -------------------------------------------------------------------
