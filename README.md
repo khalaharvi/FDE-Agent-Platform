@@ -123,6 +123,26 @@ a real budget.
 
 </details>
 
+<details>
+<summary><b>Bring your own model provider (Anthropic API, OpenAI, Gemini, any /v1)</b></summary>
+
+```bash
+uv run fde-providers login anthropic          # validates live, stores in the OS keychain
+export FDE_MODEL_PROVIDER=anthropic FDE_MODEL_ID=claude-sonnet-5
+export FDE_EMBED_PROVIDER=openai FDE_EMBED_MODEL_ID=text-embedding-3-small
+uv run fde-agents-local doctor                # 5 preflight checks
+uv run fde-agents-local engagement --task ingest_interview \
+  --engagement-id <id> --input '{"material": "..."}'
+```
+
+Zero AWS credentials required. `FDE_MODEL_ID` is required for any non-Bedrock
+provider; env vars override the keychain for CI/servers. Anthropic and
+OpenCode Zen have no embeddings API — pair chat and embedding providers
+deliberately. Full provider matrix, login UX, and honesty labeling in
+[`docs/12-providers.md`](docs/12-providers.md).
+
+</details>
+
 ---
 
 ## What is here
@@ -134,7 +154,7 @@ a real budget.
 fde-platform/
 ├── pyproject.toml       uv workspace root: 5 members, ruff + mypy config
 ├── uv.lock              committed; every build is --frozen
-├── docs/                13 documents — the blueprints
+├── docs/                14 documents — the blueprints
 ├── db/                  15 migrations + a 25-test smoke suite
 ├── packages/
 │   ├── fde-mcp/         MCP server: 21 tools (graph, proposals, drift, workflow, evidence), embedder worker
@@ -233,7 +253,7 @@ model — the one to read if you read only one**), and
 [`docs/09-deployment.md`](docs/09-deployment.md) (AgentCore, IAM, CI/CD, cost).
 
 <details>
-<summary><b>Full reading list (13 documents)</b></summary>
+<summary><b>Full reading list (14 documents)</b></summary>
 
 | # | Document | What it answers |
 |---|---|---|
@@ -249,6 +269,7 @@ model — the one to read if you read only one**), and
 | 9 | [`docs/09-deployment.md`](docs/09-deployment.md) | AgentCore, IAM, CI/CD, cost, build order |
 | 10 | [`docs/10-prodops-runbook.md`](docs/10-prodops-runbook.md) | for the product operations group |
 | 11 | [`docs/11-python-conventions.md`](docs/11-python-conventions.md) | uv workspace, package boundaries, logging, what the tooling enforces |
+| 12 | [`docs/12-providers.md`](docs/12-providers.md) | bring-your-own model provider: login, provider matrix, local full-flow walkthrough |
 | — | [`docs/99-sources.md`](docs/99-sources.md) | every external claim → a URL, plus what could not be verified |
 
 </details>

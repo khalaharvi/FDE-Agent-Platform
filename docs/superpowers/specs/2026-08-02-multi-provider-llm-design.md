@@ -1,6 +1,6 @@
 # Multi-provider LLM support — design
 
-**Date:** 2026-08-02 · **Status:** approved by user, pre-implementation
+**Date:** 2026-08-02 · **Status:** implemented on feat/multi-provider-llm
 **Sub-project 1 of 2.** Sub-project 2 (one-click AWS deploy) is a separate spec; this design is deliberately "local-first, deploy-ready" so that spec can offer provider choice at launch time without rework here.
 
 ## Problem
