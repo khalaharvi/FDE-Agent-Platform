@@ -142,16 +142,17 @@ class Database(Construct):
         # is CDK's default) and attaches it via
         # `AWS::SecretsManager::SecretTargetAttachment` -- exactly one
         # `AWS::SecretsManager::Secret` resource
-        # (`test_db_secret_is_rds_managed_shape` pins that count), in the
-        # same `{"host","port","username","password","dbname"}` rotation
-        # shape `fde_mcp.db._dsn_from_secrets_manager` parses. At synth
-        # time the secret's JSON only carries `username`/`password` --
-        # `host`/`port`/`dbname` are populated once standard RDS rotation
-        # runs (`cluster.add_rotation_single_user()`, wired in a later
-        # task). Until then, `_dsn_from_secrets_manager`'s own tolerant
-        # fallbacks (`secret.get("host") or settings.host`, same pattern
-        # for `dbname`) are satisfied by the `FDE_DB_HOST` / `FDE_DB_NAME`
-        # env vars a later task sets on the consuming Lambda/runtime
-        # alongside this secret's ARN (`FDE_DB_SECRET_ARN`).
+        # (`test_db_secret_is_rds_managed_shape` pins that count). At synth
+        # time the secret's own JSON only carries `username`/`password`,
+        # but per AWS's docs for `SecretTargetAttachment`, that resource
+        # "completes the final link... by adding the database connection
+        # information to the secret JSON" -- it enriches the secret with
+        # `host`/`port`/`dbname` (plus `engine`) at DEPLOY time, when the
+        # attachment is created, independent of rotation. So by the time
+        # any consumer reads this secret, it already has the full
+        # `{"host","port","username","password","dbname"}` shape
+        # `fde_mcp.db._dsn_from_secrets_manager` parses -- no extra
+        # `FDE_DB_HOST` / `FDE_DB_NAME` env-var plumbing is needed on the
+        # consuming Lambda/runtime; the secret ARN alone is sufficient.
         assert self.cluster.secret is not None
         self.secret = self.cluster.secret
