@@ -353,6 +353,61 @@ async def test_granting_admin_to_a_deactivated_reviewer_is_refused(
     )
 
 
+async def test_admin_grant_revoke_and_regrant_roundtrip(
+    admin: str, a_reviewer: dict[str, Any], sql: Any
+) -> None:
+    """A second admin is appointed, removed, and reappointed, end to end.
+
+    The revoke leg is the one the "last admin" test cannot reach: it refuses
+    before writing. This is the only coverage of the successful
+    `UPDATE hitl.reviewer_admin SET revoked_at` and of `set_admin`'s
+    ON CONFLICT DO UPDATE branch, both executed as `fde_gate_service` under
+    the column-scoped grant from db/016 -- either would fail with permission
+    denied if that grant list were wrong.
+    """
+    rid = a_reviewer["reviewer_id"]
+    target = a_reviewer["principal"]
+
+    def rows() -> list[dict[str, Any]]:
+        return sql(
+            "SELECT granted_by, granted_at, revoked_at FROM hitl.reviewer_admin "
+            "WHERE reviewer_id = %(r)s",
+            {"r": rid},
+        )
+
+    def is_admin_now() -> bool:
+        return bool(sql("SELECT hitl.is_reviewer_admin(%(p)s) AS a", {"p": target})[0]["a"])
+
+    granted = await ui.reviewer_admin_post(_post(admin, rid, admin="1"))
+    assert granted.status == HTTPStatus.SEE_OTHER
+    assert "admin granted to" in unquote(granted.headers["Location"])
+    (row,) = rows()
+    assert row["revoked_at"] is None
+    assert row["granted_by"] == admin
+    assert is_admin_now()
+    # Appointed, and the page is really theirs now.
+    assert (await ui.reviewers_page(_get(target))).status == HTTPStatus.OK
+    first_granted_at = row["granted_at"]
+
+    # Allowed because `admin` is still a live administrator, so this is not
+    # the last one.
+    revoked = await ui.reviewer_admin_post(_post(admin, rid, admin="0"))
+    assert revoked.status == HTTPStatus.SEE_OTHER
+    assert "admin revoked from" in unquote(revoked.headers["Location"])
+    (row,) = rows()
+    assert row["revoked_at"] is not None, "revocation is a stamp on the existing row"
+    assert not is_admin_now()
+    assert (await ui.reviewers_page(_get(target))).status == HTTPStatus.FORBIDDEN
+
+    regranted = await ui.reviewer_admin_post(_post(admin, rid, admin="1"))
+    assert regranted.status == HTTPStatus.SEE_OTHER
+    all_rows = rows()
+    assert len(all_rows) == 1, "re-granting updates the row rather than adding a second"
+    assert all_rows[0]["revoked_at"] is None
+    assert all_rows[0]["granted_at"] >= first_granted_at, "the live grant is re-stamped"
+    assert is_admin_now()
+
+
 async def test_the_last_admin_cannot_be_removed(
     admin: str, a_reviewer: dict[str, Any], sql: Any
 ) -> None:

@@ -67,15 +67,16 @@ jobs:
       - name: migrations + 25 smoke tests
         run: ./db/rebuild.sh fde
       - name: core invariants must hold
-        # These eighteen statements MUST all fail. If any succeeds, an agent
+        # These twenty statements MUST all fail. If any succeeds, an agent
         # can write the graph, publish a workflow, label its own training
         # data, or appoint its own reviewer, and the platform's central
         # guarantee is gone. Asserted here rather than trusted.
         #
         # The first eight are the original set and are not to be edited --
-        # they are the four-layer invariant itself. The ten below them guard
-        # the reviewer roster (db/016): the console may administer it, and
-        # nothing else may touch it.
+        # they are the four-layer invariant itself. The twelve below them
+        # guard the reviewer roster (db/016): the console may administer it,
+        # nothing else may touch it, and even the console may only write the
+        # columns db/016 names.
         run: |
           set -u
           fail=0
@@ -111,6 +112,12 @@ jobs:
           assert_denied fde_rl_rollout "INSERT INTO hitl.reviewer_admin (reviewer_id,granted_by) VALUES (1,'x');"
           assert_denied fde_gate_service "DELETE FROM hitl.reviewer;"
           assert_denied fde_gate_service "UPDATE hitl.reviewer SET principal = 'x';"
+          # The column-scoped UPDATE, asserted from the other side: the gate
+          # service may stamp revoked_at/granted_by/granted_at and is_active,
+          # and may not touch the primary key of an authority (moving one is
+          # granting a different one) or a reviewer's display name.
+          assert_denied fde_gate_service "UPDATE hitl.reviewer_authority SET gate_kind = 'factual';"
+          assert_denied fde_gate_service "UPDATE hitl.reviewer SET display_name = 'x';"
           exit $fail
 
   # -------------------------------------------------------------------
