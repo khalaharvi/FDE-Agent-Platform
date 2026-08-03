@@ -165,8 +165,11 @@ uv run fde-training export-sft --stats    # training data from gate outcomes
 ```
 
 The MCP server itself needs only `FDE_DB_DSN`. Tools that embed queries, such
-as `kg_search`, call Amazon Bedrock and will fail at call time without AWS
-credentials — that is expected in a local-only setup, not a bug.
+as `kg_search`, call an embedding provider — Amazon Bedrock by default, so
+they fail at call time without AWS credentials. That is expected in a
+local-only setup, not a bug, and it is configurable: `FDE_EMBED_PROVIDER`
+also accepts OpenAI, Gemini, or any OpenAI-compatible endpoint
+(`docs/12-providers.md`).
 
 ## Next step
 

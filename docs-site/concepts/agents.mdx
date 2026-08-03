@@ -99,5 +99,7 @@ uv run fde-mcp --help                    # prints the env contract
 FDE_MCP_TRANSPORT=stdio uv run fde-mcp   # serve the 22 tools over stdio
 ```
 
-Tools that embed queries (such as `kg_search`) call Bedrock and need AWS
-credentials; everything else works against your local Postgres.
+Tools that embed queries (such as `kg_search`) call an embedding provider —
+Bedrock by default, so they need AWS credentials unless you point
+`FDE_EMBED_PROVIDER` at OpenAI, Gemini, or an OpenAI-compatible endpoint.
+Everything else works against your local Postgres.
