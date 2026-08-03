@@ -63,7 +63,7 @@ def _basic_config(**overrides: Any) -> AgentRuntimeConfig:
 @pytest.fixture(autouse=True)
 def _patch_agent_and_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rt, "Agent", _FakeAgent)
-    monkeypatch.setattr(rt, "BedrockModel", lambda model_id: model_id)
+    monkeypatch.setattr(rt.providers, "build_model", lambda model_id, backend: model_id)
 
 
 def _patch_mcp_client(monkeypatch: pytest.MonkeyPatch, client: _FakeToolsClient) -> None:
@@ -224,6 +224,41 @@ async def test_on_event_hook_runs_before_the_tool_result_it_inspects(
     kinds = [e["type"] for e in events]
     # guardrail_violation must precede the tool_result it is ABOUT.
     assert kinds.index("guardrail_violation") < kinds.index("tool_result")
+
+
+# ---------------------------------------------------------------------------
+# Model backend -- start_session's audit model_id is provider-qualified.
+# ---------------------------------------------------------------------------
+async def test_start_session_records_qualified_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FDE_MODEL_PROVIDER", "anthropic")
+    monkeypatch.setenv("FDE_MODEL_ID", "claude-sonnet-5")
+    # conftest's autouse fixture clears both settings caches around each test
+    client = _FakeToolsClient()
+    _patch_mcp_client(monkeypatch, client)
+    starts: list[dict[str, Any]] = []
+
+    async def _fake_start_session(mcp_client: Any, **kwargs: Any) -> Any:
+        starts.append(kwargs)
+        return object()
+
+    async def _fake_end_session(mcp_client: Any, session: Any, **kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(rt.tracing, "start_session", _fake_start_session)
+    monkeypatch.setattr(rt.tracing, "end_session", _fake_end_session)
+    _patch_turn(
+        monkeypatch,
+        [{"type": "turn_complete", "final_text": "", "provenance": [], "proposal_ids": []}],
+    )
+
+    config = _basic_config()
+    await _collect(
+        config, app=object(), payload={"task": "do_thing", "engagement_id": "e1", "input": {}}
+    )
+
+    assert starts[0]["model_id"] == "anthropic/claude-sonnet-5"
 
 
 # ---------------------------------------------------------------------------
