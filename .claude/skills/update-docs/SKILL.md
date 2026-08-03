@@ -61,6 +61,7 @@ pages for them.
 | `concepts/agents` | three agents, the loop, the MCP tool count | tool registrations in `packages/fde-mcp/src/fde_mcp/tools/`, agent definitions in `fde-agents` |
 | `concepts/training-flywheel` | gate outcomes → SFT/preference data, the kappa band, "stop before RL" | `packages/fde-training` (`rewards.DEFAULT_WEIGHTS`, `rival_grader` kappa constants), `docs/06-training.md` |
 | `guides/for-operators` | the product-ops funnel — reviewer roster, transcript intake and its coverage number, agent launcher, review/merge, publish, playbook export — with **no terminal commands on the page** | the `/ui/*` routes in `packages/fde-gate/src/fde_gate/ui.py` (a renamed or added route breaks the walkthrough), `GET /api/workflows/{id}/playbook.md`, the `fde-operator` plugin's command list, the reviewer-roster denials |
+| `guides/model-providers` | the non-Bedrock path — provider matrix, the chat/embeddings pairing rule, `fde-providers login`, the no-AWS local run, `openai-compat` presets — **and the stub-tested-not-live-validated label**, which is the AWS honesty rule applied to every other provider | `PROVIDER_KEYS` in `packages/fde-agents/src/fde_agents/common/providers.py`, `PROVIDER_ENV_VARS` and `COMPAT_PRESETS` in `packages/fde-mcp/src/fde_mcp/credentials.py`, `fde-providers` subcommands in `packages/fde-mcp/src/fde_mcp/providers_cli.py`, `_doctor_checks()` in `packages/fde-agents/src/fde_agents/local_runner.py`, the 1024-dim domain in `db/001`, and `docs/12-providers.md` as the source |
 
 The README is a public doc too, and it duplicates claims the site makes. Its
 sections carry their own triggers:
@@ -96,11 +97,12 @@ silently, they rot on pages your diff never pointed at, and the same count is
 usually stated on three or four pages at once. Sweep first, unconditionally:
 
 ```bash
-grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+)[- ]([a-z]+[- ]){0,2}(tests?|migrations?|smoke tests?|tools?|packages?|agents?|pages?|layers?|denials?|kinds?|types?|policies|axes|bugs?|documents?|diagrams?|reviewers?|tables?|images?|runtimes?|traces?|files?|invariants?|commands?|steps?|members?|statements?|gates?|checks?)' \
+grep -rnEi --exclude-dir=superpowers '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+)[- ]([a-z]+[- ]){0,2}(tests?|migrations?|smoke tests?|tools?|packages?|agents?|pages?|layers?|denials?|kinds?|types?|policies|axes|bugs?|documents?|diagrams?|reviewers?|tables?|images?|runtimes?|traces?|files?|invariants?|commands?|steps?|members?|statements?|gates?|checks?|providers?|presets?)' \
     docs-site/ README.md CONTRIBUTING.md CLAUDE.md claude-plugin/ docs/ .claude/agents/
 ```
 
-Three things that pattern is built for:
+Six things behind that command — what the pattern catches, which files it
+sweeps, and what to leave alone in the results:
 
 - **Counts are spelled out as often as they are digits** — "five packages",
   "Fifteen migrations", "Fourteen real bugs". The word list runs to twenty
@@ -124,15 +126,21 @@ Three things that pattern is built for:
   because it reappears in everything that agent writes. Sweeping them is not
   permission to rewrite them to match the site — fix a wrong number, leave the
   framing alone.
-- **Do not "fix" a dated record.** Sweeping `docs/` reaches
-  `docs/superpowers/{plans,specs,audits}/` and `docs/99-sources.md` §8, which
-  are point-in-time documents: a plan that says *"the '21 tools' claims are
-  updated only in Task 6"*, a spec written when there were eight CI denials, a
-  ledger row reading *"'13 migrations' in README | there are 12 | corrected"*.
-  Every one of those numbers is **correct as history** and editing it destroys
-  the record — the ledger row would stop describing the bug it exists to
-  document. Read the hit, decide whether the sentence is claiming *what is true
-  now* or *what was true then*, and only touch the first kind.
+- **Do not "fix" a dated record.** `docs/superpowers/{plans,specs,audits}/` is
+  excluded from the sweep by `--exclude-dir=superpowers`, because *every*
+  number in it is point-in-time by construction — a plan that says *"the '21
+  tools' claims are updated only in Task 6"*, a spec written when there were
+  eight CI denials. None of it is ever a target, so surfacing it only trains
+  you to skim past hits, and a sweep you skim is a sweep that misses the one
+  real stale count. The exclusion stops at that directory. `docs/99-sources.md`
+  stays swept, because it is a live document with dated rows inside it: §6 and
+  §7 claim what is true *now*, while §8's correction table is history — a row
+  reading *"'13 migrations' in README | there are 12 | corrected"* is **correct
+  as history**, and editing it would destroy the record, leaving the row no
+  longer describing the bug it exists to document. That distinction is per
+  sentence, not per file, which is why it cannot be automated away like the
+  directory can. Read the hit, decide whether it claims *what is true now* or
+  *what was true then*, and only touch the first kind.
 - **Counts appear hyphenated and singular, as adjectives** — "the *21-tool*
   loop", "a *four-layer* invariant" — which is why the noun alternatives carry
   `?` and the separator accepts `-`. That form is exactly how the last stale

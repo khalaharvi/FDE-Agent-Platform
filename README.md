@@ -320,8 +320,8 @@ Gateway and Memory provisioning, and Bedrock RFT submission. Those are
 written against the verified API shapes documented in `docs/99-sources.md`
 but have not been executed.
 
-**Sixteen real bugs were found and fixed while building this**, and a
-seventeenth is recorded open rather than quietly carried — all of them in
+**Seventeen real bugs were found and fixed while building this**, and an
+eighteenth is recorded open rather than quietly carried — all of them in
 `docs/99-sources.md` §7–§8, with root causes. Highlights: `merge_proposal` stamped
 `valid_from` with `clock_timestamp()` while reads used transaction time (a
 read-your-own-write failure); the same function later aborted on its own

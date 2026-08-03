@@ -37,7 +37,7 @@
       },
       {
         "group": "Guides",
-        "pages": ["guides/for-operators"]
+        "pages": ["guides/for-operators", "guides/model-providers"]
       },
       {
         "group": "Running the platform",

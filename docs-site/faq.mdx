@@ -49,12 +49,16 @@ that is the [quickstart](/quickstart), and it is the fully tested surface.
 Bedrock is the default for model calls and query embedding, not a
 requirement: `FDE_MODEL_PROVIDER` and `FDE_EMBED_PROVIDER` also accept
 Anthropic's API, OpenAI, Gemini, and any OpenAI-compatible `/v1` endpoint,
-with keys stored in the OS keychain by `fde-providers login`. The repo's
-`docs/12-providers.md` is the source of truth for that path.
+with keys stored in the OS keychain by `fde-providers login`.
+[Bring your own model provider](/guides/model-providers) walks that path end
+to end; `docs/12-providers.md` in the repo covers the same ground for anyone
+reading the code.
 
 What remains AWS-shaped is the *deployment* story — running the agents as
-Bedrock AgentCore runtimes and the gate service as Lambda. Those paths are
-written against verified API shapes but have not been validated live — see
+Bedrock AgentCore runtimes and the gate service as Lambda — plus the offline
+training pipeline's judge and trace-generation paths, which still call Bedrock
+directly whatever the agents are configured to use. Those paths are written
+against verified API shapes but have not been validated live — see
 [Status and honesty](/status).
 
 ## Can I adopt just the gate model?
