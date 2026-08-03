@@ -11,7 +11,7 @@ that lets you find out you were wrong cheaply.
 
 | Phase | Build | Done when | Est. |
 |---|---|---|---|
-| **0** | Aurora + migrations `001`–`012`; `rebuild.sh` green in CI | 16 smoke tests pass on a clean DB | 2–3 d |
+| **0** | Aurora + migrations `001`–`017`; `rebuild.sh` green in CI | 25 smoke tests pass on a clean DB | 2–3 d |
 | **1** | Gate service + a minimal review UI | a human can approve a hand-written proposal and see the commit | 1 w |
 | **2** | KG MCP server + embedder worker, run locally over stdio | `kg_search` returns fused results with provenance | 1 w |
 | **3** | Engagement Agent on AgentCore Runtime | a real interview becomes a merged commit | 1–2 w |
@@ -83,7 +83,7 @@ more than ~30% row churn — HNSW graph quality degrades with heavy updates.
 
 `db/rebuild.sh` drops, recreates, applies `0*.sql` in order, and runs the smoke
 test. That is the CI gate: **migrations must apply cleanly in order on an empty
-database, and all 16 smoke tests must pass.** Production uses the same files
+database, and all 25 smoke tests must pass.** Production uses the same files
 forward-only (no drop) via your migration runner of choice.
 
 ---
@@ -417,7 +417,7 @@ Separate Aurora clusters per client is the stronger answer where contracts deman
 - [ ] pgvector ≥ 0.8.0 verified in the target environment
 - [ ] pgvector built with `OPTFLAGS=""` (or a distro package)
 - [ ] `db/rebuild.sh` green in CI on a clean database
-- [ ] All 16 smoke tests passing, including 2/3/4 (the fail-closed tests)
+- [ ] All 25 smoke tests passing, including 2/3/4 (the fail-closed tests)
 - [ ] `hitl.merge_proposal` `EXECUTE` revoked from PUBLIC; granted only to the gate service
 - [ ] `fde_agent` verified unable to write `kg.node` (test it, do not assume)
 - [ ] Gate policy reviewed with the actual reviewers who will clear the gates

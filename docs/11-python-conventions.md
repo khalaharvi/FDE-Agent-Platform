@@ -212,7 +212,7 @@ the build instead of the first invocation.
 
 ## 9. Tests
 
-190 tests. `pytest` with `asyncio_mode = "auto"`, `--strict-markers`,
+814 tests. `pytest` with `asyncio_mode = "auto"`, `--strict-markers`,
 `--strict-config`, and `filterwarnings = ["error"]` — a new
 `DeprecationWarning` fails the build rather than scrolling past.
 
@@ -222,8 +222,9 @@ Two markers: `requires_db` (skips cleanly without `FDE_DB_DSN`) and
 rather than silently skipping — a skipped test suite that reports green is
 worse than no suite.
 
-**The invariant tests are not pytest.** Six SQL statements in the CI
-`database` job that must all be *denied*:
+**The invariant tests are not pytest.** Twenty-five SQL statements in the CI
+`database` job that must all be *denied*. The first eight are the four-layer
+invariant itself and are not to be edited:
 
 ```
 fde_agent      → INSERT kg.node                      must fail
@@ -232,11 +233,21 @@ fde_agent      → UPDATE wf.workflow SET status=...   must fail
 fde_agent      → UPDATE trn.trace_session.outcome    must fail
 fde_rl_rollout → INSERT hitl.proposal                must fail
 fde_rl_rollout → UPDATE trn.trace_session.outcome    must fail
+fde_agent      → wf.publish_workflow                 must fail
+fde_prodops    → UPDATE wf.workflow SET status=...   must fail
 ```
 
-If any succeeds, an agent can write the graph or label its own training data
-and the platform's central guarantee is gone. Asserted every run rather than
-trusted.
+The other seventeen guard the surfaces added since: twelve for the reviewer
+roster (`db/016`) — nothing but the console may write it, and even the console
+may not delete a reviewer or rewrite a principal — and five for evidence
+intake (`db/017`), pinning the console's `INSERT` on `kg.source`/`kg.chunk`/
+`kg.embed_queue` so it never widens into `UPDATE`, `DELETE`, or the graph
+tables.
+
+If any succeeds, an agent can write the graph, label its own training data, or
+appoint its own reviewer, and the platform's central guarantee is gone.
+Asserted every run rather than trusted. Adding a grant means adding a denial
+that proves its boundary; all twenty-five must keep failing.
 
 ---
 
