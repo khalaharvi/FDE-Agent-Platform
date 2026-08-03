@@ -1,4 +1,5 @@
 {% extends "base.html.j2" %}
+{% import "_fields.html.j2" as fields_macro %}
 {% block title %}Runs{% endblock %}
 {% block content %}
 <h1>Runs</h1>
@@ -14,22 +15,58 @@
 {% if not workflows %}
   <p class="empty">No published workflow to run. Publish one first.</p>
 {% else %}
-<form method="post" action="/ui/runs/start">
+{# Choosing the workflow is a GET, because which fields the run needs depends
+   on which workflow it is and this console has no JavaScript. The cost is a
+   second click; what it buys is that the second step is a form instead of a
+   box asking a non-technical operator to type JSON. #}
+<form method="get" action="/ui/runs">
   <fieldset>
     <legend>New run</legend>
-    <label>Workflow:
-      <select name="workflow_id">
+    <div class="field">
+      <label for="f_workflow">Workflow</label>
+      <select id="f_workflow" name="workflow_id" required>
+        <option value="">— choose —</option>
         {% for w in workflows %}
-          <option value="{{ w.workflow_id }}">{{ w.title }} ({{ w.slug }} v{{ w.version }})</option>
+          <option value="{{ w.workflow_id }}"{% if selected_workflow and w.workflow_id == selected_workflow.workflow_id %} selected{% endif %}>{{ w.title }} ({{ w.slug }} v{{ w.version }})</option>
         {% endfor %}
       </select>
-    </label>
-    <label style="display:block">Input (JSON object, becomes <code>$.input</code> in the run context):
-      <textarea name="input" placeholder="{}"></textarea>
-    </label>
+    </div>
+    {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+    <button type="submit">Choose</button>
+  </fieldset>
+</form>
+
+{% if selected_workflow %}
+<form method="post" action="/ui/runs/start">
+  <input type="hidden" name="workflow_id" value="{{ selected_workflow.workflow_id }}">
+  <fieldset>
+    <legend>Input for {{ selected_workflow.title }}</legend>
+    {% if input_fields %}
+      <p class="muted">
+        These fields come from the answer shape step
+        <code>{{ input_schema_step.step_key }}</code> ({{ input_schema_step.title }})
+        declares. It is the nearest thing this workflow writes down about its
+        own input -- check them against what the first step expects.
+      </p>
+      {% for f in input_fields %}
+        {{ fields_macro.field(f) }}
+      {% endfor %}
+    {% else %}
+      {# The labelled fallback. No step of this workflow declares a
+         human_schema, so there is nothing to generate fields from and
+         guessing would be worse than saying so. #}
+      <p class="muted">
+        This workflow declares no input shape, so there are no fields to
+        generate. Give the input as a JSON object, or leave it empty.
+      </p>
+      <label style="display:block" for="f_input">Input (JSON object, becomes <code>$.input</code> in the run context):
+        <textarea id="f_input" name="input" placeholder="{}"></textarea>
+      </label>
+    {% endif %}
     <button type="submit">Start</button>
   </fieldset>
 </form>
+{% endif %}
 {% endif %}
 
 <h2>Runs ({{ runs | length }})</h2>

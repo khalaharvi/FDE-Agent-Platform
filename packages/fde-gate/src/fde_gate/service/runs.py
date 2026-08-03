@@ -34,6 +34,7 @@ __all__ = [
     "list_runs",
     "respond",
     "start_run",
+    "step_schema",
 ]
 
 # The three non-terminal run states. `pending` and `running` are what the
@@ -205,6 +206,29 @@ async def awaiting_steps(principal: str, *, limit: int = 100) -> dict[str, Any]:
         steps = await fetchall(cur)
 
     return {"principal": principal, "returned": len(steps), "awaiting_steps": steps}
+
+
+async def step_schema(run_step_id: int) -> Any:
+    """The `human_schema` of the step this attempt belongs to, or None.
+
+    Re-read on the way IN to a response rather than carried through the form
+    the operator submitted. The form is client-supplied, and a schema that
+    decides how an answer is parsed is not something to accept from the
+    browser -- a tampered one would silently change what gets merged into the
+    run context.
+    """
+    async with db.tool_transaction(role=_prodops_role()) as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT s.human_schema
+              FROM wf.run_step rs
+              JOIN wf.step s ON s.step_id = rs.step_id
+             WHERE rs.run_step_id = %(rsid)s
+            """,
+            {"rsid": run_step_id},
+        )
+        row = await fetchone(cur)
+    return None if row is None else row["human_schema"]
 
 
 async def start_run(

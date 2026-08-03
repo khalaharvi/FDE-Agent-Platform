@@ -1,4 +1,5 @@
 {% extends "base.html.j2" %}
+{% import "_fields.html.j2" as fields_macro %}
 {% block title %}Run {{ run.run_id }}{% endblock %}
 {% block content %}
 <h1>{{ run.workflow_title }} <span class="muted">run #{{ run.run_id }}</span></h1>
@@ -66,24 +67,39 @@
     <strong>skip</strong> to move past it. <strong>approve</strong> is only for
     steps the workflow author intended to stop at.</p>
 {% endif %}
-{% if s.human_schema %}
-  <p class="muted">Expected answer shape: <code>{{ s.human_schema | tojson }}</code></p>
-{% endif %}
 <form method="post" action="/ui/run-steps/{{ s.run_step_id }}/respond">
   <input type="hidden" name="run_id" value="{{ run.run_id }}">
   <fieldset>
     <legend>Your answer</legend>
-    <label>Action:
-      <select name="action">
+    <div class="field">
+      <label for="action_{{ s.run_step_id }}">Action</label>
+      <select id="action_{{ s.run_step_id }}" name="action">
         <option value="approve">approve</option>
         <option value="retry">retry</option>
         <option value="skip">skip</option>
         <option value="abort">abort the run</option>
       </select>
-    </label>
-    <label style="display:block">Response (JSON object, merged into the run context):
-      <textarea name="response" placeholder="{}"></textarea>
-    </label>
+    </div>
+    {# `human_schema` is db/006's "the accepted answers", so when the step
+       declares one the answer is a form. The JSON box below is what happens
+       when it does not -- and it says which case it is, rather than being
+       the only option either way. #}
+    {% if answer_fields[s.run_step_id] %}
+      {% for f in answer_fields[s.run_step_id] %}
+        {{ fields_macro.field(f) }}
+      {% endfor %}
+    {% else %}
+      {% if s.human_schema %}
+        <p class="muted">This step declares an answer shape this console
+          cannot turn into fields: <code>{{ s.human_schema | tojson }}</code></p>
+      {% else %}
+        <p class="muted">This step declares no answer shape, so there are no
+          fields to generate.</p>
+      {% endif %}
+      <label style="display:block" for="response_{{ s.run_step_id }}">Response (JSON object, merged into the run context):
+        <textarea id="response_{{ s.run_step_id }}" name="response" placeholder="{}"></textarea>
+      </label>
+    {% endif %}
     <button type="submit">Answer</button>
   </fieldset>
 </form>

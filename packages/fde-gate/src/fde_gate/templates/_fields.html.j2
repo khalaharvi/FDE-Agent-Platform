@@ -1,0 +1,38 @@
+{# One control per `forms.Field`, for every generated form in the console.
+
+   A macro rather than three near-identical blocks because the launcher's
+   fields and a step's `human_schema` fields are the same thing by the time
+   they get here -- and a second copy of this markup would be the place the
+   `required` attribute quietly stopped matching what the server re-checks.
+
+   Each tag's optional attributes are on ONE line, with the space INSIDE the
+   `{% if %}`. The environment is built with `lstrip_blocks`, which eats the
+   indentation in front of a block tag -- so an attribute per line renders
+   `requiredplaceholder="…"`, a single unknown attribute, and the `required`
+   silently stops existing. Long lines here are the price of that not being
+   able to happen again; `test_schema_forms.py` pins it.
+
+   Everything renders through autoescaping. Labels, hints and option text on
+   these forms come from `wf.step.human_schema` and `kg.node.label`, which
+   are written by agents. #}
+{% macro field(f) %}
+<div class="field">
+  <label for="f_{{ f.name }}">{{ f.label }}{% if f.required %} <span class="req" title="required">*</span>{% endif %}</label>
+  {% if f.options %}
+    <select id="f_{{ f.name }}" name="{{ f.name }}"{% if f.required %} required{% endif %}>
+      {% for value, text in f.options %}
+        <option value="{{ value }}"{% if value == f.value %} selected{% endif %}>{{ text }}</option>
+      {% endfor %}
+    </select>
+  {% elif f.value_type == "boolean" %}
+    <input type="checkbox" id="f_{{ f.name }}" name="{{ f.name }}" value="1"{% if f.value %} checked{% endif %}>
+  {% elif f.rows %}
+    <textarea id="f_{{ f.name }}" name="{{ f.name }}" rows="{{ f.rows }}"{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>{{ f.value }}</textarea>
+  {% elif f.value_type in ("integer", "number") %}
+    <input type="number" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}"{% if f.value_type == "number" %} step="any"{% endif %}{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>
+  {% else %}
+    <input type="text" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}"{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>
+  {% endif %}
+  {% if f.hint %}<div class="muted hint">{{ f.hint }}</div>{% endif %}
+</div>
+{% endmacro %}

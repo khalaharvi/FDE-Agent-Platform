@@ -38,7 +38,7 @@ from fde_mcp.playbook import (
 
 log = get_logger(__name__)
 
-__all__ = ["get_playbook", "get_workflow", "list_workflows", "publish"]
+__all__ = ["get_playbook", "get_workflow", "input_schema", "list_workflows", "publish"]
 
 _MAX_LIMIT = 500
 
@@ -101,6 +101,40 @@ async def list_workflows(
         "returned": len(workflows),
         "workflows": workflows,
     }
+
+
+async def input_schema(workflow_id: int) -> dict[str, Any] | None:
+    """The shape this workflow declares for its run input, if it declares one.
+
+    "Declares" means the first step in ordinal order carrying a
+    `human_schema`. That is a heuristic and the console says so on screen:
+    `wf.run.input` has no schema column of its own, and the nearest thing a
+    workflow author writes down is the answer shape of the step that asks a
+    person for one. A workflow with no human step returns None and the start
+    form falls back to a labelled JSON box.
+
+    Returns `{"step_key", "title", "schema"}` -- the keys are there so the
+    page can name WHICH step it took the fields from, rather than presenting
+    a guess as a fact.
+    """
+    async with (
+        db.tool_transaction(role=get_gate_settings().gate.prodops_role) as conn,
+        conn.cursor() as cur,
+    ):
+        await cur.execute(
+            """
+            SELECT s.step_key, s.title, s.human_schema
+              FROM wf.step s
+             WHERE s.workflow_id = %(wid)s AND s.human_schema IS NOT NULL
+             ORDER BY s.ordinal
+             LIMIT 1
+            """,
+            {"wid": workflow_id},
+        )
+        row = await fetchone(cur)
+    if row is None:
+        return None
+    return {"step_key": row["step_key"], "title": row["title"], "schema": row["human_schema"]}
 
 
 async def get_workflow(workflow_id: int) -> dict[str, Any]:
