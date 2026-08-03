@@ -30,9 +30,11 @@ __all__ = [
     "awaiting_steps",
     "cancel",
     "get_run",
+    "is_missing",
     "list_runs",
     "respond",
     "start_run",
+    "step_schema",
 ]
 
 # The three non-terminal run states. `pending` and `running` are what the
@@ -93,6 +95,19 @@ async def list_runs(
     }
 
 
+def is_missing(result: dict[str, Any]) -> bool:
+    """Is this `get_run` result the not-found envelope rather than a run?
+
+    A function, and not `"error" in result`, because `wf.run` HAS an `error`
+    column -- so every real run carries an `error` key, usually null, and the
+    membership test was true for all of them. Both callers used it, so
+    `/ui/runs/{id}` and `GET /api/runs/{id}` answered "not found" for every
+    run that existed. The presence of `run_id` is the thing that actually
+    distinguishes the two shapes.
+    """
+    return "run_id" not in result
+
+
 async def get_run(run_id: int) -> dict[str, Any]:
     """One run with every attempt of every step it has taken.
 
@@ -100,6 +115,9 @@ async def get_run(run_id: int) -> dict[str, Any]:
     tells an operator to read the error message, and a `retry` policy means
     the interesting error is usually on an earlier attempt than the one
     currently open.
+
+    A missing run comes back as `{"error": ...}`. Test for it with
+    `is_missing`, never with `"error" in result` -- see that function.
     """
     async with db.tool_transaction(role=_prodops_role()) as conn, conn.cursor() as cur:
         await cur.execute(
@@ -188,6 +206,29 @@ async def awaiting_steps(principal: str, *, limit: int = 100) -> dict[str, Any]:
         steps = await fetchall(cur)
 
     return {"principal": principal, "returned": len(steps), "awaiting_steps": steps}
+
+
+async def step_schema(run_step_id: int) -> Any:
+    """The `human_schema` of the step this attempt belongs to, or None.
+
+    Re-read on the way IN to a response rather than carried through the form
+    the operator submitted. The form is client-supplied, and a schema that
+    decides how an answer is parsed is not something to accept from the
+    browser -- a tampered one would silently change what gets merged into the
+    run context.
+    """
+    async with db.tool_transaction(role=_prodops_role()) as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT s.human_schema
+              FROM wf.run_step rs
+              JOIN wf.step s ON s.step_id = rs.step_id
+             WHERE rs.run_step_id = %(rsid)s
+            """,
+            {"rsid": run_step_id},
+        )
+        row = await fetchone(cur)
+    return None if row is None else row["human_schema"]
 
 
 async def start_run(

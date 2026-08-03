@@ -1,0 +1,95 @@
+{% extends "base.html.j2" %}
+{% import "_fields.html.j2" as fields_macro %}
+{% block title %}Run an agent{% endblock %}
+{% block content %}
+<h1>Run an agent</h1>
+<p class="muted">
+  Agents propose; nothing they produce reaches the graph until a reviewer
+  approves it on the <a href="/ui">review queue</a>.
+</p>
+
+{# Step one is a GET form on purpose: choosing an engagement, an agent and a
+   task changes which fields exist below, and this console has no JavaScript
+   to swap them in place. A GET means the half-chosen state is a URL --
+   bookmarkable, and shareable with the colleague who knows the answer. #}
+<h2>1. What do you want done?</h2>
+{% if not engagements %}
+  <p class="empty">No engagement has any evidence, proposals or commits yet.
+    Register a source first on <a href="/ui/sources/new">Sources → New source</a>.</p>
+{% else %}
+<form method="get" action="/ui/agents/run">
+  <fieldset>
+    <legend>Pick a task</legend>
+    <div class="field">
+      <label for="f_engagement">Engagement</label>
+      <select id="f_engagement" name="engagement_id" required>
+        <option value="">— choose —</option>
+        {% for e in engagements %}
+          <option value="{{ e }}"{% if e == engagement_id %} selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="f_agent">Agent</label>
+      <select id="f_agent" name="agent" required>
+        <option value="">— choose —</option>
+        {% for name in agent_tasks %}
+          <option value="{{ name }}"{% if name == agent %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <div class="muted hint">The engagement agent works on the graph; the
+        workflow agent works on workflows and drift.</div>
+    </div>
+    <div class="field">
+      <label for="f_task">Task</label>
+      <select id="f_task" name="task" required>
+        <option value="">— choose —</option>
+        {# Every agent's tasks in one list, prefixed, because a select cannot
+           depend on another select without JavaScript. The server refuses a
+           mismatched pair by name, so a wrong combination is a sentence
+           rather than a silent no-op. #}
+        {% for name, tasks in agent_tasks.items() %}
+          <optgroup label="{{ name }}">
+            {% for t in tasks %}
+              <option value="{{ t }}"{% if t == task and name == agent %} selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </optgroup>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Continue</button>
+  </fieldset>
+</form>
+{% endif %}
+
+{% if fields %}
+<h2>2. {{ task }}</h2>
+<p>{{ task_summary[task] }}</p>
+<form method="post" action="/ui/agents/run">
+  <input type="hidden" name="engagement_id" value="{{ engagement_id }}">
+  <input type="hidden" name="agent" value="{{ agent }}">
+  <input type="hidden" name="task" value="{{ task }}">
+  <fieldset>
+    <legend>{{ agent }} agent &middot; {{ task }}</legend>
+    {% for f in fields %}
+      {{ fields_macro.field(f) }}
+    {% endfor %}
+    {# The honest version of "please wait". Nothing records a launch -- there
+       is no table for one -- so an operator whose request dies has no page
+       that would tell them whether the agent ran. The only observable
+       outcome is what the agent proposes, and that is the review queue. #}
+    <p class="muted">
+      This waits for the agent to finish, which can take minutes on a long
+      transcript. Leave the tab open. Nothing records the launch itself, so
+      if this page returns an error, check the
+      <a href="/ui">review queue</a> before launching again — a task long
+      enough to outlast the request limit errors here while the agent keeps
+      running on the server, and whatever it proposes still arrives there.
+    </p>
+    <button type="submit">Launch</button>
+  </fieldset>
+</form>
+{% elif engagement_id and agent and task %}
+  <p class="empty">This task has no fields to fill in.</p>
+{% endif %}
+{% endblock %}

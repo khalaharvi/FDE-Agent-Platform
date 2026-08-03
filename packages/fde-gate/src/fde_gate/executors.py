@@ -56,6 +56,7 @@ __all__ = [
     "StepExecutor",
     "ToolExecutor",
     "default_executors",
+    "new_runtime_session_id",
     "resolve_args",
 ]
 
@@ -140,12 +141,16 @@ async def _jsonpath_match(context: Mapping[str, Any], path: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _new_runtime_session_id() -> str:
+def new_runtime_session_id() -> str:
     """>= 33 characters, the verified AgentCore constraint.
 
     Same construction as `fde_agents.deploy.invoke`: two hex UUIDs truncated
     to 40, rather than one `uuid4()` whose exact string length depends on the
     form it is rendered in.
+
+    Public because the console launcher (`service/agents.py`) mints one too,
+    for an invocation that belongs to no `wf.run`. Two constructions of the
+    same identifier would be two chances to violate the length constraint.
     """
     return (uuid.uuid4().hex + uuid.uuid4().hex)[:40]
 
@@ -232,7 +237,7 @@ class AgentExecutor:
                 }
             )
 
-        session_id = run.get("runtime_session_id") or _new_runtime_session_id()
+        session_id = run.get("runtime_session_id") or new_runtime_session_id()
         payload = {
             "task": step.get("instruction"),
             "engagement_id": str(run.get("engagement_id")),

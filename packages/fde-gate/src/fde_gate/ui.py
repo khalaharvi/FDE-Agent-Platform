@@ -42,9 +42,10 @@ from urllib.parse import quote
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from fde_gate.forms import fields_from_schema, values_from_form
 from fde_gate.http import GateError, Request, Response, pg_message
 from fde_gate.runner import advance, default_invoker
-from fde_gate.service import drift, proposals, reviewers, runs, sources, workflows
+from fde_gate.service import agents, drift, proposals, reviewers, runs, sources, workflows
 
 if TYPE_CHECKING:
     from fde_gate.http import Router
@@ -180,11 +181,16 @@ def _back(location: str, *, error: str | None = None, notice: str | None = None)
     flash cookie because this service holds no session state at all -- the
     JWT is the whole of it. The cost is an ugly URL after a failed action;
     the benefit is that there is nothing to expire, share, or forge.
+
+    `location` may already carry a query string -- "/ui/runs?workflow_id=3"
+    is how a refused run start gets the operator back to the form they were
+    filling in rather than to an empty one.
     """
+    separator = "&" if "?" in location else "?"
     if error:
-        return Response.redirect(f"{location}?error={quote(error, safe='')}")
+        return Response.redirect(f"{location}{separator}error={quote(error, safe='')}")
     if notice:
-        return Response.redirect(f"{location}?notice={quote(notice, safe='')}")
+        return Response.redirect(f"{location}{separator}notice={quote(notice, safe='')}")
     return Response.redirect(location)
 
 
@@ -363,40 +369,86 @@ async def publish_post(request: Request) -> Response:
 
 
 async def runs_page(request: Request) -> Response:
+    """The run list, and the two-step form that starts a new one.
+
+    `?workflow_id=` is the second step: with one chosen, the page renders the
+    fields that workflow's declared answer shape produces instead of the JSON
+    textarea it used to demand. Without one, only the picker -- there is no
+    way to know which fields to show before knowing which workflow.
+    """
     status = request.query.get("status")
     listing = await runs.list_runs(statuses=(status,) if status else None)
     published = await workflows.list_workflows(status="published")
+
+    chosen = request.query.get("workflow_id") or ""
+    selected = next(
+        (w for w in published["workflows"] if str(w["workflow_id"]) == chosen),
+        None,
+    )
+    declared = None if selected is None else await workflows.input_schema(int(chosen))
     return await _page(
         request,
         "runs.html.j2",
         runs=listing["runs"],
         workflows=published["workflows"],
         status=status,
+        selected_workflow=selected,
+        input_schema_step=declared,
+        input_fields=[] if declared is None else fields_from_schema(declared["schema"]),
     )
 
 
 async def run_page(request: Request) -> Response:
     run_id = request.param_int("run_id")
     run = await runs.get_run(run_id)
-    if "error" in run:
+    if runs.is_missing(run):
         return await _page(request, "not_found.html.j2", what=f"run {run_id}")
-    return await _page(request, "run.html.j2", run=run)
+    return await _page(
+        request,
+        "run.html.j2",
+        run=run,
+        # Per awaiting step, because two steps of one run can be parked at
+        # once and each declares its own answer shape. Built from the rows
+        # `get_run` already read -- no second query.
+        answer_fields={
+            int(step["run_step_id"]): fields_from_schema(step.get("human_schema"))
+            for step in run["awaiting"]
+        },
+    )
+
+
+async def _run_input(request: Request, workflow_id: int) -> dict[str, Any]:
+    """The new run's input, from generated fields or the JSON fallback.
+
+    Which one is decided by re-reading the workflow's declared shape, not by
+    looking at what the form happened to contain: a browser posting `input`
+    to a workflow that declares fields would otherwise choose its own parser.
+    """
+    declared = await workflows.input_schema(workflow_id)
+    fields = [] if declared is None else fields_from_schema(declared["schema"])
+    if fields:
+        return values_from_form(fields, request.form)
+    raw = request.form.get("input", "").strip()
+    run_input = json.loads(raw) if raw else {}
+    if not isinstance(run_input, dict):
+        raise GateError(HTTPStatus.BAD_REQUEST, "input must be a JSON object")
+    return run_input
 
 
 async def run_start_post(request: Request) -> Response:
+    workflow_id = 0
     try:
         workflow_id = int(request.field_str("workflow_id"))
-        raw = request.form.get("input", "").strip()
-        run_input = json.loads(raw) if raw else {}
-        if not isinstance(run_input, dict):
-            raise GateError(400, "input must be a JSON object")
         started = await runs.start_run(
-            workflow_id, request.principal, run_input=run_input, groups=request.groups
+            workflow_id,
+            request.principal,
+            run_input=await _run_input(request, workflow_id),
+            groups=request.groups,
         )
     except json.JSONDecodeError as exc:
-        return _back("/ui/runs", error=f"input is not valid JSON ({exc})")
+        return _back(_start_form(workflow_id), error=f"input is not valid JSON ({exc})")
     except Exception as exc:  # rendered to the operator
-        return _back("/ui/runs", error=_message(exc))
+        return _back(_start_form(workflow_id), error=_message(exc))
 
     run_id = int(started["run"]["run_id"])
     try:
@@ -406,15 +458,38 @@ async def run_start_post(request: Request) -> Response:
     return _back(f"/ui/runs/{run_id}", notice=f"run {run_id} started")
 
 
+def _start_form(workflow_id: int) -> str:
+    """Back to the start form with the same workflow still chosen.
+
+    A refused run start used to land on an empty form; whatever had been
+    filled in was gone, including the reason it was refused being about
+    fields that were no longer on screen.
+    """
+    return "/ui/runs" if workflow_id <= 0 else f"/ui/runs?workflow_id={workflow_id}"
+
+
+async def _answer_body(request: Request, run_step_id: int) -> dict[str, Any]:
+    """The human response, from generated fields or the JSON fallback.
+
+    The schema is re-read from the step rather than trusted from the form --
+    see `runs.step_schema`.
+    """
+    fields = fields_from_schema(await runs.step_schema(run_step_id))
+    if fields:
+        return values_from_form(fields, request.form)
+    raw = request.form.get("response", "").strip()
+    response_body = json.loads(raw) if raw else {}
+    if not isinstance(response_body, dict):
+        raise GateError(HTTPStatus.BAD_REQUEST, "response must be a JSON object")
+    return response_body
+
+
 async def respond_post(request: Request) -> Response:
     run_step_id = request.param_int("run_step_id")
     run_id = request.form.get("run_id", "")
     location = f"/ui/runs/{run_id}" if run_id else "/ui"
     try:
-        raw = request.form.get("response", "").strip()
-        response_body = json.loads(raw) if raw else {}
-        if not isinstance(response_body, dict):
-            raise GateError(400, "response must be a JSON object")
+        response_body = await _answer_body(request, run_step_id)
         answered = await runs.respond(
             run_step_id,
             request.principal,
@@ -698,6 +773,112 @@ async def source_reingest_post(request: Request) -> Response:
     )
 
 
+# ---------------------------------------------------------------------------
+# Agent task launcher
+#
+# The other end of the intake loop above: evidence goes in on /ui/sources,
+# and this is where an operator asks an agent to read it. Same rule about
+# losing form contents -- the paste box here holds a transcript too -- so
+# every refusal re-renders the page with what was typed still in it.
+# ---------------------------------------------------------------------------
+
+
+def _agent_choice(request: Request) -> tuple[str | None, str | None, str | None]:
+    """(engagement, agent, task) from wherever this request carries them.
+
+    Query string on the GET that chooses them, form fields on the POST that
+    acts, and one reader for both so the page a failed launch re-renders is
+    the page it was launched from.
+    """
+
+    def pick(name: str) -> str | None:
+        return (request.form.get(name) or request.query.get(name) or "").strip() or None
+
+    return pick("engagement_id"), pick("agent"), pick("task")
+
+
+async def _launcher_page(
+    request: Request, *, error: str | None = None, http_status: int = 200
+) -> Response:
+    engagement_id, agent, task = _agent_choice(request)
+    try:
+        context = await agents.launcher_context(
+            request.principal, engagement_id=engagement_id, agent=agent, task=task
+        )
+    except GateError as exc:
+        if exc.status == HTTPStatus.FORBIDDEN:
+            return await _forbidden(request, exc)
+        # An agent/task pair that does not exist -- a stale bookmark, or the
+        # cross-product a single flat task dropdown makes reachable. Show the
+        # picker again with the sentence naming what the pair should be.
+        context = await agents.launcher_context(request.principal, engagement_id=engagement_id)
+        error, http_status = exc.message, exc.status
+
+    return await _page(
+        request,
+        "agent_run.html.j2",
+        error=error,
+        http_status=http_status,
+        **{
+            **context,
+            # What was typed, back on the form. A transcript pasted into the
+            # box is the one thing on this page nobody should have to produce
+            # twice because the runtime was misconfigured.
+            #
+            # Read under `input_name`, which is what the control was named on
+            # the way out -- reading `field.name` here found nothing and
+            # silently echoed the empty default back, which is the failure
+            # this whole branch exists to prevent.
+            "fields": [
+                field.with_value(request.form.get(field.input_name, field.value))
+                for field in context["fields"]
+            ],
+        },
+    )
+
+
+async def agent_run_page(request: Request) -> Response:
+    """Pick an engagement, an agent and a task; then fill in that task's fields."""
+    return await _launcher_page(request)
+
+
+async def agent_run_post(request: Request) -> Response:
+    """Dispatch the chosen task, then land on the review queue.
+
+    The queue, and not `/ui/runs`, because that is where the OUTCOME is. A
+    launch creates no `wf.run` -- it is not a workflow -- so the runs page
+    would have answered a successful launch with a list that had not
+    changed. What did change is the proposal the agent raised, and the
+    notice below points at it from the page it is on.
+    """
+    try:
+        result = await agents.launch(
+            request.principal,
+            agent=request.field_str("agent"),
+            task=request.field_str("task"),
+            engagement_id=request.field_str("engagement_id"),
+            form=request.form,
+        )
+    except GateError as exc:
+        if exc.status == HTTPStatus.FORBIDDEN:
+            return await _forbidden(request, exc)
+        return await _launcher_page(request, error=exc.message, http_status=exc.status)
+    except Exception as exc:  # rendered to the operator, never swallowed
+        log.exception("ui_agent_launch_crashed", agent=request.form.get("agent"))
+        return await _launcher_page(
+            request, error=_message(exc), http_status=HTTPStatus.INTERNAL_SERVER_ERROR
+        )
+
+    return _back(
+        "/ui",
+        notice=(
+            f"the {result['agent']} agent finished {result['task']} "
+            f"({result['events']} {_plural(result['events'], 'event')}). "
+            "Anything it proposed is in the queue below."
+        ),
+    )
+
+
 async def reviewers_page(request: Request) -> Response:
     """The roster. Administrators only, checked in the service layer.
 
@@ -810,7 +991,7 @@ async def reviewer_admin_post(request: Request) -> Response:
 
 
 def register(router: Router) -> None:
-    """Attach the console's 26 routes to the shared router."""
+    """Attach the console's 28 routes to the shared router."""
     router.get("/ui", queue_page)
     router.get("/ui/proposals/{proposal_id}", proposal_page)
     router.post("/ui/proposals/{proposal_id}/decision", decision_post)
@@ -826,6 +1007,9 @@ def register(router: Router) -> None:
     router.post("/ui/sources", source_create_post)
     router.get("/ui/sources/{source_id}", source_page)
     router.post("/ui/sources/{source_id}/reingest", source_reingest_post)
+
+    router.get("/ui/agents/run", agent_run_page)
+    router.post("/ui/agents/run", agent_run_post)
 
     router.get("/ui/workflows", workflows_page)
     router.get("/ui/workflows/{workflow_id}", workflow_page)
