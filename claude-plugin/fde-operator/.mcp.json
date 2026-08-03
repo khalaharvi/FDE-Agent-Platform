@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "fde": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}/../..",
+        "--all-packages",
+        "--frozen",
+        "fde-mcp"
+      ],
+      "env": {
+        "FDE_MCP_TRANSPORT": "stdio",
+        "FDE_DB_DSN": "${FDE_DB_DSN}"
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "fde-operator",
+  "version": "0.1.0",
+  "description": "Operate the FDE Agent Platform from Claude: ingest interviews as anchored evidence, launch agent tasks, and export workflow playbooks into a vault. Proposes only -- approvals stay in the review console.",
+  "author": {
+    "name": "FDE Agent Platform contributors",
+    "url": "https://github.com/khalaharvi/FDE-Agent-Platform"
+  },
+  "homepage": "https://github.com/khalaharvi/FDE-Agent-Platform",
+  "repository": "https://github.com/khalaharvi/FDE-Agent-Platform",
+  "license": "Apache-2.0",
+  "keywords": [
+    "knowledge-graph",
+    "human-in-the-loop",
+    "product-operations",
+    "playbooks",
+    "mcp"
+  ]
+}
