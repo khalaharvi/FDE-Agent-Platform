@@ -7,7 +7,27 @@ tracking table) until the first production deployment freezes the schema.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Reviewer and authority administration in the console** (`/ui/reviewers`,
+  `db/016_reviewer_admin.sql`). Onboarding a reviewer, granting or revoking a
+  gate authority, and deactivating someone who has left were the one
+  operational task that still required an engineer with database access.
+  The page is gated on a new platform-wide `admin` authority
+  (`hitl.reviewer_admin`), checked server-side on every GET and POST; the
+  first admin on a deployment is still granted by hand, once, and
+  `docs/10-prodops-runbook.md` §8 carries the statement.
+- Ten new privilege denials (eighteen total): no role but `fde_gate_service`
+  may write the reviewer tables, and even it may not DELETE a reviewer or
+  rewrite a `principal` — gate decisions reference the row, so both would
+  rewrite the audit trail. Its UPDATE is column-scoped to the columns the
+  console actually sets.
+
+### Changed
+
+- Deactivation, never deletion, is now a property of the schema rather than a
+  convention: no role holds DELETE on `hitl.reviewer`,
+  `hitl.reviewer_authority` or `hitl.reviewer_admin`.
 
 ## [0.2.0] — 2026-08-02
 

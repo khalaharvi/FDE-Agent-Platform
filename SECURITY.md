@@ -17,7 +17,7 @@ This platform's core guarantee is: **agents propose, humans dispose;
 only `hitl.merge_proposal` writes the knowledge graph.** That guarantee
 is enforced at four independent layers (grants, SECURITY DEFINER
 boundaries, in-transaction gate re-checks, fail-closed submission) and
-asserted by eight privilege-denial checks in CI plus smoke tests 2–4
+asserted by eighteen privilege-denial checks in CI plus smoke tests 2–4
 and 17–25.
 
 Anything that lets an agent role write `kg.*` directly, merge without

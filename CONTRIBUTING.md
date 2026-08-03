@@ -38,7 +38,7 @@ uv lock --check                   # lockfile must match pyproject changes
 ## Rules that are enforced, not suggested
 
 - **The invariant is sacred.** Agents propose, humans dispose. CI asserts
-  eight privilege denials; your change must keep all eight failing. New
+  eighteen privilege denials; your change must keep all eighteen failing. New
   SECURITY DEFINER functions need `REVOKE ALL ... FROM PUBLIC` + explicit
   grants with a comment saying why (see db/011 for the style).
 - **Retrieval logic lives in SQL only** (`db/008`). The MCP tools and the

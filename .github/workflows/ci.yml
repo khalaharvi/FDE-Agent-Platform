@@ -67,10 +67,15 @@ jobs:
       - name: migrations + 25 smoke tests
         run: ./db/rebuild.sh fde
       - name: core invariants must hold
-        # These eight statements MUST all fail. If any succeeds, an agent can
-        # write the graph, publish a workflow, or label its own training
-        # data, and the platform's central guarantee is gone. Asserted here
-        # rather than trusted.
+        # These eighteen statements MUST all fail. If any succeeds, an agent
+        # can write the graph, publish a workflow, label its own training
+        # data, or appoint its own reviewer, and the platform's central
+        # guarantee is gone. Asserted here rather than trusted.
+        #
+        # The first eight are the original set and are not to be edited --
+        # they are the four-layer invariant itself. The ten below them guard
+        # the reviewer roster (db/016): the console may administer it, and
+        # nothing else may touch it.
         run: |
           set -u
           fail=0
@@ -89,6 +94,23 @@ jobs:
           assert_denied fde_rl_rollout "UPDATE trn.trace_session SET outcome='accepted';"
           assert_denied fde_agent "SELECT wf.publish_workflow(1,'x');"
           assert_denied fde_prodops "UPDATE wf.workflow SET status='published';"
+
+          # The reviewer roster decides who may clear a gate. An agent that
+          # could add a reviewer, grant an authority, or reactivate itself
+          # would be choosing its own judge -- the invariant above, defeated
+          # one layer up. Only fde_gate_service writes these tables (db/016),
+          # and even it may not DELETE a reviewer or rewrite a principal:
+          # gate decisions reference the row, so both would rewrite history.
+          assert_denied fde_agent "INSERT INTO hitl.reviewer (principal,display_name) VALUES ('x','x');"
+          assert_denied fde_agent "UPDATE hitl.reviewer SET is_active = true;"
+          assert_denied fde_agent "INSERT INTO hitl.reviewer_authority (reviewer_id,engagement_id,gate_kind,granted_by) VALUES (1,gen_random_uuid(),'control','x');"
+          assert_denied fde_agent "UPDATE hitl.reviewer_authority SET revoked_at = NULL;"
+          assert_denied fde_agent "SELECT count(*) FROM hitl.reviewer_admin;"
+          assert_denied fde_prodops "INSERT INTO hitl.reviewer (principal,display_name) VALUES ('x','x');"
+          assert_denied fde_training "UPDATE hitl.reviewer SET is_active = false;"
+          assert_denied fde_rl_rollout "INSERT INTO hitl.reviewer_admin (reviewer_id,granted_by) VALUES (1,'x');"
+          assert_denied fde_gate_service "DELETE FROM hitl.reviewer;"
+          assert_denied fde_gate_service "UPDATE hitl.reviewer SET principal = 'x';"
           exit $fail
 
   # -------------------------------------------------------------------

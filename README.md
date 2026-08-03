@@ -11,7 +11,7 @@ agents and the graph.
 
 > **The invariant: agents propose. Humans dispose. Only `hitl.merge_proposal`
 > writes the graph** — enforced at four independent layers and asserted by
-> eight privilege-denial checks in CI.
+> eighteen privilege-denial checks in CI.
 
 **Who this is for.** Forward-deployed and solutions engineers rebuilding the
 same engagement scaffolding for every client; platform leads who must answer
@@ -189,10 +189,10 @@ fde-platform/
 └── .github/workflows/   CI: static → database → tests → train-tests → ARM64 images → gated deploy
 ```
 
-**Gates, all green:** `ruff check` (169 files) + `ruff format --check` (166) ·
-`mypy --strict` on the four production packages (83 files, 0 issues) ·
-`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 609 Python tests
-against live Postgres · eight privilege-denial invariants, all correctly denied.
+**Gates, all green:** `ruff check` (171 files) + `ruff format --check` (168) ·
+`mypy --strict` on the four production packages (84 files, 0 issues) ·
+`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 628 Python tests
+against live Postgres · eighteen privilege-denial invariants, all correctly denied.
 
 </details>
 

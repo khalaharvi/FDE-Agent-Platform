@@ -20,9 +20,9 @@ uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task
 ## The invariant (do not weaken)
 
 Agents propose, humans dispose; only `hitl.merge_proposal` writes the graph.
-CI asserts eight privilege denials (`.github/workflows/ci.yml`, "core
+CI asserts eighteen privilege denials (`.github/workflows/ci.yml`, "core
 invariants must hold"). Any new grant or SECURITY DEFINER function must keep
-all eight failing and must `REVOKE ALL ... FROM PUBLIC` (functions default to
+all eighteen failing and must `REVOKE ALL ... FROM PUBLIC` (functions default to
 PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 
 ## Workspace map
