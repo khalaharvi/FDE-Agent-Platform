@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from typing import Any
@@ -73,6 +74,50 @@ def test_refuses_to_start_without_principal(monkeypatch: pytest.MonkeyPatch) -> 
 def test_help_exits_zero(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.argv", ["fde-gate-dev", "--help"])
     assert main() == 0
+
+
+def test_a_bad_upload_is_refused_in_words_through_a_real_socket() -> None:
+    """The operator-facing half of the parse-error fix, over real HTTP.
+
+    No database: parsing fails before any route is matched, which is exactly
+    why the refusal used to escape `lambda_handler` and reach the browser as
+    a dropped connection. This drives the whole path a browser drives --
+    socket, synthesized event, handler, response -- and reads the body the
+    operator would have been shown.
+    """
+    boundary = "----pytestBoundary"
+    body = (
+        (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="scan.pdf"\r\n'
+            "Content-Type: application/pdf\r\n\r\n"
+        ).encode()
+        + b"%PDF-1.4\x00\xff\xfe binary \x80\x81"
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+
+    _Handler.principal = "sme@example.com"
+    _Handler.groups = ""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/ui/sources/preview",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as excinfo:
+            urllib.request.urlopen(request, timeout=10).close()  # noqa: S310 -- as above
+        assert excinfo.value.code == 400
+        detail = excinfo.value.read().decode()
+        assert "scan.pdf" in detail
+        assert ".md" in detail
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.mark.requires_db

@@ -204,6 +204,41 @@ def test_multipart_survives_a_file_containing_its_own_boundary_text() -> None:
     assert "Then left." in request.files["file"].content
 
 
+def test_a_parse_refusal_reaches_the_wire_as_a_400_with_its_message() -> None:
+    """Through lambda_handler, not the parser: the message has to survive.
+
+    Parsing runs before any route is matched, so it sits outside the router's
+    error contract. The refusals it raises -- a PDF in the upload box, a
+    mismatched boundary, a malformed JSON body -- are worth nothing if they
+    leave the handler as an exception, because API Gateway turns that into a
+    bare 502 and the operator learns only that something broke.
+    """
+    from fde_gate.handler import lambda_handler  # noqa: PLC0415 -- see test_devserver
+
+    body = _multipart([("file", "scan.pdf", b"%PDF-1.4\x00\xff\xfe binary \x80\x81")])
+    result = lambda_handler(_multipart_event(body), None)
+
+    assert result["statusCode"] == HTTPStatus.BAD_REQUEST
+    assert "scan.pdf" in result["body"]
+    assert ".md" in result["body"]
+
+
+def test_a_malformed_json_body_also_reaches_the_wire_as_a_400() -> None:
+    """The same escape existed for JSON and was never caught.
+
+    `test_malformed_json_body_is_a_400_not_a_500` asserts the parser raises
+    the right thing; nothing asserted the handler did anything sensible with
+    it. It did not -- the GateError escaped. Same fix covers both.
+    """
+    from fde_gate.handler import lambda_handler  # noqa: PLC0415
+
+    event = _event("POST", "/api/items/1", body="{not json")
+    result = lambda_handler(event, None)
+
+    assert result["statusCode"] == HTTPStatus.BAD_REQUEST
+    assert "not valid JSON" in result["body"]
+
+
 def test_base64_encoded_body_is_decoded() -> None:
     request = parse_apigw_event(
         _event("POST", "/api/items/1", body=json.dumps({"payload": {"a": 1}}), base64_encoded=True)

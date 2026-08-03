@@ -34,6 +34,15 @@ tracking table) until the first production deployment freezes the schema.
 - `multipart/form-data` support in the gate's request parsing, for the file
   upload. A part that is not valid UTF-8 is refused by name rather than
   stored as replacement characters.
+
+### Fixed
+
+- Request-parse failures no longer escape `lambda_handler`. Parsing runs
+  before any route is matched, so it sits outside the router's error
+  contract: a rejected upload or a malformed JSON body left the handler as an
+  exception and reached the caller as a bare 502 (a dropped connection on the
+  dev server), losing the message that named what to do. Pre-existing for
+  malformed JSON; the upload refusals would have inherited it.
 - **Reviewer and authority administration in the console** (`/ui/reviewers`,
   `db/016_reviewer_admin.sql`). Onboarding a reviewer, granting or revoking a
   gate authority, and deactivating someone who has left were the one
