@@ -21,12 +21,23 @@ teach outsiders; internal docs are blueprints for people who already work here.
 git log --oneline -- docs-site/ README.md | head -5      # last docs-touching commit
 git log --oneline <that-sha>..HEAD                       # what has landed since
 git diff --stat <that-sha>..HEAD -- packages/ db/ .github/ infra/ \
+    claude-plugin/ .claude-plugin/ \
     pyproject.toml CHANGELOG.md CONTRIBUTING.md
 ```
 
 The root-level files are in that pathspec because the table below treats them as
 triggers: workspace members live in `pyproject.toml`, and `status` and `faq`
 claim things that only `CHANGELOG.md` and `CONTRIBUTING.md` can invalidate.
+`claude-plugin/` and `.claude-plugin/` are there because the operator plugin is
+a public adoption surface with its own README and its own tool count — it
+landed once with the pathspec not covering it, and the whole feature was
+invisible to this diff.
+
+The last docs-touching commit is a floor, not a guarantee: it tells you what
+landed since the docs last *moved*, not since they were last *correct*. A
+previous pass that fixed the README and not the site leaves drift older than
+that sha, which is why step 3 sweeps unconditionally instead of trusting this
+diff.
 
 Read the diff for the four things that invalidate a public page: a **count**
 changing, a **command or flag** changing, an **env var** added/renamed, and a
@@ -49,6 +60,7 @@ pages for them.
 | `concepts/knowledge-graph` | closed ontology, two time axes, hybrid retrieval, drift-as-SQL | ontology types in `db/001`–`db/002`, `kg.hybrid_search` in `db/008`, drift SQL in `db/007` |
 | `concepts/agents` | three agents, the loop, the MCP tool count | tool registrations in `packages/fde-mcp/src/fde_mcp/tools/`, agent definitions in `fde-agents` |
 | `concepts/training-flywheel` | gate outcomes → SFT/preference data, the kappa band, "stop before RL" | `packages/fde-training` (`rewards.DEFAULT_WEIGHTS`, `rival_grader` kappa constants), `docs/06-training.md` |
+| `guides/for-operators` | the product-ops funnel — reviewer roster, transcript intake and its coverage number, agent launcher, review/merge, publish, playbook export — with **no terminal commands on the page** | the `/ui/*` routes in `packages/fde-gate/src/fde_gate/ui.py` (a renamed or added route breaks the walkthrough), `GET /api/workflows/{id}/playbook.md`, the `fde-operator` plugin's command list, the reviewer-roster denials |
 
 The README is a public doc too, and it duplicates claims the site makes. Its
 sections carry their own triggers:
@@ -66,11 +78,12 @@ sections carry their own triggers:
 | Doc | What it claims | Rewrite it when this changes |
 |---|---|---|
 | `CONTRIBUTING.md` | its own build-and-verify block, and the invariant a contributor must not break | test count, migration and smoke counts, the twenty-five privilege denials, the gate commands (`db/rebuild.sh`, `uv run pytest packages`) |
+| `claude-plugin/fde-operator/README.md` | the plugin's install flow, its command and tool counts, its settings table, and the "runs as `fde_agent`, structurally cannot merge" safety claim | the MCP tool count, the commands in `claude-plugin/fde-operator/commands/`, `.mcp.json`'s env contract, `packages/fde-mcp/src/fde_mcp/config.py`'s DSN resolution order, and any grant that would weaken the safety claim — **and its verified / not-verified split, which is the AWS honesty rule applied to the plugin install** |
 
-Keep all three consistent with each other: the site, the README, and
-`CONTRIBUTING.md` state the same counts, and the first two state the same presets
-and honesty split. Fixing one and not the others is how they start contradicting
-each other.
+Keep all four consistent with each other: the site, the README,
+`CONTRIBUTING.md` and the plugin README state the same counts, and the first two
+state the same presets and honesty split. Fixing one and not the others is how
+they start contradicting each other.
 
 Diagrams: `docs-site/images/*.png` are headless-Chrome exports of
 `diagrams/0*.html`. Changing the source HTML means re-exporting the PNG, not
@@ -83,7 +96,8 @@ silently, they rot on pages your diff never pointed at, and the same count is
 usually stated on three or four pages at once. Sweep first, unconditionally:
 
 ```bash
-grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+) ([a-z]+ )?(tests|migrations|smoke tests|tools|packages|agents|pages|layers|denials|kinds|types|policies|axes|bugs|documents|diagrams|reviewers|tables|images|runtimes|traces)' docs-site/ README.md CONTRIBUTING.md
+grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+) ([a-z]+ )?(tests|migrations|smoke tests|tools|packages|agents|pages|layers|denials|kinds|types|policies|axes|bugs|documents|diagrams|reviewers|tables|images|runtimes|traces|files|invariants|commands|steps|members)' \
+    docs-site/ README.md CONTRIBUTING.md claude-plugin/
 ```
 
 Three things that pattern is built for:
