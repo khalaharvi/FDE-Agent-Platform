@@ -97,7 +97,7 @@ silently, they rot on pages your diff never pointed at, and the same count is
 usually stated on three or four pages at once. Sweep first, unconditionally:
 
 ```bash
-grep -rnEi --exclude-dir=superpowers '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+)[- ]([a-z]+[- ]){0,2}(tests?|migrations?|smoke tests?|tools?|packages?|agents?|pages?|layers?|denials?|kinds?|types?|policies|axes|bugs?|documents?|diagrams?|reviewers?|tables?|images?|runtimes?|traces?|files?|invariants?|commands?|steps?|members?|statements?|gates?|checks?)' \
+grep -rnEi --exclude-dir=superpowers '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+)[- ]([a-z]+[- ]){0,2}(tests?|migrations?|smoke tests?|tools?|packages?|agents?|pages?|layers?|denials?|kinds?|types?|policies|axes|bugs?|documents?|diagrams?|reviewers?|tables?|images?|runtimes?|traces?|files?|invariants?|commands?|steps?|members?|statements?|gates?|checks?|providers?|presets?)' \
     docs-site/ README.md CONTRIBUTING.md CLAUDE.md claude-plugin/ docs/ .claude/agents/
 ```
 
