@@ -824,8 +824,13 @@ async def _launcher_page(
             # What was typed, back on the form. A transcript pasted into the
             # box is the one thing on this page nobody should have to produce
             # twice because the runtime was misconfigured.
+            #
+            # Read under `input_name`, which is what the control was named on
+            # the way out -- reading `field.name` here found nothing and
+            # silently echoed the empty default back, which is the failure
+            # this whole branch exists to prevent.
             "fields": [
-                field.with_value(request.form.get(field.name, field.value))
+                field.with_value(request.form.get(field.input_name, field.value))
                 for field in context["fields"]
             ],
         },
@@ -838,11 +843,13 @@ async def agent_run_page(request: Request) -> Response:
 
 
 async def agent_run_post(request: Request) -> Response:
-    """Dispatch the chosen task, then land on the runs page.
+    """Dispatch the chosen task, then land on the review queue.
 
-    The launch is synchronous -- see `agents.launch` -- so by the time this
-    redirects the agent has finished and whatever it proposed is already in
-    the review queue.
+    The queue, and not `/ui/runs`, because that is where the OUTCOME is. A
+    launch creates no `wf.run` -- it is not a workflow -- so the runs page
+    would have answered a successful launch with a list that had not
+    changed. What did change is the proposal the agent raised, and the
+    notice below points at it from the page it is on.
     """
     try:
         result = await agents.launch(
@@ -863,11 +870,11 @@ async def agent_run_post(request: Request) -> Response:
         )
 
     return _back(
-        "/ui/runs",
+        "/ui",
         notice=(
             f"the {result['agent']} agent finished {result['task']} "
             f"({result['events']} {_plural(result['events'], 'event')}). "
-            "Anything it proposed is waiting on the review queue."
+            "Anything it proposed is in the queue below."
         ),
     )
 

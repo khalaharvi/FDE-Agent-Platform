@@ -57,9 +57,12 @@
 <h2>Waiting on you: {{ s.title }}</h2>
 <p>{{ s.human_prompt or s.instruction }}</p>
 {# `.get`, not `.escalated_error`: the environment uses StrictUndefined, and
-   `wf.await_human` copies the run input onto every parked step -- so
-   `s.input` is truthy on an ORDINARY human step and the attribute lookup
-   raised instead of reading false. #}
+   `s.input` is never the empty object. `wf.begin_step` stores the run
+   context as the attempt's input (db/013:585-586), and `wf.start_run`
+   seeds that context as `{"input": ...}` (db/013:540) -- so it is a
+   non-empty object on EVERY step of EVERY run, escalated or not, even when
+   the run input was empty. The attribute lookup therefore ran on every
+   parked human step and raised instead of reading false. #}
 {% if s.input and s.input.get("escalated_error") %}
   <div class="banner error"><strong>This step failed and was escalated</strong>
     <pre>{{ s.input.get("escalated_error") | tojson(indent=2) }}</pre></div>

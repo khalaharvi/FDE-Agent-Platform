@@ -47,14 +47,24 @@ from typing import Any
 from fde_gate.http import GateError
 
 __all__ = [
+    "FIELD_PREFIX",
     "Field",
     "fields_from_schema",
     "values_from_form",
 ]
 
+#: Prefixed onto every generated control's `name`. See `Field.input_name`.
+FIELD_PREFIX = "f_"
+
 # Keys of a `human_schema` that describe the STEP rather than the answer.
 # See the module docstring.
 _RESERVED_KEYS = frozenset({"assignee"})
+
+# Every spelling of false a `<select>` or a checkbox can submit, matched
+# case-insensitively. The list is wider than any one widget needs because
+# the reader is the last line: a control whose option values stop agreeing
+# with it must still not turn "false" into true.
+_FALSY_SUBMISSIONS = frozenset({"", "0", "false", "no", "off"})
 
 # JSON Schema keywords at the top level of an object schema. Present so the
 # flat-map reader can tell "this is a JSON Schema" from "this is a map of
@@ -90,8 +100,12 @@ class Field:
         required: Renders the `required` attribute AND is re-checked on the
             server -- a browser that skips validation is a browser, not an
             authorisation boundary.
-        options: `(value, label)` pairs. Non-empty renders a `<select>`,
-            whatever `value_type` says.
+        options: `(submitted value, label)` pairs. Non-empty renders a
+            `<select>`, whatever `value_type` says. The VALUE half is
+            whatever `values_from_form`'s reader for `value_type` parses
+            back to the schema's member -- not the member's `str()`. They
+            differ for booleans, and that difference was a bug: `str(False)`
+            is "False", which a reader testing against "false" read as true.
         placeholder: Shown in an empty text control.
         rows: Non-zero renders a `<textarea>` that many rows tall instead of
             an `<input>`. Only meaningful for `value_type == "string"`.
@@ -111,6 +125,25 @@ class Field:
     rows: int = 0
     value: str = ""
 
+    @property
+    def input_name(self) -> str:
+        """The `name` this field's control carries in the HTML form.
+
+        Prefixed, because a generated name comes from `wf.step.human_schema`
+        -- authored by an agent through `wf_draft` -- and is posted into a
+        form that already carries control fields of its own: `workflow_id`
+        on the run-start form, `run_id` and `action` on the answer form.
+        Form parsing keeps the LAST value for a repeated key
+        (`http.py:parse_apigw_event`), and the generated control renders
+        after the hidden one, so an unprefixed `workflow_id` in a schema
+        would silently start a DIFFERENT workflow than the operator picked.
+
+        Separating the namespaces is the fix rather than reserving names,
+        because the reserved list would have to be right forever and this
+        only has to be right once. `values_from_form` strips it back off.
+        """
+        return f"{FIELD_PREFIX}{self.name}"
+
     def with_value(self, value: str) -> Field:
         """A copy carrying what the operator typed, for a re-render."""
         return replace(self, value=value)
@@ -125,7 +158,9 @@ class _Property:
     item_type: str = "string"
     title: str = ""
     description: str = ""
-    enum: tuple[str, ...] = ()
+    #: The schema's members, as authored -- Python `True`, not "True". They
+    #: are turned into option values by `_option` once the type is known.
+    enum: tuple[Any, ...] = ()
     required: bool = False
 
 
@@ -220,15 +255,8 @@ def _property_from_spec(name: str, spec: Any, *, required: bool) -> _Property | 
 
     enum = spec.get("enum")
     if isinstance(enum, list) and enum:
-        # An enum answers the type question by itself, and renders as a
-        # <select> whose options are exactly the accepted answers.
-        return _Property(
-            name=name,
-            value_type=value_type if value_type in _SUPPORTED_TYPES else "string",
-            title=str(spec.get("title") or ""),
-            description=str(spec.get("description") or ""),
-            enum=tuple(str(item) for item in enum),
-            required=required,
+        return _enum_property(
+            name, spec, declared=declared, value_type=value_type, enum=enum, required=required
         )
     if value_type not in _SUPPORTED_TYPES:
         return None
@@ -241,6 +269,41 @@ def _property_from_spec(name: str, spec: Any, *, required: bool) -> _Property | 
         item_type=item_type,
         title=str(spec.get("title") or ""),
         description=str(spec.get("description") or ""),
+        required=required,
+    )
+
+
+def _enum_property(
+    name: str,
+    spec: dict[str, Any],
+    *,
+    declared: Any,
+    value_type: str,
+    enum: list[Any],
+    required: bool,
+) -> _Property | None:
+    """A property whose answers are a fixed list, or None if it cannot be one.
+
+    An enum renders as a `<select>` whose options are exactly the accepted
+    answers -- but it does NOT excuse the type from the gate every other
+    property passes. It used to: a declared type this module cannot read was
+    quietly downgraded to "string", which made an enum a hole in the
+    whole-or-nothing rule. An enum with NO declared type is still strings,
+    which is what its members are, and nothing has been bypassed.
+    """
+    if isinstance(declared, str) and value_type not in _SUPPORTED_TYPES:
+        return None
+    if value_type == "array":
+        # A choice between lists. A <select> whose value is one line of text
+        # cannot express it, and splitting that line would invent a list the
+        # enum never offered.
+        return None
+    return _Property(
+        name=name,
+        value_type=value_type if value_type in _SUPPORTED_TYPES else "string",
+        title=str(spec.get("title") or ""),
+        description=str(spec.get("description") or ""),
+        enum=tuple(enum),
         required=required,
     )
 
@@ -273,9 +336,26 @@ def _to_field(prop: _Property) -> Field:
         item_type=prop.item_type,
         hint=prop.description or _type_hint(prop),
         required=prop.required and prop.value_type != "boolean",
-        options=tuple((item, item) for item in prop.enum),
+        options=tuple(_option(prop.value_type, item) for item in prop.enum),
         rows=0,
     )
+
+
+def _option(value_type: str, item: Any) -> tuple[str, str]:
+    """One `<select>` option: what it submits, and what it reads as.
+
+    The two halves are not the same string. The value has to survive
+    `values_from_form`'s reader for `value_type` and come back as `item`;
+    the label is what the operator sees. For every type but boolean those
+    coincide. For boolean they cannot: `str(False)` is "False", which is
+    not any spelling of false a checkbox submits, so the reader saw a
+    non-empty string and returned true. The label is JSON's spelling
+    because JSON is what the author wrote the schema in.
+    """
+    if value_type == "boolean":
+        truthy = item is True or (isinstance(item, str) and item.strip().lower() == "true")
+        return ("1" if truthy else "", "true" if truthy else "false")
+    return (str(item), str(item))
 
 
 def _humanise(name: str) -> str:
@@ -300,6 +380,10 @@ def _type_hint(prop: _Property) -> str:
 def values_from_form(fields: list[Field], form: dict[str, str]) -> dict[str, Any]:
     """Read `fields` back out of a submitted form as a JSON object.
 
+    Read under `Field.input_name` and returned under `Field.name`: the
+    prefix exists only between the macro and here, so the object this
+    produces is keyed by what the schema declared.
+
     Required fields are re-checked here rather than left to the browser, and
     a refusal names the field's LABEL -- the operator never saw the key.
     An optional field left blank is omitted entirely rather than sent as an
@@ -308,11 +392,11 @@ def values_from_form(fields: list[Field], form: dict[str, str]) -> dict[str, Any
     """
     values: dict[str, Any] = {}
     for spec in fields:
-        raw = form.get(spec.name, "")
+        raw = form.get(spec.input_name, "")
         if spec.value_type == "boolean":
             # An unchecked checkbox is not submitted at all, which is exactly
             # how HTML says false. Booleans are therefore always present.
-            values[spec.name] = raw not in ("", "0", "false")
+            values[spec.name] = raw.strip().lower() not in _FALSY_SUBMISSIONS
             continue
         raw = raw.strip()
         if not raw:

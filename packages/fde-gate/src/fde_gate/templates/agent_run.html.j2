@@ -74,9 +74,17 @@
     {% for f in fields %}
       {{ fields_macro.field(f) }}
     {% endfor %}
+    {# The honest version of "please wait". Nothing records a launch -- there
+       is no table for one -- so an operator whose request dies has no page
+       that would tell them whether the agent ran. The only observable
+       outcome is what the agent proposes, and that is the review queue. #}
     <p class="muted">
       This waits for the agent to finish, which can take minutes on a long
-      transcript. Leave the tab open.
+      transcript. Leave the tab open. Nothing records the launch itself, so
+      if this page returns an error, check the
+      <a href="/ui">review queue</a> before launching again — a task long
+      enough to outlast the request limit errors here while the agent keeps
+      running on the server, and whatever it proposes still arrives there.
     </p>
     <button type="submit">Launch</button>
   </fieldset>

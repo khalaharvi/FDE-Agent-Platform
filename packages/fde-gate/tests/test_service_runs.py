@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from gate_seed import OWNER, SME
@@ -13,7 +14,8 @@ from psycopg import errors as pg_errors
 from fde_gate import handler, ui
 from fde_gate.config import get_gate_settings
 from fde_gate.executors import StepExecutionError
-from fde_gate.http import GateError, Request
+from fde_gate.forms import fields_from_schema
+from fde_gate.http import GateError, Request, parse_apigw_event
 from fde_gate.runner import advance
 from fde_gate.service import proposals, runs, workflows
 from fde_mcp import db
@@ -277,9 +279,9 @@ async def test_a_run_that_exists_is_not_reported_as_missing(make_workflow: Any) 
     workflow_id = make_workflow(
         [{"step_key": "approve", "kind": "human", "human_schema": {"approved": "boolean"}}]
     )
-    run_id = int(
-        (await runs.start_run(workflow_id, SME, run_input={"discount_pct": 30}))["run"]["run_id"]
-    )
+    # Deliberately started with NO input: the second bug below fires on every
+    # run, and an input here would let a reader think it needed one.
+    run_id = int((await runs.start_run(workflow_id, SME))["run"]["run_id"])
     # Advanced, so the run is PARKED on the human step rather than merely
     # started. `run.awaiting` being empty is what let this page look fine in
     # every earlier test while its one interesting branch never ran.
@@ -303,9 +305,16 @@ async def test_a_run_that_exists_is_not_reported_as_missing(make_workflow: Any) 
     )
     assert page.status == HTTPStatus.OK
     assert "Not found" not in str(page.body)
-    # The second bug the first one was hiding: `wf.await_human` copies the
-    # run input onto the parked step, so `s.input` is truthy on an ORDINARY
-    # human step and `s.input.escalated_error` raised under StrictUndefined.
+
+    # The second bug the first one was hiding. `wf.begin_step` stores the run
+    # context as the attempt's input (db/013:585-586) and `wf.start_run`
+    # seeds that context as `{"input": ...}` (db/013:540) -- so `s.input` is
+    # a non-empty object on every parked step, even for a run started with
+    # no input at all, and `s.input.escalated_error` raised under
+    # StrictUndefined rather than reading false.
+    (parked,) = detail["awaiting"]
+    assert parked["input"] == {"input": {}}, "non-empty despite an empty run input"
+    assert "escalated_error" not in parked["input"]
     # Rendering the waiting section at all is the assertion.
     assert "Waiting on you" in str(page.body)
     assert "This step failed and was escalated" not in str(page.body)
@@ -328,3 +337,76 @@ async def test_a_run_that_exists_is_not_reported_as_missing(make_workflow: Any) 
         )
     )
     assert missing.status == HTTPStatus.NOT_FOUND
+
+
+def _form_post(path: str, principal: str, pairs: list[tuple[str, str]]) -> Request:
+    """A real urlencoded POST, parsed by the code API Gateway's events reach.
+
+    A list of PAIRS, not a dict, and routed through `parse_apigw_event`,
+    because the whole mechanism under test is what that parser does with a
+    key that appears twice -- `dict(parse_qsl(...))`, last value wins. A test
+    that handed `Request(form={...})` a Python dict could not express a
+    repeated key at all, and so could not have caught this.
+    """
+    body = "&".join(f"{quote(k, safe='')}={quote(v, safe='')}" for k, v in pairs)
+    return parse_apigw_event(
+        {
+            "rawPath": path,
+            "requestContext": {
+                "http": {"method": "POST", "path": path},
+                "authorizer": {"jwt": {"claims": {"sub": principal}}},
+            },
+            "headers": {"content-type": "application/x-www-form-urlencoded"},
+            "body": body,
+            "isBase64Encoded": False,
+        }
+    )
+
+
+async def test_a_schema_field_named_workflow_id_cannot_redirect_the_run(
+    make_workflow: Any,
+) -> None:
+    """End to end, through the real parser: a `human_schema` declaring
+    `workflow_id` must not change WHICH workflow starts.
+
+    The generated control renders after the hidden one, so before the prefix
+    both were named `workflow_id`, the parser kept the last, and this POST
+    started `decoy` -- the workflow the operator did not pick -- silently and
+    with a 303 that looked like success. `wf_draft` accepts any object as a
+    `human_schema`, so "workflow_id" reaching one needs no hostile author,
+    only an ordinary name for a field.
+    """
+    chosen = make_workflow(
+        [
+            {
+                "step_key": "approve",
+                "kind": "human",
+                "human_schema": {"workflow_id": "string", "note": "string"},
+            }
+        ]
+    )
+    decoy = make_workflow([{"step_key": "approve", "kind": "human"}])
+    assert chosen != decoy
+
+    # Exactly what the browser sends: the form's own hidden control first,
+    # then each generated control under the name the macro gave it.
+    fields = fields_from_schema({"workflow_id": "string", "note": "string"})
+    generated = {f.name: f.input_name for f in fields}
+    response = await ui.run_start_post(
+        _form_post(
+            "/ui/runs/start",
+            SME,
+            [
+                ("workflow_id", str(chosen)),
+                (generated["workflow_id"], str(decoy)),
+                (generated["note"], "kept"),
+            ],
+        )
+    )
+    assert response.status == HTTPStatus.SEE_OTHER
+    run_id = int(response.headers["Location"].removeprefix("/ui/runs/").split("?")[0])
+
+    started = await runs.get_run(run_id)
+    assert started["workflow_id"] == chosen, "the operator's choice, not the schema's"
+    # ...and the schema's field still arrived, under its own name.
+    assert started["input"] == {"workflow_id": str(decoy), "note": "kept"}

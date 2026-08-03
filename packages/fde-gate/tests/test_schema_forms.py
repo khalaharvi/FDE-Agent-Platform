@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from fde_gate import ui
-from fde_gate.forms import Field, fields_from_schema, values_from_form
+from fde_gate.forms import FIELD_PREFIX, Field, fields_from_schema, values_from_form
 from fde_gate.http import GateError
 
 # The shape db/tests/smoke_test.sql:765 actually writes.
@@ -74,6 +74,70 @@ def test_titles_descriptions_and_enums_are_carried_through() -> None:
         ("reworked", "reworked"),
         ("abandoned", "abandoned"),
     )
+
+
+BOOLEAN_ENUM: dict[str, Any] = {
+    "type": "object",
+    "properties": {"approved": {"type": "boolean", "enum": [True, False]}},
+}
+
+
+def test_a_boolean_enum_that_says_false_means_false() -> None:
+    """The demonstrated bug. A boolean with an `enum` skipped the type gate:
+    its options were `str()`-ed to "True"/"False" while `value_type` stayed
+    boolean, and the reader's falsy set held the lower-case "false" -- so
+    picking False submitted "False", matched nothing, and recorded True. A
+    reviewer approving nothing was recorded as approving.
+    """
+    (field,) = fields_from_schema(BOOLEAN_ENUM)
+    assert field.value_type == "boolean"
+
+    (false_value,) = [value for value, label in field.options if label == "false"]
+    assert values_from_form([field], {field.input_name: false_value}) == {"approved": False}
+
+    (true_value,) = [value for value, label in field.options if label == "true"]
+    assert values_from_form([field], {field.input_name: true_value}) == {"approved": True}
+
+
+def test_an_enum_option_value_is_what_its_own_reader_parses_back() -> None:
+    """The general rule the case above is one instance of: an option's VALUE
+    has to survive `values_from_form`, whatever the declared type. Labels are
+    for the operator; values are for the reader.
+    """
+    for schema, expected in (
+        ({"n": {"type": "integer", "enum": [1, 2]}}, [1, 2]),
+        ({"r": {"type": "number", "enum": [0.5, 1.5]}}, [0.5, 1.5]),
+        ({"s": {"type": "string", "enum": ["a", "b"]}}, ["a", "b"]),
+        ({"b": {"type": "boolean", "enum": [True, False]}}, [True, False]),
+    ):
+        (field,) = fields_from_schema(schema)
+        read_back = [
+            values_from_form([field], {field.input_name: value})[field.name]
+            for value, _ in field.options
+        ]
+        assert read_back == expected, f"{schema} round-tripped to {read_back}"
+
+
+@pytest.mark.parametrize("submitted", ["", "0", "false", "False", "FALSE", "no", "off", " False "])
+def test_every_spelling_of_false_reads_as_false(submitted: str) -> None:
+    """Belt and braces behind the option-value fix. The reader is the last
+    line: a control whose values stop agreeing with it must still not turn a
+    plain "False" into true.
+    """
+    (field,) = fields_from_schema(BOOLEAN_ENUM)
+    assert values_from_form([field], {field.input_name: submitted}) == {"approved": False}
+
+
+def test_an_enum_does_not_excuse_a_type_this_cannot_ask_for() -> None:
+    """An enum used to downgrade any unreadable declared type to "string",
+    which made it a hole in the whole-or-nothing rule.
+    """
+    assert fields_from_schema({"a": {"type": "object", "enum": [{"x": 1}]}}) == []
+    assert fields_from_schema({"a": {"type": "array", "enum": [["x"], ["y"]]}}) == []
+    # An enum with NO declared type is still strings -- that is what its
+    # members are, and nothing has been bypassed.
+    (field,) = fields_from_schema({"a": {"enum": ["x", "y"]}})
+    assert field.value_type == "string"
 
 
 def test_assignee_is_routing_metadata_and_never_a_question() -> None:
@@ -146,16 +210,26 @@ _MIXED = fields_from_schema(
 )
 
 
+def _submitted(**values: str) -> dict[str, str]:
+    """A form as the browser posts it -- every generated control prefixed.
+
+    Spelled out here rather than hidden in the helper's callers so these
+    tests would fail if `values_from_form` stopped stripping the prefix,
+    which is the half of the collision fix that lives in Python.
+    """
+    return {f"{FIELD_PREFIX}{name}": value for name, value in values.items()}
+
+
 def test_a_filled_form_becomes_the_json_object_the_textarea_used_to_produce() -> None:
     assert values_from_form(
         _MIXED,
-        {
-            "owner": "deal desk",
-            "approved": "1",
-            "attempts": "2",
-            "ratio": "0.25",
-            "tags": "urgent, repriced\nescalated",
-        },
+        _submitted(
+            owner="deal desk",
+            approved="1",
+            attempts="2",
+            ratio="0.25",
+            tags="urgent, repriced\nescalated",
+        ),
     ) == {
         "owner": "deal desk",
         "approved": True,
@@ -170,14 +244,14 @@ def test_an_unchecked_box_is_false_rather_than_missing() -> None:
     how it says false -- so a boolean is always present in the result, and
     `$.approved == false` is a jsonpath a decision branch can rely on.
     """
-    assert values_from_form(_MIXED, {"owner": "deal desk"})["approved"] is False
+    assert values_from_form(_MIXED, _submitted(owner="deal desk"))["approved"] is False
 
 
 def test_a_blank_optional_field_is_omitted_rather_than_sent_as_empty() -> None:
     """`$.input.note` being absent and being "" are different things to a
     jsonpath, and only one of them means "not answered".
     """
-    values = values_from_form(_MIXED, {"owner": "deal desk"})
+    values = values_from_form(_MIXED, _submitted(owner="deal desk"))
     assert "attempts" not in values
     assert "tags" not in values
 
@@ -187,13 +261,13 @@ def test_an_integer_array_arrives_as_numbers_rather_than_strings() -> None:
     a signal_id is a number. `['41']` and `[41]` are different questions.
     """
     (field,) = fields_from_schema({"ids": {"type": "array", "items": {"type": "integer"}}})
-    assert values_from_form([field], {"ids": "41, 42"}) == {"ids": [41, 42]}
+    assert values_from_form([field], _submitted(ids="41, 42")) == {"ids": [41, 42]}
 
 
 def test_one_bad_entry_in_a_list_names_the_entry_not_the_list() -> None:
     (field,) = fields_from_schema({"ids": {"type": "array", "items": {"type": "integer"}}})
     with pytest.raises(GateError) as caught:
-        values_from_form([field], {"ids": "41, forty-two"})
+        values_from_form([field], _submitted(ids="41, forty-two"))
     assert caught.value.message == "every entry of Ids must be a whole number, not 'forty-two'."
 
 
@@ -202,13 +276,13 @@ def test_a_missing_required_field_is_refused_by_its_label() -> None:
     LABEL, because the operator never saw the key.
     """
     with pytest.raises(GateError) as caught:
-        values_from_form(_MIXED, {"approved": "1"})
+        values_from_form(_MIXED, _submitted(approved="1"))
     assert caught.value.message == "Owner is required."
 
 
 def test_a_number_field_given_prose_says_so_in_plain_language() -> None:
     with pytest.raises(GateError) as caught:
-        values_from_form(_MIXED, {"owner": "deal desk", "attempts": "twice"})
+        values_from_form(_MIXED, _submitted(owner="deal desk", attempts="twice"))
     assert caught.value.message == "Attempts must be a whole number, not 'twice'."
 
 
@@ -276,7 +350,7 @@ def test_the_run_start_form_renders_fields_and_no_json_textarea() -> None:
     from schemas, and only the JSON one is the regression.
     """
     page = _runs_page()
-    assert 'name="approved"' in page
+    assert 'name="f_approved"' in page
     assert 'name="input"' not in page
     # And it names the step it took the fields from, rather than presenting
     # a heuristic as a fact.
@@ -334,7 +408,7 @@ def test_answering_a_human_step_is_a_form_when_the_step_declares_one() -> None:
     this console where a schema and a form are the same statement.
     """
     page = _run_page(SMOKE_SCHEMA)
-    assert 'name="approved"' in page
+    assert 'name="f_approved"' in page
     assert 'name="response"' not in page
 
 
@@ -353,3 +427,108 @@ def test_a_schema_that_cannot_become_fields_is_shown_rather_than_hidden() -> Non
     assert 'name="response"' in page
     assert "cannot turn into fields" in page
     assert "attachments" in page
+
+
+# ---------------------------------------------------------------------------
+# The two things a schema must not be able to do to the page it renders on
+# ---------------------------------------------------------------------------
+
+#: A schema declaring exactly the names the forms use for their own controls.
+#: `wf_draft` accepts any object as `human_schema`, so none of this needs a
+#: hostile author -- "workflow_id" is an ordinary thing to call a field.
+COLLIDING_SCHEMA: dict[str, Any] = {
+    "workflow_id": "string",
+    "run_id": "string",
+    "action": "string",
+}
+
+
+def test_a_schema_cannot_name_a_control_the_form_already_has() -> None:
+    """Form parsing keeps the LAST value for a repeated key
+    (`http.py:parse_apigw_event`), and generated controls render after the
+    hidden ones -- so an unprefixed `workflow_id` would have started a
+    different workflow than the operator picked, `action` would have
+    overridden approve/retry/skip, and `run_id` would have corrupted the
+    redirect. The prefix is what keeps the two namespaces apart.
+    """
+    fields = fields_from_schema(COLLIDING_SCHEMA)
+    assert _names(fields) == ["workflow_id", "run_id", "action"]
+    for field in fields:
+        assert field.input_name != field.name
+        assert field.input_name == f"{FIELD_PREFIX}{field.name}"
+
+
+def _post_form(page: str, action: str) -> str:
+    """The one form that POSTs to `action`. Scoped because collisions are a
+    property of a FORM, not of a page -- the runs page also has a separate
+    GET picker whose select is legitimately named `workflow_id`.
+    """
+    start = page.index(f'<form method="post" action="{action}"')
+    return page[start : page.index("</form>", start)]
+
+
+def test_the_rendered_start_form_has_exactly_one_workflow_id_control() -> None:
+    """The claim, in the markup. Two controls named `workflow_id` in one form
+    is the whole bug; one is the fix.
+    """
+    page = _runs_page(input_fields=fields_from_schema(COLLIDING_SCHEMA))
+    form = _post_form(page, "/ui/runs/start")
+    assert form.count('name="workflow_id"') == 1, "the hidden control, and nothing else"
+    assert 'name="f_workflow_id"' in form
+
+
+def test_the_rendered_answer_form_has_exactly_one_action_control() -> None:
+    form = _post_form(_run_page(COLLIDING_SCHEMA), "/ui/run-steps/3/respond")
+    assert form.count('name="action"') == 1, "the approve/retry/skip select, and nothing else"
+    assert form.count('name="run_id"') == 1, "the hidden control, and nothing else"
+    assert 'name="f_action"' in form
+
+
+def test_a_colliding_field_still_reaches_the_answer_under_its_own_name() -> None:
+    """Prefixed on the wire, unprefixed in the result: the object handed to
+    `wf.respond_human` is keyed by what the schema declared, not by an
+    implementation detail of this console's forms.
+    """
+    fields = fields_from_schema(COLLIDING_SCHEMA)
+    assert values_from_form(fields, _submitted(workflow_id="99", run_id="98", action="abort")) == {
+        "workflow_id": "99",
+        "run_id": "98",
+        "action": "abort",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Escaping
+# ---------------------------------------------------------------------------
+
+#: Titles, descriptions and node labels are written by agents -- a
+#: `human_schema` arrives through `wf_draft`, and option text on the launcher
+#: comes from `kg.node.label`, which is merged proposal payload. The macro's
+#: own comment names this as the untrusted path; this is that claim tested.
+_MARKUP = '<script>alert("x")</script>'
+
+
+def test_agent_authored_schema_text_renders_escaped() -> None:
+    (field,) = fields_from_schema(
+        {
+            "type": "object",
+            "properties": {"note": {"type": "string", "title": _MARKUP, "description": _MARKUP}},
+        }
+    )
+    assert field.label == _MARKUP, "the value itself is carried verbatim"
+
+    markup = str(ui._ENV.get_template("_fields.html.j2").module.field(field))  # type: ignore[attr-defined]
+    assert "<script>" not in markup
+    assert "&lt;script&gt;" in markup
+
+
+def test_option_text_from_a_node_label_renders_escaped() -> None:
+    """The launcher's process and source pickers label their options with
+    `kg.node.label` and `kg.source.title` -- merged agent output, and a
+    proposal payload containing markup is not hypothetical (it is a document
+    extracted from a customer's SOP; see ui.py's module docstring).
+    """
+    field = Field(name="root_process_key", label="Process", options=((_MARKUP, _MARKUP),))
+    markup = str(ui._ENV.get_template("_fields.html.j2").module.field(field))  # type: ignore[attr-defined]
+    assert "<script>" not in markup
+    assert markup.count("&lt;script&gt;") == 2, "escaped in the option's value AND its text"

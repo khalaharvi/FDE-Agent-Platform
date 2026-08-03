@@ -5,6 +5,10 @@
    they get here -- and a second copy of this markup would be the place the
    `required` attribute quietly stopped matching what the server re-checks.
 
+   Every control's `name` is `f.input_name`, never `f.name` -- generated
+   names come from an agent-authored `human_schema` and share a namespace
+   with the forms' own control fields. See `forms.Field.input_name`.
+
    Each tag's optional attributes are on ONE line, with the space INSIDE the
    `{% if %}`. The environment is built with `lstrip_blocks`, which eats the
    indentation in front of a block tag -- so an attribute per line renders
@@ -17,21 +21,21 @@
    are written by agents. #}
 {% macro field(f) %}
 <div class="field">
-  <label for="f_{{ f.name }}">{{ f.label }}{% if f.required %} <span class="req" title="required">*</span>{% endif %}</label>
+  <label for="{{ f.input_name }}">{{ f.label }}{% if f.required %} <span class="req" title="required">*</span>{% endif %}</label>
   {% if f.options %}
-    <select id="f_{{ f.name }}" name="{{ f.name }}"{% if f.required %} required{% endif %}>
+    <select id="{{ f.input_name }}" name="{{ f.input_name }}"{% if f.required %} required{% endif %}>
       {% for value, text in f.options %}
         <option value="{{ value }}"{% if value == f.value %} selected{% endif %}>{{ text }}</option>
       {% endfor %}
     </select>
   {% elif f.value_type == "boolean" %}
-    <input type="checkbox" id="f_{{ f.name }}" name="{{ f.name }}" value="1"{% if f.value %} checked{% endif %}>
+    <input type="checkbox" id="{{ f.input_name }}" name="{{ f.input_name }}" value="1"{% if f.value %} checked{% endif %}>
   {% elif f.rows %}
-    <textarea id="f_{{ f.name }}" name="{{ f.name }}" rows="{{ f.rows }}"{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>{{ f.value }}</textarea>
+    <textarea id="{{ f.input_name }}" name="{{ f.input_name }}" rows="{{ f.rows }}"{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>{{ f.value }}</textarea>
   {% elif f.value_type in ("integer", "number") %}
-    <input type="number" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}"{% if f.value_type == "number" %} step="any"{% endif %}{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>
+    <input type="number" id="{{ f.input_name }}" name="{{ f.input_name }}" value="{{ f.value }}"{% if f.value_type == "number" %} step="any"{% endif %}{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>
   {% else %}
-    <input type="text" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ f.value }}"{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>
+    <input type="text" id="{{ f.input_name }}" name="{{ f.input_name }}" value="{{ f.value }}"{% if f.required %} required{% endif %}{% if f.placeholder %} placeholder="{{ f.placeholder }}"{% endif %}>
   {% endif %}
   {% if f.hint %}<div class="muted hint">{{ f.hint }}</div>{% endif %}
 </div>

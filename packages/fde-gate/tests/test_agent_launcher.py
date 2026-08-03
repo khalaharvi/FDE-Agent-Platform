@@ -43,6 +43,7 @@ from gate_seed import SME
 from fde_gate import ui
 from fde_gate.config import get_gate_settings
 from fde_gate.executors import AgentExecutor, StepExecutionError
+from fde_gate.forms import FIELD_PREFIX
 from fde_gate.http import GateError, Request
 from fde_gate.service import agents
 from fde_mcp.config import get_settings
@@ -325,7 +326,10 @@ async def test_picking_a_source_with_no_text_is_refused_with_the_alternative(
             agent="engagement",
             task="ingest_interview",
             engagement_id=engagement,
-            form={"source_id": str(rows[0]["source_id"]), "material": ""},
+            form={
+                f"{FIELD_PREFIX}source_id": str(rows[0]["source_id"]),
+                f"{FIELD_PREFIX}material": "",
+            },
             executor=_fake_executor(_FakeAgentCore()),
         )
     assert "no stored passages" in caught.value.message
@@ -370,8 +374,8 @@ async def test_the_launcher_page_renders_fields_and_never_a_json_box(
         rendered_at=0.0,
         **context,
     )
-    assert 'name="source_id"' in page
-    assert 'name="material"' in page
+    assert 'name="f_source_id"' in page
+    assert 'name="f_material"' in page
     assert "JSON" not in page
     assert "Read an interview or document" in page, "the plain-language summary"
 
@@ -397,7 +401,7 @@ async def test_dispatch_sends_the_payload_the_agent_entrypoint_parses(engagement
         agent="engagement",
         task="ingest_interview",
         engagement_id=engagement,
-        form={"source_id": "", "material": TRANSCRIPT_A},
+        form={f"{FIELD_PREFIX}source_id": "", f"{FIELD_PREFIX}material": TRANSCRIPT_A},
         executor=_fake_executor(client),
     )
 
@@ -434,7 +438,7 @@ async def test_picking_a_registered_source_sends_that_source_s_text(
         agent="engagement",
         task="ingest_interview",
         engagement_id=engagement,
-        form={"source_id": str(registered_source), "material": ""},
+        form={f"{FIELD_PREFIX}source_id": str(registered_source), f"{FIELD_PREFIX}material": ""},
         executor=_fake_executor(client),
     )
 
@@ -460,15 +464,17 @@ async def test_a_workflow_task_sends_its_own_labelled_fields(
         task="author_workflow",
         engagement_id=engagement,
         form={
-            "root_process_key": "proc.quote_to_cash",
-            "title": "Quote to cash discount approval",
-            "slug": "q2c-discount-approval",
+            f"{FIELD_PREFIX}root_process_key": "proc.quote_to_cash",
+            f"{FIELD_PREFIX}title": "Quote to cash discount approval",
+            f"{FIELD_PREFIX}slug": "q2c-discount-approval",
         },
         executor=_fake_executor(client),
     )
 
     payload = json.loads(client.calls[0]["payload"])
     assert payload["task"] == "author_workflow"
+    # Prefixed on the wire, unprefixed in the payload: the agent reads the
+    # names its own prompt names, not this console's form conventions.
     assert payload["input"] == {
         "root_process_key": "proc.quote_to_cash",
         "title": "Quote to cash discount approval",
@@ -491,7 +497,7 @@ async def test_a_console_launch_does_not_touch_any_workflow_run(engagement: str,
         agent="engagement",
         task="ingest_interview",
         engagement_id=engagement,
-        form={"material": TRANSCRIPT_A},
+        form={f"{FIELD_PREFIX}material": TRANSCRIPT_A},
         executor=_fake_executor(_FakeAgentCore()),
     )
     assert sql("SELECT count(*) AS n FROM wf.run")[0]["n"] == before
@@ -520,7 +526,7 @@ async def test_no_runtime_arn_names_the_variable_and_the_local_alternative(
             agent="engagement",
             task="ingest_interview",
             engagement_id=engagement,
-            form={"material": TRANSCRIPT_A},
+            form={f"{FIELD_PREFIX}material": TRANSCRIPT_A},
             executor=_fake_executor(_FakeAgentCore()),
         )
 
@@ -561,7 +567,7 @@ async def test_a_deactivated_reviewer_may_not_launch_anything(
             agent="engagement",
             task="ingest_interview",
             engagement_id=engagement,
-            form={"material": TRANSCRIPT_A},
+            form={f"{FIELD_PREFIX}material": TRANSCRIPT_A},
             executor=_fake_executor(client),
         )
     assert caught.value.status == HTTPStatus.FORBIDDEN
@@ -580,7 +586,7 @@ async def test_an_anonymous_caller_may_not_launch_anything(engagement: str) -> N
             agent="engagement",
             task="ingest_interview",
             engagement_id=engagement,
-            form={"material": TRANSCRIPT_A},
+            form={f"{FIELD_PREFIX}material": TRANSCRIPT_A},
             executor=_fake_executor(client),
         )
     assert caught.value.status == HTTPStatus.FORBIDDEN
@@ -604,7 +610,10 @@ async def test_picking_a_source_and_pasting_text_is_refused_rather_than_guessed(
             agent="engagement",
             task="ingest_interview",
             engagement_id=engagement,
-            form={"source_id": str(registered_source), "material": TRANSCRIPT_B},
+            form={
+                f"{FIELD_PREFIX}source_id": str(registered_source),
+                f"{FIELD_PREFIX}material": TRANSCRIPT_B,
+            },
             executor=_fake_executor(_FakeAgentCore()),
         )
     assert "picked a registered source AND pasted text" in caught.value.message
@@ -619,7 +628,7 @@ async def test_submitting_neither_a_source_nor_text_says_what_to_do(engagement: 
             agent="engagement",
             task="ingest_interview",
             engagement_id=engagement,
-            form={"source_id": "", "material": "   "},
+            form={f"{FIELD_PREFIX}source_id": "", f"{FIELD_PREFIX}material": "   "},
             executor=_fake_executor(_FakeAgentCore()),
         )
     assert "nothing for the agent to read" in caught.value.message
@@ -636,7 +645,10 @@ async def test_a_missing_required_field_is_refused_before_any_dispatch(engagemen
             agent="workflow",
             task="author_workflow",
             engagement_id=engagement,
-            form={"root_process_key": "proc.quote_to_cash", "title": "Untitled"},
+            form={
+                f"{FIELD_PREFIX}root_process_key": "proc.quote_to_cash",
+                f"{FIELD_PREFIX}title": "Untitled",
+            },
             executor=_fake_executor(client),
         )
     assert caught.value.message == "Short name is required."
@@ -661,7 +673,7 @@ async def test_a_failed_invocation_reaches_the_operator_verbatim(engagement: str
             agent="engagement",
             task="ingest_interview",
             engagement_id=engagement,
-            form={"material": TRANSCRIPT_A},
+            form={f"{FIELD_PREFIX}material": TRANSCRIPT_A},
             executor=_Exploding(),
         )
     assert caught.value.status == HTTPStatus.BAD_GATEWAY
@@ -673,11 +685,22 @@ async def test_a_failed_invocation_reaches_the_operator_verbatim(engagement: str
 # ---------------------------------------------------------------------------
 
 
-def _post(engagement_id: str, **form: str) -> Request:
+def _post(engagement_id: str, *, agent: str, task: str, **fields: str) -> Request:
+    """One console POST: the form's own controls, plus prefixed field values.
+
+    The split is the point -- `engagement_id`/`agent`/`task` are the page's
+    controls and go on unprefixed; everything else is a generated field and
+    arrives the way the macro names it.
+    """
     return Request(
         method="POST",
         path="/ui/agents/run",
-        form={"engagement_id": engagement_id, **form},
+        form={
+            "engagement_id": engagement_id,
+            "agent": agent,
+            "task": task,
+            **{f"{FIELD_PREFIX}{name}": value for name, value in fields.items()},
+        },
         principal=SME,
     )
 
@@ -735,11 +758,15 @@ async def test_a_non_reviewer_gets_a_readable_403_not_a_wall_of_braces(
 
 @pytest.mark.requires_db
 @pytest.mark.usefixtures("runtime_configured")
-async def test_a_successful_launch_lands_on_the_runs_page(
+async def test_a_successful_launch_lands_where_the_outcome_is(
     engagement: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Where the spec puts it, and the notice says where the OUTPUT went --
-    a proposal in the review queue, which is not the page being redirected to.
+    """The review queue, not `/ui/runs`.
+
+    A launch creates no `wf.run` -- it is not a workflow -- so the runs page
+    would have answered a successful launch with a list that had not changed
+    by one row. What did change is the proposal the agent raised, and that
+    is on the queue.
     """
     monkeypatch.setattr(agents, "AgentExecutor", lambda: _fake_executor(_FakeAgentCore()))
 
@@ -748,5 +775,40 @@ async def test_a_successful_launch_lands_on_the_runs_page(
     )
     assert response.status == HTTPStatus.SEE_OTHER
     location = response.headers["Location"]
-    assert location.startswith("/ui/runs?notice=")
-    assert "review%20queue" in location
+    assert location.startswith("/ui?notice=")
+    assert "queue%20below" in location
+
+
+@pytest.mark.requires_db
+async def test_the_launcher_says_a_launch_leaves_no_record(
+    engagement: str, registered_source: int
+) -> None:
+    """The wait is the honest weak point of this feature, so the page says so.
+
+    A launch writes nothing -- there is no table for one -- and the deployed
+    front door's request limit is shorter than a long task, so the operator
+    can be shown an error for work that is still running. The one thing that
+    makes that survivable is knowing where the outcome shows up instead of
+    launching a second time.
+    """
+    context = await agents.launcher_context(
+        SME, engagement_id=engagement, agent="engagement", task="ingest_interview"
+    )
+    page = ui.render(
+        "agent_run.html.j2",
+        principal=SME,
+        is_admin=False,
+        error=None,
+        notice=None,
+        rendered_at=0.0,
+        **context,
+    )
+    # Whitespace-normalised: these are claims about the sentences an operator
+    # reads, not about where the template happens to wrap them.
+    prose = " ".join(page.split())
+    assert "Nothing records the launch itself" in prose
+    assert 'href="/ui"' in prose, "and it links to where the outcome will be"
+    assert "errors here while the agent keeps running on the server" in prose
+    assert "whatever it proposes still arrives there" in prose
+    # No invented timeout number -- the honesty rule's register.
+    assert not re.search(r"\b\d+\s*(seconds|minutes|s)\b", prose)

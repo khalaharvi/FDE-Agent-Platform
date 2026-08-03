@@ -639,12 +639,21 @@ async def launch(
 ) -> dict[str, Any]:
     """Run one agent task and return what it streamed back.
 
-    Synchronous by design. The alternative -- returning immediately and
-    letting the operator find the outcome later -- needs somewhere to record
-    the launch, and there is no table for one; inventing a row the gate
-    service could write would mean a new grant, which is the one thing this
-    feature is not allowed to add on its own. So the request waits, bounded
-    by `FDE_GATE_STEP_TIMEOUT_SECONDS`, and what comes back is reported.
+    Synchronous, and that is the weak part of this feature rather than a
+    design anyone would choose. Returning immediately needs somewhere to
+    record the launch, there is no table for one, and inventing a row the
+    gate service could write would mean a new grant -- the one thing this
+    feature may not add on its own. So the request waits.
+
+    What that costs, stated plainly: the wait is bounded here by
+    `FDE_GATE_STEP_TIMEOUT_SECONDS`, but the deployed front door is an API
+    Gateway HTTP API, whose integrations time out well before that. A long
+    task therefore returns an error to the browser while the Lambda -- and
+    the agent -- keep going, and because nothing records the launch there is
+    no page that will later say whether it finished. The only observable
+    outcome is what the agent proposes, so the launcher's copy sends the
+    operator to the review queue rather than telling them to retry. A launch
+    record would fix this properly and needs a migration.
 
     `executor` is injected the way `runner.advance`'s is, so the dispatch
     path is exercisable end to end against a fake with no AWS.
