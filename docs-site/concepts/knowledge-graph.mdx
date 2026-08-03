@@ -15,6 +15,13 @@ embedding queue, and drift signals in one transaction. Recursive CTEs with
 cycle detection and partial composite indexes are adequate at the scale an
 engagement produces (thousands to hundreds of thousands of nodes).
 
+<Frame caption="The eight tables of the graph core. Nothing is updated in place: a change closes a row and inserts a new one under a new commit.">
+  <img
+    src="/images/diagram-02-graph-schema.png"
+    alt="Entity-relationship diagram of the eight kg tables. kg.commit is the version spine, created only by hitl.merge_proposal and chained through parent_id. kg.node and kg.edge each carry a stable node_key or edge_key separate from their per-version id, plus bitemporal valid_from/valid_to and tx_from/tx_to columns. kg.node_embedding and kg.edge_embedding hold 1024-dimension vectors behind partial HNSW indexes keyed on is_current. kg.source, kg.chunk and kg.evidence form the provenance chain that grounds every fact, with evidence joined by subject_key rather than a database foreign key. A dashed box shows hitl.proposal_item as the only way a row reaches the graph."
+  />
+</Frame>
+
 ## A closed ontology
 
 Fifteen node types and fifteen edge types, both Postgres enums. You cannot
@@ -32,6 +39,13 @@ A sample of the vocabulary, using a quote-to-cash engagement:
 | `control` | "20% Discount Threshold" |
 | `pain_point` | "Deal Desk backlog on Fridays" |
 | `opportunity` | "Auto-approve sub-10% discounts" |
+
+<Frame caption="The closed ontology as a radial map. `activity` is the hub: twelve of the fifteen edge types touch it directly, because activity is the unit of work.">
+  <img
+    src="/images/diagram-03-ontology.png"
+    alt="Radial diagram of the closed ontology. The activity node type sits at the center with spokes to the twelve node types it connects to directly — process, role, org_unit, system, system_object, artifact, decision, control, metric, pain_point, opportunity and tool_binding — each spoke labeled with its legal edge type, such as performs, belongs_to, gated_by, depends_on and automatable_by. Two universal edges, evidenced_by and supersedes, are drawn as a dashed ring rather than individual spokes, and capability sits outside the ring as the one node type with no dedicated structural edge. Below the ring, a worked quote-to-cash example shows six real nodes wired with six real edges."
+  />
+</Frame>
 
 Edges carry the semantics: `performs` (role to activity), `precedes` and
 `hands_off_to` (control flow), `gated_by` (activity to control),

@@ -72,6 +72,13 @@ that deploys to AWS. In the deployed shape, the agents run as AgentCore
 runtimes (container or CodeZip), the gate service and backfill run as
 Lambdas behind API Gateway, and the SoR jobs run on EventBridge/SQS or EKS.
 
+<Frame caption="The deployed AWS topology. The violet lines are the only paths that touch a write.">
+  <img
+    src="/images/diagram-01-system-topology.png"
+    alt="AWS deployment topology in one account in us-west-2. Three Bedrock AgentCore runtimes — fde-engagement, fde-workflow and fde-development — reach the platform only through a shared MCP Gateway with three targets, alongside the AgentCore Memory, Identity, Observability and Evaluations capabilities. One Aurora PostgreSQL 16 instance with pgvector holds all five schemas: kg, hitl, wf, sor and trn. Around it sit the KG MCP server on ECS Fargate, the gate service on Lambda behind API Gateway, the embedder worker, an EventBridge-driven drift monitor, the SageMaker training path and the prod-ops console. Cognito, CloudWatch, external systems of record and the human reviewers sit outside the account boundary. The fde_agent role is annotated as SELECT-only on kg.node, kg.edge and kg.commit with inserts, updates and deletes explicitly revoked, and the gate service is marked as the only principal permitted to call hitl.merge_proposal."
+  />
+</Frame>
+
 <Info>
 The deployed shape is written against verified AWS API shapes but has not
 been executed against live AWS. The local shape is fully tested. See

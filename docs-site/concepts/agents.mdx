@@ -56,6 +56,13 @@ review queue. Nothing — not an interview claim, not a drift response, not a
 workflow — reaches the graph without a human decision, and every one of those
 decisions becomes a training label.
 
+<Frame caption="The drift half of the loop in detail. The Workflow Agent only enters after a deterministic detector has already fired — it explains and prioritizes drift, it never decides whether drift exists.">
+  <img
+    src="/images/diagram-05-drift-loop.png"
+    alt="Flowchart of drift detection and closure along two axes that share one table, sor.drift_signal. On the reality-drift axis, system-of-record adapters write sor.observation rows that a materialized transition view feeds to four deterministic SQL detectors — sequence drift, control bypass, actor drift and latency drift — each with an explicit minimum sample size. On the pin-drift axis, every merge transactionally raises a stale_pin signal for any published workflow still pinned behind the new head. Signals land in one deduplicated table; the Workflow Agent triages them and drafts a knowledge-graph proposal or re-authors the workflow, but both paths run back through the human gate and hitl.merge_proposal before anything is sealed. Side panels cover the dedup index that keeps the queue from spamming and the severity-to-path mapping."
+  />
+</Frame>
+
 ## One tool surface: 21 MCP tools
 
 The agents never touch the database directly. All access goes through an MCP

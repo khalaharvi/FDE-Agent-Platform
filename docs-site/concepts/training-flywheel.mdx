@@ -25,6 +25,13 @@ The discards matter as much as the labels. Training on rubber stamps means
 training on noise that is correlated with reviewer fatigue — worse than
 random noise, because it is systematic.
 
+<Frame caption="From a reviewer's click to a trained policy. Every stage is gated by a human decision made at the gate; no stage invents its own label.">
+  <img
+    src="/images/diagram-06-training-loop.png"
+    alt="Data-flow diagram from human review outcomes to a trained policy. The four gate outcomes — merged with no edits, rejected, reviewer-edited, and approved in under N seconds — map to positive, negative, preference-pair and discarded signals feeding trn.trace_session, whose outcome may be set only by the gate service. trn.trace_session pins the base commit so a trajectory stays reconstructible; trn.trace_step carries the per-turn trainable flag that is the loss mask; the trn.sft_export view emits OpenAI-messages shape and fails loudly if the mask is wrong. Downstream stages run LoRA supervised fine-tuning, then GRPO on the live rollout environment, with a rival-grader tournament and Cohen's kappa judge calibration in the 0.78 to 0.82 band deciding whether the judge may serve as the RL reward. A staged volume gate across the top marks day one, 350 accepted traces, 2,400 traces and 8,000 traces, with 'most teams stop here' at the supervised fine-tuning stage."
+  />
+</Frame>
+
 None of this works unless the review decision is genuinely human. That is one
 of the three reasons the gates are [deterministic SQL](/concepts/human-gates):
 if an LLM decided which proposals needed review, the training signal would be
