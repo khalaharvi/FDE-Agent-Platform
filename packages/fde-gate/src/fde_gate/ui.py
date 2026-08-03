@@ -245,13 +245,41 @@ async def workflows_page(request: Request) -> Response:
     return _page(request, "workflows.html.j2", workflows=listing["workflows"], status=status)
 
 
-async def publish_post(request: Request) -> Response:
+async def workflow_page(request: Request) -> Response:
+    """One workflow as a procedure a person can read before publishing it.
+
+    The page the publish button should always have stood on: publishing used
+    to be a button on a list row, so the only way to see what was being
+    published was to start a run of it.
+    """
     workflow_id = request.param_int("workflow_id")
+    playbook = await workflows.get_playbook(workflow_id)
+    if "error" in playbook:
+        return _page(request, "not_found.html.j2", what=f"workflow {workflow_id}")
+    return _page(
+        request,
+        "workflow.html.j2",
+        workflow=playbook["workflow"],
+        steps=playbook["steps"],
+        process_flow=playbook["process_flow"],
+    )
+
+
+async def publish_post(request: Request) -> Response:
+    """Publish, then land on the workflow -- including when it is refused.
+
+    `wf.assert_faithful` refuses by naming the unbound step keys, and the
+    detail page is where those steps are, each already flagged as citing
+    nothing. Redirecting to the list would put the instruction and the thing
+    it is about on two different screens.
+    """
+    workflow_id = request.param_int("workflow_id")
+    location = f"/ui/workflows/{workflow_id}"
     try:
         await workflows.publish(workflow_id, request.principal)
     except Exception as exc:  # rendered to the operator
-        return _back("/ui/workflows?status=all", error=_message(exc))
-    return _back("/ui/workflows", notice=f"workflow {workflow_id} published")
+        return _back(location, error=_message(exc))
+    return _back(location, notice=f"workflow {workflow_id} published")
 
 
 async def runs_page(request: Request) -> Response:
@@ -353,7 +381,7 @@ async def triage_post(request: Request) -> Response:
 
 
 def register(router: Router) -> None:
-    """Attach the console's 14 routes to the shared router."""
+    """Attach the console's 15 routes to the shared router."""
     router.get("/ui", queue_page)
     router.get("/ui/proposals/{proposal_id}", proposal_page)
     router.post("/ui/proposals/{proposal_id}/decision", decision_post)
@@ -361,6 +389,7 @@ def register(router: Router) -> None:
     router.post("/ui/items/{item_id}/edit", item_edit_post)
 
     router.get("/ui/workflows", workflows_page)
+    router.get("/ui/workflows/{workflow_id}", workflow_page)
     router.post("/ui/workflows/{workflow_id}/publish", publish_post)
 
     router.get("/ui/runs", runs_page)

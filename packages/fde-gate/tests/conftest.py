@@ -380,10 +380,12 @@ def make_workflow(seed: dict[str, Any]) -> Any:
                     INSERT INTO wf.step (workflow_id, step_key, ordinal, kind, title,
                                          instruction, tool_name, tool_args, human_prompt,
                                          human_schema, branches, sor_adapter_key,
-                                         sor_write_op, timeout_seconds, on_failure)
+                                         sor_write_op, requires_human, timeout_seconds,
+                                         on_failure)
                     VALUES (%(wid)s, %(key)s, %(ord)s, %(kind)s::wf.step_kind, %(title)s,
                             %(instr)s, %(tool)s, %(args)s, %(prompt)s, %(schema)s,
-                            %(branches)s, %(adapter)s, %(op)s, %(timeout)s, %(onfail)s)
+                            %(branches)s, %(adapter)s, %(op)s, %(human)s, %(timeout)s,
+                            %(onfail)s)
                     RETURNING step_id
                     """,
                     {
@@ -400,6 +402,7 @@ def make_workflow(seed: dict[str, Any]) -> Any:
                         "branches": Jsonb(spec["branches"]) if "branches" in spec else None,
                         "adapter": spec.get("sor_adapter_key"),
                         "op": spec.get("sor_write_op"),
+                        "human": spec.get("requires_human", False),
                         "timeout": spec.get("timeout_seconds", 900),
                         "onfail": spec.get("on_failure", "halt"),
                     },
@@ -407,14 +410,21 @@ def make_workflow(seed: dict[str, Any]) -> Any:
                 step_row = cur.fetchone()
                 assert step_row is not None
                 if bind and spec["kind"] != "notify":
-                    cur.execute(
-                        """
-                        INSERT INTO wf.step_binding (step_id, subject_kind, subject_key,
-                                                     relation, pinned_label)
-                        VALUES (%(sid)s, 'node', %(key)s, 'implements', 'pytest fixture')
-                        """,
-                        {"sid": step_row["step_id"], "key": BOUND_NODE_KEYS[0]},
-                    )
+                    # `bindings` is (subject_key, relation) pairs; one
+                    # `implements` binding to the first seeded node is what a
+                    # step needs to be publishable, and is what most tests
+                    # want. A test about how bindings are ORDERED needs a step
+                    # carrying more than one, hence the override.
+                    pairs = spec.get("bindings", ((BOUND_NODE_KEYS[0], "implements"),))
+                    for subject_key, relation in pairs:
+                        cur.execute(
+                            """
+                            INSERT INTO wf.step_binding (step_id, subject_kind, subject_key,
+                                                         relation, pinned_label)
+                            VALUES (%(sid)s, 'node', %(key)s, %(rel)s, 'pytest fixture')
+                            """,
+                            {"sid": step_row["step_id"], "key": subject_key, "rel": relation},
+                        )
 
             if publish:
                 cur.execute(
