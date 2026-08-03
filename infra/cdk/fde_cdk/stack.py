@@ -6,6 +6,7 @@ from constructs import Construct
 from fde_cdk.database import Database
 from fde_cdk.iam_roles import IamRoles
 from fde_cdk.identity import Identity
+from fde_cdk.migrations import Migrations
 from fde_cdk.network import Network
 from fde_cdk.params import add_launch_params
 
@@ -43,4 +44,17 @@ class FdePlatformStack(cdk.Stack):
             "IamRoles",
             db_secret=self.database.secret,
             db_cluster=self.database.cluster,
+        )
+
+        # Migrations last: it needs the network (VPC-attached Lambda), the
+        # database (secret to connect with, cluster to open ingress from),
+        # and IamRoles' `migration_role` -- everything else in the stack.
+        self.migrations = Migrations(
+            self,
+            "Migrations",
+            params=self.params,
+            vpc=self.network.vpc,
+            db_secret=self.database.secret,
+            db_cluster=self.database.cluster,
+            migration_role=self.iam_roles.migration_role,
         )

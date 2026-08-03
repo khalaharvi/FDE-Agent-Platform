@@ -19,11 +19,26 @@ def test_admin_email_pattern_rejects_garbage() -> None:
 
 
 def test_conditions_and_mapping_present() -> None:
-    """The rest of the Interfaces contract: the three named conditions and
-    the region->assets-bucket mapping, both consumed by later tasks."""
+    """The rest of the Interfaces contract: the four named conditions
+    (`HasAssetsBucket` added by Task 5, consumed by `Migrations`'s
+    code-bucket `Fn::If`) and the region->assets-bucket mapping."""
     template = synth_template().to_json()
-    assert set(template["Conditions"]) == {"IsProduction", "IsBedrockModel", "HasProviderKey"}
+    assert set(template["Conditions"]) == {
+        "IsProduction",
+        "IsBedrockModel",
+        "HasProviderKey",
+        "HasAssetsBucket",
+    }
     assert template["Mappings"]["AssetsRegionMap"]["us-east-1"]["bucket"]
+
+
+def test_has_assets_bucket_condition_checks_non_empty_assets_bucket() -> None:
+    """Same blank-string-sentinel shape as `HasProviderKey`: true exactly
+    when a launcher supplied a non-default `AssetsBucket` override."""
+    template = synth_template().to_json()
+    assert template["Conditions"]["HasAssetsBucket"] == {
+        "Fn::Not": [{"Fn::Equals": [{"Ref": "AssetsBucket"}, ""]}]
+    }
 
 
 def test_no_cdk_metadata_resource() -> None:

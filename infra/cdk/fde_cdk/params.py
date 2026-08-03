@@ -44,6 +44,7 @@ class LaunchParams:
     is_production: cdk.CfnCondition
     is_bedrock_model: cdk.CfnCondition
     has_provider_key: cdk.CfnCondition
+    has_assets_bucket: cdk.CfnCondition
 
     assets_region_map: cdk.CfnMapping
 
@@ -165,6 +166,16 @@ def add_launch_params(stack: cdk.Stack) -> LaunchParams:
             cdk.Fn.condition_equals(provider_api_key.value_as_string, "")
         ),
     )
+    # Consumed by Task 5's `Migrations` construct: `Fn::If(HasAssetsBucket,
+    # AssetsBucket, FindInMap(AssetsRegionMap, AWS::Region, "bucket"))`
+    # picks the migration-runner Lambda's code bucket -- the override param
+    # when a launcher set one, else the region default. Same blank-string
+    # sentinel pattern as `has_provider_key` above.
+    has_assets_bucket = cdk.CfnCondition(
+        stack,
+        "HasAssetsBucket",
+        expression=cdk.Fn.condition_not(cdk.Fn.condition_equals(assets_bucket.value_as_string, "")),
+    )
 
     assets_region_map = cdk.CfnMapping(
         stack,
@@ -190,5 +201,6 @@ def add_launch_params(stack: cdk.Stack) -> LaunchParams:
         is_production=is_production,
         is_bedrock_model=is_bedrock_model,
         has_provider_key=has_provider_key,
+        has_assets_bucket=has_assets_bucket,
         assets_region_map=assets_region_map,
     )
