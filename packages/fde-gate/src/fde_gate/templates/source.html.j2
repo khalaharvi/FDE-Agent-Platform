@@ -1,0 +1,89 @@
+{% extends "base.html.j2" %}
+{% block title %}{{ source.title }}{% endblock %}
+{% block content %}
+<h1>{{ source.title }}</h1>
+<p>
+  <span class="pill">{{ source.source_kind }}</span>
+  <span class="pill">source {{ source.source_id }}</span>
+  {% if source.version > 1 %}<span class="pill">version {{ source.version }}</span>{% endif %}
+  <span class="pill{% if coverage.anchored == 0 %} overdue{% endif %}">
+    {{ coverage.percent }}% anchored
+  </span>
+</p>
+<p class="muted">
+  Captured {{ source.captured_at|day }}{% if source.captured_by %} by {{ source.captured_by }}{% endif %}
+  &middot; registered {{ source.created_at }}
+  &middot; engagement {{ source.engagement_id }}
+</p>
+
+{% if source.reingest_of %}
+<p class="muted">
+  Carried forward from
+  <a href="/ui/sources/{{ source.reingest_of }}">source {{ source.reingest_of }}</a>,
+  which keeps the passages as they were first stored.
+</p>
+{% endif %}
+{% if superseded_by %}
+<div class="banner notice">
+  This version has been re-ingested as
+  <a href="/ui/sources/{{ superseded_by }}">source {{ superseded_by }}</a>.
+  Its dark passages were carried there and re-anchored; the copies below are
+  kept as the record of what was originally stored, and stay invisible to
+  search.
+</div>
+{% endif %}
+
+{# The dark warning is suppressed once a version has been superseded. Its
+   dark copies are SUPPOSED to stay dark -- that is what makes the re-ingest
+   safe from double-counting -- so telling the operator to go and fix them
+   would be sending them to redo work the banner above says is already done.
+   The live version is where any remaining action is. #}
+{% if coverage.total == 0 %}
+<p class="empty">This source has no text attached to it.</p>
+{% elif not superseded_by and coverage.anchored == 0 %}
+<div class="banner warn">
+  <strong>No passage in this source is searchable.</strong>
+  <p>{{ dark_consequence }}</p>
+  <p><strong>What to do:</strong> {{ dark_next_step }}</p>
+</div>
+{% elif not superseded_by and coverage.dark > 0 %}
+<div class="banner warn">
+  <strong>{{ coverage.dark }} of {{ coverage.total }} {{ coverage.total|plural("passage") }}
+  {{ coverage.dark|plural("is", "are") }} invisible to search.</strong>
+  <p>{{ dark_consequence }}</p>
+  <p><strong>What to do:</strong> {{ dark_next_step }}</p>
+</div>
+{% endif %}
+
+{% if can_reingest %}
+<form method="post" action="/ui/sources/{{ source.source_id }}/reingest">
+  <button type="submit">Re-ingest {{ coverage.dark }} dark
+    {{ coverage.dark|plural("passage") }}</button>
+  <span class="muted">
+    Stores the dark passages again as a new version of this source, anchored
+    to the nodes that are live now. Stored text is never edited, so the
+    copies here stay exactly as they are &mdash; and because a dark passage is
+    one search already ignores, nothing is counted twice.
+  </span>
+</form>
+{% endif %}
+
+<h2>Passages</h2>
+<table>
+  <tr><th>#</th><th>Anchors</th><th>Embedded</th><th>Text</th></tr>
+  {% for chunk in chunk_rows %}
+  <tr>
+    <td>{{ chunk.ordinal }}</td>
+    <td>
+      {% if chunk.anchor_keys %}
+        {% for key in chunk.anchor_keys %}<span class="pill">{{ key }}</span> {% endfor %}
+      {% else %}
+        <span class="pill overdue">dark</span>
+      {% endif %}
+    </td>
+    <td class="muted">{{ "yes" if chunk.embedded else "waiting" }}</td>
+    <td><pre>{{ chunk.content }}</pre></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
