@@ -12,7 +12,7 @@ labeled unverified.** This page is the split.
 |---|---|
 | 15 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate, run on every commit |
 | 25 end-to-end smoke tests pass | including fail-closed submit, unauthorized approval, review → edit → merge → label, workflow publish/run, observation dedup, and as-of traversal |
-| 545 Python tests pass against live Postgres | across all five packages, in CI with the same pgvector image the quickstart uses |
+| 609 Python tests pass against live Postgres | across all five packages, in CI with the same pgvector image the quickstart uses |
 | 8 privilege-denial invariants hold | asserted in CI — eight statements that must all fail, or the build does |
 | Docs match code | a CI test parses the training doc's reward-weight table and kappa thresholds and asserts they equal the code's constants |
 
