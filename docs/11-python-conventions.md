@@ -153,7 +153,7 @@ policy for a world it will never see.
 **Tools are split by concern**, not held in one file:
 `tools/{graph,proposals,drift,workflow}.py`, with `tools/_base.py` holding the
 error boundary, JSON coercion, and trace emission. `server.py` builds the
-FastMCP instance and calls `register_all()`. The 21 tools and their docstrings
+FastMCP instance and calls `register_all()`. The 22 tools and their docstrings
 are unchanged from before the split — **the docstrings are the model-facing
 tool descriptions**, so they are a tuned deliverable, not commentary. Edit them
 the way you would edit a prompt.

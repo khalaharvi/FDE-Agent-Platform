@@ -29,7 +29,7 @@ PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 
 | Package | Role | DB role it runs as |
 |---|---|---|
-| fde-mcp | MCP server (21 tools) + embedder worker | `fde_agent` / `fde_ingest` |
+| fde-mcp | MCP server (22 tools) + embedder worker | `fde_agent` / `fde_ingest` |
 | fde-agents | 3 AgentCore runtimes + deploy CLI | (tools arrive over MCP) |
 | fde-training | offline training pipeline (NOT mypy-strict, by policy) | `fde_training` / `fde_rl_rollout` |
 | fde-gate | Lambda gate service: review console, evidence intake, merge, wf publish/run | `fde_gate_service` / `fde_prodops` |

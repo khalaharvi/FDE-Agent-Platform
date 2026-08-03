@@ -35,7 +35,7 @@ actually hold, rather than being an aspiration in a comment.
 
 ## 2. Tool reference
 
-21 tools total: 9 read, 3 proposal, 3 drift, 3 workflow, 3 evidence (`packages/fde-mcp/README.md`).
+22 tools total: 9 read, 3 proposal, 3 drift, 4 workflow, 3 evidence (`packages/fde-mcp/README.md`).
 
 ### 2.1 Read tools
 
@@ -319,6 +319,31 @@ unreachable from this tool regardless of what the model intends.
 step keys or dangling binding keys — fix those (add a `StepBindingSpec`, or
 bind to a live key) and call again.
 
+#### `wf_export_playbook(workflow_id: int) -> dict`
+
+Renders the workflow as one Markdown document a person can follow, and
+returns `{workflow_id, slug, version, status, markdown}`. The document
+carries YAML front matter (slug, version, status, autonomy, who may run it,
+the pinned commit's content digest), a narrative of the process the workflow
+implements, then every step in order with its instruction, the question put
+to a human where there is one, whether it stops for a human, the `on_failure`
+behaviour, and the graph elements the step cites resolved to their labels.
+
+Deterministic against the pin: steps render exactly as they stand at
+`pinned_commit_id`, so the same workflow exports the same bytes and an export
+is an artefact you can diff. The one exception is the "Process context"
+section, which reads the graph as it stands *now* and says so in the text —
+it can describe a process that has moved on since the pin. Draft workflows
+export too, carrying a banner that they have not passed the publication gate.
+
+Prefer `wf_get` to inspect one attribute; prefer this when a human is going
+to read the result. Read-only, and it shares its renderer with the gate
+service's `GET /api/workflows/{id}/playbook.md`, so the console and the tool
+emit identical bytes.
+
+*Failure mode:* an unknown `workflow_id` returns the standard
+`{error, hint}` envelope (Section 7) rather than raising.
+
 ---
 
 ## 3. Deployment shape A: in-runtime MCP
@@ -375,7 +400,7 @@ built-in `x_amz_bedrock_agentcore_search` tool) narrow an agent's visible
 tool list by semantic relevance to the current task, rather than requiring
 every tool name to be hard-coded into the agent's own tool list. This is
 useful headroom for when the platform's tool surface grows past what fits
-comfortably in one system prompt's tool section — at 21 tools today, semantic
+comfortably in one system prompt's tool section — at 22 tools today, semantic
 search is not load-bearing, but the Gateway is provisioned with it on from
 the start so growth doesn't require a re-provision.
 
@@ -407,7 +432,7 @@ runtimes from day one).
   no credentials.
 - **Relevant limits** (see `docs/99-sources.md` for sourcing): 100 targets
   per gateway, 1000 tools per target, 6MB tool payload, 15-minute gateway
-  timeout. At one `mcpServer` target (21 tools) plus one `lambda` target (1
+  timeout. At one `mcpServer` target (22 tools) plus one `lambda` target (1
   tool today), this platform is nowhere near any of these ceilings; they
   matter if the batch-Lambda escape hatch grows into many narrow tools rather
   than staying a small, deliberately underused hatch.
