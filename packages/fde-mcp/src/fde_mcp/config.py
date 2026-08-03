@@ -98,6 +98,9 @@ class AgentSettings:
         trace_session_id: `FDE_TRACE_SESSION_ID`. When set, every tool
             call appends one row to `trn.trace_step` under this session;
             when unset, tracing is a no-op (see `_base.emit_trace`).
+        model_api_key: `FDE_MODEL_API_KEY`. The API key override for
+            OpenAI-compatible model/embedding endpoints; optional because
+            not every deployment uses OpenAI-compatible providers.
     """
 
     runtime_arn: str
@@ -105,6 +108,7 @@ class AgentSettings:
     model_id: str | None
     principal: str
     trace_session_id: str | None
+    model_api_key: str | None
 
     def __post_init__(self) -> None:
         if self.name not in _VALID_AGENT_NAMES:
@@ -120,6 +124,7 @@ class AgentSettings:
             model_id=_env_opt_str("FDE_MODEL_ID"),
             principal=_env_opt_str("FDE_PRINCIPAL") or runtime_arn,
             trace_session_id=_env_opt_str("FDE_TRACE_SESSION_ID"),
+            model_api_key=_env_opt_str("FDE_MODEL_API_KEY"),
         )
 
 
@@ -211,19 +216,22 @@ class DatabaseSettings:
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingSettings:
-    """Bedrock embedding client configuration, shared by the MCP server
-    (query-side probes) and the embedder worker (index-side writes) --
-    see embeddings.py's module docstring for the Titan/Cohere wire-shape
-    split this backs.
+    """Embedding client configuration, shared by the MCP server (query-side
+    probes) and the embedder worker (index-side writes) -- see
+    embeddings.py's module docstring for the provider dispatch and the
+    Titan/Cohere wire-shape split within the `bedrock` provider.
 
     Attributes:
+        provider: `FDE_EMBED_PROVIDER`, default "bedrock". One of
+            "bedrock", "openai", "gemini", "openai-compat" -- see
+            embeddings.py's module docstring for what each does.
         model_id: `FDE_EMBED_MODEL_ID`, default
             "amazon.titan-embed-text-v2:0".
         dimensions: `FDE_EMBED_DIMENSIONS`, default 1024. Must match
             `kg.embedding`'s fixed `vector(1024)` domain
             (003_vectors_hnsw.sql) -- `to_pgvector_literal` enforces this.
-        max_retries: `FDE_EMBED_MAX_RETRIES`, default 5. Bedrock throttle
-            retry ceiling.
+        max_retries: `FDE_EMBED_MAX_RETRIES`, default 5. Throttle retry
+            ceiling, shared by the Bedrock and HTTP provider retry loops.
         base_backoff_seconds: `FDE_EMBED_BASE_BACKOFF`, default 0.5.
         max_backoff_seconds: `FDE_EMBED_MAX_BACKOFF`, default 20.0.
         cache_size: `FDE_EMBED_CACHE_SIZE`, default 8192. Max entries in
@@ -231,8 +239,17 @@ class EmbeddingSettings:
             correctness dependency -- a cache miss just re-embeds).
         bedrock_region: `FDE_BEDROCK_REGION`, falling back to
             `AWS_REGION`/`AWS_DEFAULT_REGION`, then "us-east-1".
+        base_url: `FDE_EMBED_BASE_URL`. Required when `provider` is
+            "openai-compat" -- the base URL of a server presenting the
+            OpenAI `/v1/embeddings` wire shape (e.g. Ollama, LM Studio,
+            vLLM). Unused by every other provider.
+        api_key: `FDE_EMBED_API_KEY`. Overrides the provider's normal
+            credential resolution (`credentials.resolve_api_key`) for the
+            embedding client specifically; optional because most
+            deployments share the model provider's key.
     """
 
+    provider: str
     model_id: str
     dimensions: int
     max_retries: int
@@ -240,10 +257,13 @@ class EmbeddingSettings:
     max_backoff_seconds: float
     cache_size: int
     bedrock_region: str
+    base_url: str | None
+    api_key: str | None
 
     @classmethod
     def from_env(cls) -> EmbeddingSettings:
         return cls(
+            provider=_env_str("FDE_EMBED_PROVIDER", "bedrock"),
             model_id=_env_str("FDE_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0"),
             dimensions=_env_int("FDE_EMBED_DIMENSIONS", 1024),
             max_retries=_env_int("FDE_EMBED_MAX_RETRIES", 5),
@@ -256,6 +276,8 @@ class EmbeddingSettings:
                 or _env_opt_str("AWS_DEFAULT_REGION")
                 or "us-east-1"
             ),
+            base_url=_env_opt_str("FDE_EMBED_BASE_URL"),
+            api_key=_env_opt_str("FDE_EMBED_API_KEY"),
         )
 
 

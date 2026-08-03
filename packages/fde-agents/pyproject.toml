@@ -7,7 +7,7 @@ license = { text = "Apache-2.0" }
 dependencies = [
   "fde-mcp",
   "bedrock-agentcore>=1.19",
-  "strands-agents>=1.50",
+  "strands-agents[anthropic,gemini,openai]>=1.50",
   "mcp>=1.27",
   "pydantic>=2.9",
   "boto3>=1.35",
@@ -22,6 +22,7 @@ fde-engagement = "fde_agents.engagement.agent:main"
 fde-workflow = "fde_agents.workflow.agent:main"
 fde-development = "fde_agents.development.agent:main"
 fde-agents-deploy = "fde_agents.deploy.cli:main"
+fde-agents-local = "fde_agents.local_runner:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -10,11 +10,14 @@ dependencies = [
   "pydantic>=2.9",
   "boto3>=1.35",
   "structlog>=24.4",
+  "keyring>=25",
+  "httpx>=0.27",
 ]
 
 [project.scripts]
 fde-mcp = "fde_mcp.__main__:main"
 fde-embedder = "fde_mcp.embedder_worker:main"
+fde-providers = "fde_mcp.providers_cli:main"
 
 [build-system]
 requires = ["hatchling"]

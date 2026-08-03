@@ -46,11 +46,10 @@ from typing import Any, cast
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp, PingStatus
 from strands import Agent
-from strands.models.bedrock import BedrockModel
 
 from fde_mcp.logging import bind_session, get_logger
 
-from . import guardrails, hitl, mcp_tools, streaming, tracing
+from . import guardrails, hitl, mcp_tools, providers, streaming, tracing
 from .config import get_agent_runtime_settings, resolve_model_id
 from .guardrails import Violation
 
@@ -364,10 +363,11 @@ async def run_agent_task(
     # (tracing.py talks to fde_mcp.db directly, in-process).
     os.environ["FDE_TRACE_SESSION_ID"] = session_id
 
-    # Resolved once, used for both the audit column and the actual Bedrock
+    # Resolved once, used for both the audit column and the actual model
     # call -- the proposal's recorded model id and the model that authored
-    # it can never disagree (see config.MODEL_PRESETS).
+    # it can never disagree (see config.MODEL_PRESETS / providers.py).
     model_id = resolve_model_id(config.agent_key)
+    backend = settings.model_backend
 
     with mcp_tools.build_mcp_client(settings.gateway) as mcp_client:
         tools = config.filter_tools(mcp_client.list_tools_sync())
@@ -379,7 +379,7 @@ async def run_agent_task(
                 engagement_id=engagement_id,
                 agent_name=config.agent_key,
                 agent_runtime_arn=settings.process.resolved_runtime_arn(config.agent_key),
-                model_id=model_id,
+                model_id=providers.qualified_model_id(backend.provider, model_id),
                 task_kind=task,
                 task_input=task_input,
                 agent_qualifier=settings.process.agent_qualifier,
@@ -389,7 +389,7 @@ async def run_agent_task(
             yield _error(f"could not start trace session: {exc}")
             return
 
-        model = BedrockModel(model_id=model_id)
+        model = providers.build_model(model_id, backend)
         agent = Agent(model=model, tools=tools, system_prompt=config.system_prompt)
         prompt = config.build_prompt(task, engagement_id, session_id, task_input)
 

@@ -14,6 +14,7 @@ createdb fde && ./db/rebuild.sh fde      # 15 migrations + 25 smoke tests, rebui
 FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 545 tests; without DSN the db-marked ones skip
 uv run ruff check packages && uv run ruff format --check packages
 uv run mypy                              # strict; covers fde-mcp, fde-agents, fde-gate, fde-sor
+uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task ... (docs/12)
 ```
 
 ## The invariant (do not weaken)
