@@ -378,7 +378,7 @@ async def runs_page(request: Request) -> Response:
 async def run_page(request: Request) -> Response:
     run_id = request.param_int("run_id")
     run = await runs.get_run(run_id)
-    if "error" in run:
+    if runs.is_missing(run):
         return await _page(request, "not_found.html.j2", what=f"run {run_id}")
     return await _page(request, "run.html.j2", run=run)
 

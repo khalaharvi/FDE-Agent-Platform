@@ -247,7 +247,10 @@ async def list_runs(request: Request) -> Response:
 
 async def get_run(request: Request) -> Response:
     result = await runs.get_run(request.param_int("run_id"))
-    if "error" in result:
+    # `runs.is_missing`, not `"error" in result`: `wf.run` has an `error`
+    # column, so the membership test matched every real run. See that
+    # function.
+    if runs.is_missing(result):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
 

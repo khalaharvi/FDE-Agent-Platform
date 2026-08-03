@@ -10,9 +10,10 @@ import pytest
 from gate_seed import OWNER, SME
 from psycopg import errors as pg_errors
 
+from fde_gate import handler, ui
 from fde_gate.config import get_gate_settings
 from fde_gate.executors import StepExecutionError
-from fde_gate.http import GateError
+from fde_gate.http import GateError, Request
 from fde_gate.runner import advance
 from fde_gate.service import proposals, runs, workflows
 from fde_mcp import db
@@ -261,3 +262,69 @@ async def test_gate_service_role_can_apply_trace_label(make_proposal: Any, sql: 
     assert row is not None
     assert row["outcome"] == "rejected"
     assert row["label_source"] == "hitl_gate"
+
+
+async def test_a_run_that_exists_is_not_reported_as_missing(make_workflow: Any) -> None:
+    """`wf.run` has an `error` column, so every real run carries an `error`
+    key -- and both callers tested `"error" in result` to decide "not found".
+    The console's run detail page and `GET /api/runs/{id}` therefore answered
+    "no run N here" for every run that existed, from the day the column and
+    the envelope first shared a name.
+
+    Asserted on both routes, not just on `is_missing`, because the bug was
+    never in the service -- it was in what two callers concluded from it.
+    """
+    workflow_id = make_workflow(
+        [{"step_key": "approve", "kind": "human", "human_schema": {"approved": "boolean"}}]
+    )
+    run_id = int(
+        (await runs.start_run(workflow_id, SME, run_input={"discount_pct": 30}))["run"]["run_id"]
+    )
+    # Advanced, so the run is PARKED on the human step rather than merely
+    # started. `run.awaiting` being empty is what let this page look fine in
+    # every earlier test while its one interesting branch never ran.
+    await advance(run_id)
+
+    detail = await runs.get_run(run_id)
+    assert detail["status"] == "awaiting_human"
+    assert len(detail["awaiting"]) == 1
+    assert "error" in detail, "the column is still selected; that is not the bug"
+    assert detail["error"] is None
+    assert not runs.is_missing(detail)
+    assert runs.is_missing(await runs.get_run(10**9))
+
+    page = await ui.run_page(
+        Request(
+            method="GET",
+            path=f"/ui/runs/{run_id}",
+            path_params={"run_id": str(run_id)},
+            principal=SME,
+        )
+    )
+    assert page.status == HTTPStatus.OK
+    assert "Not found" not in str(page.body)
+    # The second bug the first one was hiding: `wf.await_human` copies the
+    # run input onto the parked step, so `s.input` is truthy on an ORDINARY
+    # human step and `s.input.escalated_error` raised under StrictUndefined.
+    # Rendering the waiting section at all is the assertion.
+    assert "Waiting on you" in str(page.body)
+    assert "This step failed and was escalated" not in str(page.body)
+
+    api = await handler.get_run(
+        Request(
+            method="GET",
+            path=f"/api/runs/{run_id}",
+            path_params={"run_id": str(run_id)},
+            principal=SME,
+        )
+    )
+    assert api.status == HTTPStatus.OK
+    missing = await handler.get_run(
+        Request(
+            method="GET",
+            path="/api/runs/999999999",
+            path_params={"run_id": "999999999"},
+            principal=SME,
+        )
+    )
+    assert missing.status == HTTPStatus.NOT_FOUND

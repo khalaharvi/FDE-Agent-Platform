@@ -55,9 +55,13 @@
 {% for s in run.awaiting %}
 <h2>Waiting on you: {{ s.title }}</h2>
 <p>{{ s.human_prompt or s.instruction }}</p>
-{% if s.input and s.input.escalated_error %}
+{# `.get`, not `.escalated_error`: the environment uses StrictUndefined, and
+   `wf.await_human` copies the run input onto every parked step -- so
+   `s.input` is truthy on an ORDINARY human step and the attribute lookup
+   raised instead of reading false. #}
+{% if s.input and s.input.get("escalated_error") %}
   <div class="banner error"><strong>This step failed and was escalated</strong>
-    <pre>{{ s.input.escalated_error | tojson(indent=2) }}</pre></div>
+    <pre>{{ s.input.get("escalated_error") | tojson(indent=2) }}</pre></div>
   <p class="muted">Answer <strong>retry</strong> to run the step again, or
     <strong>skip</strong> to move past it. <strong>approve</strong> is only for
     steps the workflow author intended to stop at.</p>

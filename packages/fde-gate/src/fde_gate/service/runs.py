@@ -30,6 +30,7 @@ __all__ = [
     "awaiting_steps",
     "cancel",
     "get_run",
+    "is_missing",
     "list_runs",
     "respond",
     "start_run",
@@ -93,6 +94,19 @@ async def list_runs(
     }
 
 
+def is_missing(result: dict[str, Any]) -> bool:
+    """Is this `get_run` result the not-found envelope rather than a run?
+
+    A function, and not `"error" in result`, because `wf.run` HAS an `error`
+    column -- so every real run carries an `error` key, usually null, and the
+    membership test was true for all of them. Both callers used it, so
+    `/ui/runs/{id}` and `GET /api/runs/{id}` answered "not found" for every
+    run that existed. The presence of `run_id` is the thing that actually
+    distinguishes the two shapes.
+    """
+    return "run_id" not in result
+
+
 async def get_run(run_id: int) -> dict[str, Any]:
     """One run with every attempt of every step it has taken.
 
@@ -100,6 +114,9 @@ async def get_run(run_id: int) -> dict[str, Any]:
     tells an operator to read the error message, and a `retry` policy means
     the interesting error is usually on an earlier attempt than the one
     currently open.
+
+    A missing run comes back as `{"error": ...}`. Test for it with
+    `is_missing`, never with `"error" in result` -- see that function.
     """
     async with db.tool_transaction(role=_prodops_role()) as conn, conn.cursor() as cur:
         await cur.execute(
