@@ -70,8 +70,15 @@ __all__ = [
     "Router",
     "Upload",
     "as_conflict",
+    # `error_response` is the error contract itself, and `handler.py` calls it
+    # directly for the refusals that happen before a route is matched. It was
+    # missing from this list while being imported by name, which made the list
+    # a description of the module that was not true.
+    "error_response",
+    "event_path",
     "parse_apigw_event",
     "pg_message",
+    "principal_from_event",
     "to_apigw_response",
 ]
 
@@ -501,6 +508,31 @@ def _groups(claims: dict[str, Any]) -> tuple[str, ...]:
     return ()
 
 
+def event_path(event: dict[str, Any]) -> str:
+    """The request path, without parsing the rest of the request.
+
+    Factored out of `parse_apigw_event` for the caller that has to decide
+    which SURFACE a request was for when parsing it has already failed --
+    `rawPath` first, the request context second, exactly as a parsed
+    `Request` would have resolved it. One definition, so an error page and a
+    routed page can never disagree about what path they are on.
+    """
+    http_context = event.get("requestContext", {}).get("http", {})
+    return str(event.get("rawPath") or http_context.get("path") or "/")
+
+
+def principal_from_event(event: dict[str, Any]) -> str:
+    """The JWT `sub` claim, without parsing the rest of the request.
+
+    For the one caller that needs the identity when parsing has already
+    failed: an error page still has to say who it is telling, and rendering
+    "unauthenticated" at someone API Gateway's authorizer just verified would
+    be a false statement on the page. Shared with `parse_apigw_event` so the
+    two cannot disagree about which claim is the principal.
+    """
+    return str(_claims(event).get("sub", ""))
+
+
 def parse_apigw_event(event: dict[str, Any]) -> Request:
     """Build a `Request` from an API Gateway v2 (payload format 2.0) event."""
     http_context = event.get("requestContext", {}).get("http", {})
@@ -530,7 +562,7 @@ def parse_apigw_event(event: dict[str, Any]) -> Request:
     claims = _claims(event)
     return Request(
         method=str(http_context.get("method", "GET")).upper(),
-        path=str(event.get("rawPath") or http_context.get("path") or "/"),
+        path=event_path(event),
         query=dict(event.get("queryStringParameters") or {}),
         body=body,
         form=form,

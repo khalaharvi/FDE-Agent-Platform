@@ -44,11 +44,13 @@ from fde_gate.http import (
     Response,
     Router,
     error_response,
+    event_path,
     parse_apigw_event,
+    principal_from_event,
     to_apigw_response,
 )
 from fde_gate.rows import fetchone
-from fde_gate.service import drift, proposals, runs, workflows
+from fde_gate.service import drift, is_missing, proposals, runs, workflows
 from fde_mcp import db
 from fde_mcp.logging import configure_logging, get_logger
 
@@ -138,7 +140,7 @@ async def list_proposals(request: Request) -> Response:
 
 async def get_proposal(request: Request) -> Response:
     result = await proposals.get_proposal(request.param_int("proposal_id"), request.principal)
-    if "error" in result:
+    if is_missing(result, "proposal_id"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
 
@@ -184,7 +186,7 @@ async def list_workflows(request: Request) -> Response:
 
 async def get_workflow(request: Request) -> Response:
     result = await workflows.get_workflow(request.param_int("workflow_id"))
-    if "error" in result:
+    if is_missing(result, "workflow_id"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
 
@@ -198,7 +200,7 @@ async def get_playbook(request: Request) -> Response:
     can find again.
     """
     result = await workflows.get_playbook(request.param_int("workflow_id"))
-    if "error" in result:
+    if is_missing(result, "workflow"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response(
         body=str(result["markdown"]),
@@ -329,7 +331,7 @@ async def post_triage(request: Request) -> Response:
         request.field_str("state"),
         note=request.body.get("note") or request.form.get("note"),
     )
-    if "error" in result:
+    if is_missing(result, "signal"):
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
 
@@ -411,11 +413,25 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         # on the dev server) instead of the sentence naming what to do. The
         # message is the whole point of refusing, so it is mapped here the
         # same way the router maps a handler's.
+        #
+        # Which SURFACE it is mapped for is decided by the path, because there
+        # is no `Request` to ask. The console's own refusals already render as
+        # pages (`ui._forbidden`), and every refusal the parser raises belongs
+        # to a form: the PDF dropped into the upload box is posted to
+        # /ui/sources. Sending the JSON envelope back for those put a wall of
+        # braces where the page should be -- the exact case `_forbidden`'s
+        # docstring names.
         try:
             request = parse_apigw_event(event)
         except GateError as exc:
-            log.info("gate_unparseable_request", status=exc.status, message=exc.message)
-            return to_apigw_response(error_response(exc))
+            path = event_path(event)
+            log.info("gate_unparseable_request", status=exc.status, message=exc.message, path=path)
+            refusal = (
+                ui.request_refused(exc, principal=principal_from_event(event))
+                if ui.is_console_path(path)
+                else error_response(exc)
+            )
+            return to_apigw_response(refusal)
         response = _LOOP.run_until_complete(ROUTER.dispatch(request))
         log.info(
             "gate_request",

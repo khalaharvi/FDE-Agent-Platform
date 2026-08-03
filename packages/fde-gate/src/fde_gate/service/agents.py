@@ -564,6 +564,14 @@ async def _material_from_source(cur: Any, source_id: int, engagement_id: str) ->
     (`kg.source.uri` is null for pasted text), so joining them back on blank
     lines is the closest thing to the transcript that exists. The agent reads
     it as `input.material`, exactly as a pasted one arrives.
+
+    The join to `kg.source` is the access check, not decoration. `source_id`
+    arrives from a form, and the picker it came from lists ONE engagement --
+    so a number from a different engagement is either a stale page or a
+    typed-in id, and reading its text would hand an operator a document from
+    an engagement they were not looking at. No rows means the refusal below,
+    which is the same sentence a genuinely empty source produces: both say
+    "not something this engagement has", which is what the caller can act on.
     """
     await cur.execute(
         """
@@ -657,14 +665,20 @@ async def launch(
 
     `executor` is injected the way `runner.advance`'s is, so the dispatch
     path is exercisable end to end against a fake with no AWS.
+
+    Authorisation happens FIRST, before the submission is read at all. It
+    used to run after `values_from_form`, so someone who may not launch
+    anything was answered "Short name is required." -- an instruction to fix
+    a form that was never going to be accepted, and one that says nothing
+    about the only thing wrong. Same ordering `ui._reshow_new` settled on for
+    the New source page: the refusal that is about the PERSON wins over the
+    one that is about what they typed.
     """
-    _validate_choice(agent, task)
-
-    fields = task_fields(agent, task)
-    task_input = values_from_form(fields, form)
-
     async with db.tool_transaction(role=_gate_role()) as conn, conn.cursor() as cur:
         await _assert_active_reviewer(cur, actor)
+
+        _validate_choice(agent, task)
+        task_input = values_from_form(task_fields(agent, task), form)
         if task == "ingest_interview":
             task_input = await _resolve_material(cur, task_input, engagement_id)
 

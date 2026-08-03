@@ -13,6 +13,7 @@ every answer, and the operator would never see the field that went missing.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -134,10 +135,90 @@ def test_an_enum_does_not_excuse_a_type_this_cannot_ask_for() -> None:
     """
     assert fields_from_schema({"a": {"type": "object", "enum": [{"x": 1}]}}) == []
     assert fields_from_schema({"a": {"type": "array", "enum": [["x"], ["y"]]}}) == []
-    # An enum with NO declared type is still strings -- that is what its
-    # members are, and nothing has been bypassed.
+    # An enum of strings with no declared type is still strings -- that is
+    # what its members are, and nothing has been bypassed.
     (field,) = fields_from_schema({"a": {"enum": ["x", "y"]}})
     assert field.value_type == "string"
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        pytest.param(["yes", "no"], id="words-for-yes-and-no"),
+        pytest.param([0, 1], id="numbers"),
+        pytest.param(["approved", "rejected"], id="a-disposition-in-disguise"),
+        pytest.param([True, "maybe"], id="one-member-that-is-not-a-boolean"),
+    ],
+)
+def test_a_boolean_enum_whose_members_are_not_booleans_asks_nothing(members: list[Any]) -> None:
+    """The unanswerable question, and it renders as one.
+
+    `_option`'s boolean half maps every member that is not a spelling of true
+    onto the SAME falsy value and the SAME "false" label -- so a schema
+    offering "yes" and "no" produced a select with two identical options, and
+    whichever the operator picked was recorded as false. The declared type
+    and the members disagree about what an answer is; the honest response is
+    the labelled JSON fallback, not a control that pretends to ask.
+    """
+    assert fields_from_schema({"approved": {"type": "boolean", "enum": members}}) == []
+
+
+def test_a_boolean_enum_may_spell_its_members_either_way() -> None:
+    """`[true, false]` and `["true", "false"]` are both faithful, because
+    `_option` reads both back as the boolean the schema meant. The rule is
+    what a member can round-trip as, not which literal the author typed.
+    """
+    for members in ([True, False], ["true", "false"], ["True", "FALSE"]):
+        (field,) = fields_from_schema({"approved": {"type": "boolean", "enum": members}})
+        assert field.value_type == "boolean"
+        read_back = [
+            values_from_form([field], {field.input_name: value})["approved"]
+            for value, _ in field.options
+        ]
+        assert read_back == [True, False], f"{members} round-tripped to {read_back}"
+
+
+@pytest.mark.parametrize(
+    ("members", "value_type", "expected"),
+    [
+        pytest.param([1, 2], "integer", [1, 2], id="integers"),
+        pytest.param([0.5, 1.5], "number", [0.5, 1.5], id="numbers"),
+        pytest.param(["a", "b"], "string", ["a", "b"], id="strings"),
+        pytest.param([True, False], "boolean", [True, False], id="booleans"),
+    ],
+)
+def test_a_typeless_enum_takes_its_type_from_its_members(
+    members: list[Any], value_type: str, expected: list[Any]
+) -> None:
+    """With no declared type, the members are the only statement of what the
+    answers are -- and they used to be read as strings whatever they were. A
+    select recording "1" for the member `1` is not a rounding error: a
+    decision branch is a jsonpath, and `$.n == 1` does not match `"1"`.
+    """
+    (field,) = fields_from_schema({"n": {"enum": members}})
+    assert field.value_type == value_type
+    read_back = [
+        values_from_form([field], {field.input_name: value})["n"] for value, _ in field.options
+    ]
+    assert read_back == expected
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        pytest.param([1, "two"], id="an-integer-and-a-string"),
+        pytest.param([1, 1.5], id="an-integer-and-a-float"),
+        pytest.param([True, 1], id="a-boolean-and-an-integer"),
+        pytest.param([{"x": 1}], id="objects"),
+        pytest.param([None], id="null"),
+    ],
+)
+def test_a_typeless_enum_whose_members_disagree_asks_nothing(members: list[Any]) -> None:
+    """Whole or nothing again. Members that are not all one type have no
+    single `value_type` to give the field, so there is no reader that can
+    return every one of them as the schema wrote it.
+    """
+    assert fields_from_schema({"n": {"enum": members}}) == []
 
 
 def test_assignee_is_routing_metadata_and_never_a_question() -> None:
@@ -254,6 +335,22 @@ def test_a_blank_optional_field_is_omitted_rather_than_sent_as_empty() -> None:
     values = values_from_form(_MIXED, _submitted(owner="deal desk"))
     assert "attempts" not in values
     assert "tags" not in values
+
+
+def test_a_generated_array_gets_a_box_tall_enough_for_a_list() -> None:
+    """An array is read one entry per line and its hint says so -- but a
+    schema-derived one rendered as a single-line `<input>`, which cannot show
+    the second line of the list it is asking for and treats Enter as submit.
+    The launcher's hand-built array fields have said `rows` since they were
+    written; this is the same answer where a schema produces the field.
+    """
+    (field,) = fields_from_schema({"tags": {"type": "array"}})
+    assert field.rows > 1
+    assert field.hint == "One per line, or separated by commas."
+
+    markup = str(ui._ENV.get_template("_fields.html.j2").module.field(field))  # type: ignore[attr-defined]
+    assert "<textarea" in markup
+    assert "<input" not in markup
 
 
 def test_an_integer_array_arrives_as_numbers_rather_than_strings() -> None:
@@ -482,6 +579,76 @@ def test_the_rendered_answer_form_has_exactly_one_action_control() -> None:
     assert form.count('name="action"') == 1, "the approve/retry/skip select, and nothing else"
     assert form.count('name="run_id"') == 1, "the hidden control, and nothing else"
     assert 'name="f_action"' in form
+
+
+def _ids(markup: str) -> list[str]:
+    """Every `id="..."` on a page, in document order and NOT deduplicated --
+    a repeat is the thing being looked for.
+    """
+    return re.findall(r'\bid="([^"]+)"', markup)
+
+
+def _duplicates(values: list[str]) -> list[str]:
+    return sorted({value for value in values if values.count(value) > 1})
+
+
+#: Field names that collide with the ids the two generated-form pages write
+#: for their OWN controls. Ordinary names for a schema to use, which is the
+#: point: nothing here needs a hostile author.
+ID_COLLIDING_SCHEMA: dict[str, Any] = {"workflow": "string", "input": "string"}
+
+
+def test_a_schema_cannot_reuse_an_id_the_page_already_wrote() -> None:
+    """`name` was separated by the prefix; `id` was not.
+
+    A generated control takes its id from `input_name` too, so `f_` is the
+    generated namespace in BOTH -- and the run-start page had written
+    `id="f_workflow"` and `id="f_input"` for its own picker and its own JSON
+    box. Duplicate ids are not a parse error, so nothing complained: the
+    `<label for="f_workflow">` bound to whichever element came first, and
+    clicking a generated field's label put the cursor in the picker at the
+    top of the page.
+    """
+    page = _runs_page(input_fields=fields_from_schema(ID_COLLIDING_SCHEMA))
+    assert _duplicates(_ids(page)) == []
+    assert 'id="f_workflow"' in page, "the generated control keeps the generated namespace"
+    assert 'id="pick_workflow"' in page, "the page's own control moved out of it"
+
+
+def test_the_workflow_picker_and_a_generated_field_are_two_different_controls() -> None:
+    """The JSON-fallback box is on the OTHER branch of the same template, so
+    it needs its own render to be seen at all.
+    """
+    page = _runs_page(input_schema_step=None, input_fields=[])
+    assert _duplicates(_ids(page)) == []
+    assert 'id="start_input"' in page
+
+
+def test_the_launcher_page_survives_a_task_field_named_after_a_picker() -> None:
+    """The same rule on the other generated form. No task builds a field
+    called `agent` today; the ids are one rename away from it, and the page
+    has three pickers to collide with.
+    """
+    page = ui.render(
+        "agent_run.html.j2",
+        principal="sme@example.com",
+        is_admin=False,
+        error=None,
+        notice=None,
+        rendered_at=0.0,
+        engagements=["11111111-1111-1111-1111-111111111111"],
+        engagement_id="11111111-1111-1111-1111-111111111111",
+        agent="engagement",
+        task="ingest_interview",
+        agent_tasks={"engagement": ("ingest_interview",)},
+        task_summary={"ingest_interview": "Read a transcript."},
+        fields=[
+            Field(name="agent", label="Agent to quote"),
+            Field(name="task", label="Task to quote"),
+            Field(name="engagement", label="Engagement to quote"),
+        ],
+    )
+    assert _duplicates(_ids(page)) == []
 
 
 def test_a_colliding_field_still_reaches_the_answer_under_its_own_name() -> None:
