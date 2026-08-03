@@ -1,6 +1,6 @@
 # fde-mcp
 
-The MCP server over the knowledge graph: 21 typed tools, the embedder worker,
+The MCP server over the knowledge graph: 22 typed tools, the embedder worker,
 and the shared `config`/`db`/`logging` modules every other package reuses.
 This is the only artifact that holds database credentials, which is why its
 dependency set is the smallest in the workspace.
@@ -10,14 +10,14 @@ This file is the package README that `docs/05-mcp-surface.md`,
 in `docs/05`; this file covers the roster, the deployment mapping, and the
 package's known limitations at their current truth.
 
-## Tool roster (21)
+## Tool roster (22)
 
 | Group | Tools |
 |---|---|
 | Graph reads (9) | `kg_head_commit`, `kg_as_of`, `kg_search`, `kg_lexical_search`, `kg_get_node`, `kg_traverse`, `kg_dependency_closure`, `kg_impact_radius`, `kg_process_flow` |
 | Proposals (3) | `kg_propose`, `kg_submit_proposal`, `kg_proposal_status` |
 | Drift (3) | `drift_list`, `drift_scan`, `drift_triage` |
-| Workflow (3) | `wf_draft`, `wf_get`, `wf_list` |
+| Workflow (4) | `wf_draft`, `wf_get`, `wf_list`, `wf_export_playbook` |
 | Evidence (3) | `kg_register_source`, `kg_ingest_chunks`, `kg_list_sources` |
 
 Every tool is a thin typed wrapper over SQL in `db/008_retrieval.sql` and
@@ -55,7 +55,7 @@ response variants) is written against the documented Bedrock API shapes
 recorded in `docs/99-sources.md` §3 and exercised in tests with the network
 call stubbed (`tests/conftest.py`). It has NOT been run against a live
 Bedrock endpoint from this repo. Everything else in the package — SQL,
-transactions, role downgrades, the embed queue, all 21 tools — runs against
+transactions, role downgrades, the embed queue, all 22 tools — runs against
 live Postgres in `tests/` (28+ `requires_db` cases) and in the smoke suite.
 
 ## Known limitations (current truth)
@@ -81,7 +81,7 @@ live Postgres in `tests/` (28+ `requires_db` cases) and in the smoke suite.
 ## Test plan
 
 `FDE_DB_DSN=postgresql:///<db> uv run pytest packages/fde-mcp` after
-`./db/rebuild.sh <db>`. Live-DB coverage: all 21 tools (including the
+`./db/rebuild.sh <db>`. Live-DB coverage: all 22 tools (including the
 MCP-schema rejection paths via `mcp.call_tool`), the worker's claim/embed/
 fail flows with the Bedrock call stubbed, config and logging contracts.
 Without a DSN the db-marked cases skip and the pure cases still run.

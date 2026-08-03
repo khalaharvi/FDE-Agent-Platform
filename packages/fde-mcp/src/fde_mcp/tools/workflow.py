@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from fde_mcp import db
 from fde_mcp.config import get_settings
+from fde_mcp.playbook import PROCESS_FLOW_SQL, STEPS_SQL, WORKFLOW_SQL, render_playbook
 from fde_mcp.tools._base import emit_trace, fetchall, fetchone, now_ms, pg_error_boundary
 
 if TYPE_CHECKING:
@@ -152,6 +153,75 @@ async def wf_get(workflow_id: int) -> dict[str, Any]:
 
         result = {"workflow": workflow, "steps": steps, "commits_behind": commits_behind}
         await emit_trace(conn, "wf_get", result, latency_ms=int(now_ms() - t0))
+        return result
+
+
+@pg_error_boundary
+async def wf_export_playbook(workflow_id: int) -> dict[str, Any]:
+    """Export a workflow as a playbook: one Markdown document a person can follow.
+
+    Use this whenever the answer is a document rather than a field -- "give
+    me the playbook for the discount workflow", "what does this workflow
+    actually tell the operator to do", "save this into my notes" -- and use
+    it before proposing any change to a workflow, so you are reading the
+    same procedure the operator runs. Prefer wf_get when you need to inspect
+    one attribute; prefer this when a human is going to read the result.
+
+    Returns `{workflow_id, slug, version, status, markdown}`. The `markdown`
+    is a whole document: YAML front matter (slug, version, status, autonomy,
+    who may run it, the pinned commit's content digest), a narrative of the
+    process the workflow implements, then every step in order with its
+    instruction, the question put to a human where there is one, whether it
+    stops for a human, what happens on failure, and the graph elements the
+    step cites. It is plain Markdown -- paste it into a vault, a wiki or a
+    ticket unchanged.
+
+    What the output reflects: the steps are exactly as they stand against
+    this workflow's pinned commit, so the same workflow always exports the
+    same bytes -- an export is a stable artefact you can diff, not a fresh
+    piece of writing. The one exception is the "Process context" section,
+    which reads the graph as it stands NOW and says so in the text; it can
+    describe a process that has moved on since the pin. Draft workflows
+    export too, carrying a banner that they have not passed the publication
+    gate and should not be run from the document.
+
+    Read-only: this reads wf.workflow/wf.step/wf.step_binding and the process
+    walk, and cannot draft, edit, or publish anything.
+    """
+    t0 = now_ms()
+    # The queries come from fde_mcp.playbook, which owns the document and the
+    # rows it renders. Only the role is decided here: this runs as fde_agent,
+    # the gate runs the same text as fde_prodops.
+    async with db.tool_transaction() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(WORKFLOW_SQL, {"wid": workflow_id})
+            workflow = await fetchone(cur)
+            if workflow is None:
+                missing: dict[str, Any] = {
+                    "error": "workflow not found",
+                    "hint": "check workflow_id",
+                }
+                await emit_trace(conn, "wf_export_playbook", missing, latency_ms=int(now_ms() - t0))
+                return missing
+
+            await cur.execute(STEPS_SQL, {"wid": workflow_id})
+            steps = await fetchall(cur)
+
+            await cur.execute(
+                PROCESS_FLOW_SQL,
+                {"eng": workflow["engagement_id"], "key": workflow["root_process_key"]},
+            )
+            process_flow = await fetchall(cur)
+
+        bindings = {str(step["step_key"]): step["bindings"] or [] for step in steps}
+        result = {
+            "workflow_id": workflow_id,
+            "slug": workflow["slug"],
+            "version": workflow["version"],
+            "status": workflow["status"],
+            "markdown": render_playbook(workflow, steps, bindings, process_flow),
+        }
+        await emit_trace(conn, "wf_export_playbook", result, latency_ms=int(now_ms() - t0))
         return result
 
 
@@ -311,4 +381,5 @@ def register(mcp: FastMCP[None]) -> None:
     """Register every workflow tool on `mcp`."""
     mcp.tool()(wf_list)
     mcp.tool()(wf_get)
+    mcp.tool()(wf_export_playbook)
     mcp.tool()(wf_draft)

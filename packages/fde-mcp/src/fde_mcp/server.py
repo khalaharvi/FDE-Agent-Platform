@@ -1,7 +1,7 @@
 """server.py -- the FDE Platform MCP server.
 
 This module is deliberately thin: it builds one `FastMCP` instance, hands it
-to `fde_mcp.tools.register_all` to attach the 21 tools, and picks a
+to `fde_mcp.tools.register_all` to attach the 22 tools, and picks a
 transport. It does not reimplement any retrieval, gating, or faithfulness
 logic in Python -- that logic lives in exactly one place (the database, see
 db/008_retrieval.sql's module docstring) so that production inference, RL
