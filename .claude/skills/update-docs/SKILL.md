@@ -5,7 +5,7 @@ description: Bring the public docs back in sync with the code — the Mintlify s
 
 # Updating the public docs
 
-The public docs are `docs-site/` (Mintlify, 12 pages) plus `README.md`. They are
+The public docs are the Mintlify site in `docs-site/` plus `README.md`. They are
 written for a stranger evaluating the project, not for a maintainer.
 
 **Boundary — do not cross it.** `docs/00-*.md` … `docs/99-sources.md` are the
@@ -20,8 +20,13 @@ teach outsiders; internal docs are blueprints for people who already work here.
 ```bash
 git log --oneline -- docs-site/ README.md | head -5      # last docs-touching commit
 git log --oneline <that-sha>..HEAD                       # what has landed since
-git diff --stat <that-sha>..HEAD -- packages/ db/ .github/ infra/
+git diff --stat <that-sha>..HEAD -- packages/ db/ .github/ infra/ \
+    pyproject.toml CHANGELOG.md CONTRIBUTING.md
 ```
+
+The root-level files are in that pathspec because the table below treats them as
+triggers: workspace members live in `pyproject.toml`, and `status` and `faq`
+claim things that only `CHANGELOG.md` and `CONTRIBUTING.md` can invalidate.
 
 Read the diff for the four things that invalidate a public page: a **count**
 changing, a **command or flag** changing, an **env var** added/renamed, and a
@@ -42,16 +47,44 @@ pages for them.
 | `faq` | FDE definition, comparisons, no-AWS answer, cost | test count, cost figures (must equal `models-and-cost`), `CONTRIBUTING.md` |
 | `concepts/human-gates` | `hitl.compute_required_gates`, four enforcement layers, four gate kinds, strict quorum | any `db/` migration touching `hitl.*`; the eight CI denial assertions |
 | `concepts/knowledge-graph` | closed ontology, two time axes, hybrid retrieval, drift-as-SQL | ontology types in `db/001`–`db/002`, `kg.hybrid_search` in `db/008`, drift SQL in `db/007` |
-| `concepts/agents` | three agents, the loop, 21 MCP tools | tool registrations in `packages/fde-mcp/src/fde_mcp/tools/`, agent definitions in `fde-agents` |
+| `concepts/agents` | three agents, the loop, the MCP tool count | tool registrations in `packages/fde-mcp/src/fde_mcp/tools/`, agent definitions in `fde-agents` |
 | `concepts/training-flywheel` | gate outcomes → SFT/preference data, the kappa band, "stop before RL" | `packages/fde-training` (`rewards.DEFAULT_WEIGHTS`, `rival_grader` kappa constants), `docs/06-training.md` |
+
+The README is a public doc too, and it duplicates claims the site makes. Its
+sections carry their own triggers:
+
+| README section | What it claims | Rewrite it when this changes |
+|---|---|---|
+| the opening hook + "What is here" | positioning, who it's for, the source tree with per-directory counts | `README.md` framing decisions, `packages/*` layout, migration / tool / test counts |
+| "Quick start" | the clone → green tests → console command block, no AWS | `db/rebuild.sh`, `pyproject.toml` deps, `FDE_DB_DSN` / `FDE_GATE_DEV_PRINCIPAL`, `fde-gate-dev`, the counts in its comments |
+| "Choosing models (the budget dial)" | presets, the override order, the kappa floor | `packages/fde-agents/src/fde_agents/common/config.py` — **and `0.78` here is pinned by `test_docs_sync.py`** |
+| "Status and honesty" | the verified / not-validated split and its evidence table | test and migration counts, the CI gates, the AWS honesty rule |
+
+Keep the README and the site consistent with each other: they state the same
+counts, the same presets, and the same honesty split. Fixing one and not the
+other is how they start contradicting each other.
 
 Diagrams: `docs-site/images/*.png` are headless-Chrome exports of
 `diagrams/0*.html`. Changing the source HTML means re-exporting the PNG, not
 editing the image.
 
-## 3. Re-derive every count you touch
+## 3. Re-derive every count the docs claim
 
-Numbers in prose rot silently. Never copy one from another page — derive it:
+Not every count you touched — **every count claimed**, on every pass. Numbers rot
+silently, they rot on pages your diff never pointed at, and the same count is
+usually stated on three or four pages at once. Sweep first, unconditionally:
+
+```bash
+grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|[0-9]+) ([a-z]+ )?(tests|migrations|smoke tests|(MCP )?tools|packages|agents|pages|layers|denials|gate kinds|time axes)' docs-site/ README.md
+```
+
+Two things that pattern is built for. Counts are spelled out as often as they are
+digits — "five packages", "eight denials", "three agents". And the noun is often
+a word away from the number — "four **enforcement** layers", "609 **Python**
+tests", "21 **typed** tools — so it tolerates one word in between. Extend the
+noun list when the docs start claiming a count it misses.
+
+Then derive each hit from the repo. Never copy a number from another page:
 
 ```bash
 ls db/[0-9]*.sql | wc -l                                          # migrations
@@ -63,13 +96,9 @@ grep -n 'smoke tests' .github/workflows/ci.yml                    # smoke count 
 `--collect-only` without `-q`: root pytest `addopts` already has `-q`, and a
 second one gives `-qq`, which hides the summary line you are trying to read.
 
-The same count is usually claimed on several pages. Find every claim, then fix
-them in one pass — a half-updated count is worse than a stale one, because the
-two pages now contradict each other:
-
-```bash
-grep -rnE '[0-9]+ (tests|migrations|smoke tests|(MCP )?tools|packages|agents)' docs-site/ README.md
-```
+Fix every occurrence in one pass. A half-updated count is worse than a uniformly
+stale one, because two pages now contradict each other and the reader cannot tell
+which is current.
 
 ## 4. Authoring rules
 
@@ -82,6 +111,12 @@ root-relative and extensionless (`/concepts/human-gates`, never
 `Tip`, `Check`, `Steps`/`Step`, `Tabs`/`Tab`, `CodeGroup`, `Card`, `Columns`,
 `Frame` (images live in `Frame` with a caption). Prefer a plain paragraph to a
 component; callouts stop working when everything is one.
+
+**Adding or removing a page is three edits, not one.** The `.mdx` file, an entry
+in `docs-site/docs.json` navigation (`mint validate` fails without it), and a row
+in the step-2 inventory table above. A page missing from that table is a page
+nothing will ever check for drift — this skill goes stale the first time someone
+skips that row.
 
 **Voice.** Plain, specific, evidence-first. No hype adjectives, no "simply" or
 "just", no invented metrics, users, benchmarks, or testimonials. Every concept
