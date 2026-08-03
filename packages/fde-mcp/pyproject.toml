@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 fde-mcp = "fde_mcp.__main__:main"
 fde-embedder = "fde_mcp.embedder_worker:main"
+fde-providers = "fde_mcp.providers_cli:main"
 
 [build-system]
 requires = ["hatchling"]
