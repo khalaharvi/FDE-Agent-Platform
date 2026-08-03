@@ -27,9 +27,13 @@ The anchor matcher, and what it deliberately is not
 `kg.hybrid_search`'s chunk arm keeps only chunks with at least one anchor
 (db/008_retrieval.sql:317), so anchoring is what decides whether ingested
 text is reachable at all. The matcher here is lexical and conservative: a
-chunk anchors to a live node when the node's label -- or its key rendered
-readably, `act.discount_review` -> "discount review" -- appears in the chunk
-as whole words.
+chunk anchors to a live node when the node's label -- or its key with the
+namespace segment stripped and the separators opened out,
+`act.discount_review` -> "discount review" -- appears in the chunk as whole
+words. Stripping that first segment is load-bearing, not cosmetic: `act`,
+`sys` and `role` are the one part of a key that never appears in a
+transcript, and leaving them in meant no key ever matched (see
+`_readable_key`).
 
 It reads the same relation `kg.lexical_search` reads (`kg.node_current`,
 filtered by engagement) and deliberately does NOT reuse its ranking.
@@ -269,16 +273,33 @@ def _normalise(text: str) -> str:
     return _SEPARATORS.sub(" ", "".join(c if c.isalnum() else " " for c in folded)).strip()
 
 
+def _readable_key(node_key: str) -> str:
+    """`act.discount_review` -> "discount review". The words people say.
+
+    The leading dotted segment is a NAMESPACE -- `act`, `sys`, `role`, `proc`
+    -- and it is the one part of a key that never appears in the transcript.
+    Keeping it was a real bug: every key-derived phrase began with a token no
+    interviewee utters, so no key ever matched and only labels anchored. The
+    tests passed anyway, because the node they used had a label that happened
+    to contain the same words.
+
+    Only the FIRST segment goes. A deeper key keeps the rest of its structure,
+    since `a.b.c` is a namespace and a two-word name, not two namespaces.
+    """
+    _, _, remainder = node_key.partition(".")
+    return (remainder or node_key).replace(".", " ").replace("_", " ")
+
+
 def _phrases(node: LiveNode) -> set[str]:
     """The forms of this node worth looking for in a transcript.
 
-    Two: the human label an interviewee would say, and the key rendered
-    readably, because keys are authored as dotted slugs
-    (`act.discount_review`) and the underscores and dots are word boundaries
-    in prose. Both go through the same normalisation as the chunk, so the
-    comparison is between two strings shaped the same way.
+    Two: the human label an interviewee would say, and the key with its
+    namespace stripped and its separators opened out into spaces, because a
+    key is authored as a dotted slug and the words inside it are usually the
+    words in the room. Both go through the same normalisation as the chunk, so
+    the comparison is between two strings shaped the same way.
     """
-    candidates = {node.label, node.node_key.replace(".", " ").replace("_", " ")}
+    candidates = {node.label, _readable_key(node.node_key)}
     return {
         normalised
         for candidate in candidates

@@ -192,9 +192,52 @@ def test_matching_ignores_case_and_punctuation() -> None:
 
 
 def test_the_node_key_matches_even_when_the_label_does_not() -> None:
-    """Keys are dotted slugs; their words are how people say them out loud."""
+    """Keys are dotted slugs; their words are how people say them out loud.
+
+    Kept, but note it does NOT isolate the key path: "deal desk analyst" is
+    also this node's label, so it passed even while key matching was broken.
+    The test below is the one that actually holds the key path up.
+    """
     (chunk,) = match_anchors(["Ask the deal desk analyst about it."], NODES)
     assert chunk.anchor_keys == ("role.deal_desk",)
+
+
+def test_a_key_anchors_on_its_own_words_with_no_help_from_the_label() -> None:
+    """The key path, isolated: the label cannot possibly match this text.
+
+    This is the test that was missing. `_readable_key` has to drop the
+    namespace segment -- `role`, `act`, `sys` are the one part of a key that
+    never comes out of an interviewee's mouth -- and without the strip every
+    key-derived phrase began with a token no transcript contains, so no key
+    ever matched and coverage silently depended on labels alone.
+    """
+    nodes = [LiveNode(node_key="role.deal_desk", label="Revenue Operations Analyst II")]
+    (chunk,) = match_anchors(["Ask the deal desk before promising a date."], nodes)
+    assert chunk.anchor_keys == ("role.deal_desk",)
+
+
+def test_the_namespace_segment_alone_does_not_anchor() -> None:
+    """Stripping it must not leave it matchable by the back door."""
+    nodes = [LiveNode(node_key="activity.discount_review", label="ZZZ Unrelated Label")]
+    (prose,) = match_anchors(["The activity was scheduled for Tuesday."], nodes)
+    assert prose.anchor_keys == ()
+
+    (real,) = match_anchors(["It goes to discount review first."], nodes)
+    assert real.anchor_keys == ("activity.discount_review",)
+
+
+def test_a_key_with_no_namespace_keeps_all_of_its_words() -> None:
+    """`partition` on a missing dot must not eat the whole key."""
+    nodes = [LiveNode(node_key="quote_to_cash", label="ZZZ Unrelated Label")]
+    (chunk,) = match_anchors(["The quote to cash process is the one we mean."], nodes)
+    assert chunk.anchor_keys == ("quote_to_cash",)
+
+
+def test_a_deep_key_keeps_everything_after_the_first_segment() -> None:
+    """`a.b.c` is a namespace and a two-word name, not two namespaces."""
+    nodes = [LiveNode(node_key="proc.order.fulfilment", label="ZZZ Unrelated Label")]
+    (chunk,) = match_anchors(["We walked through order fulfilment end to end."], nodes)
+    assert chunk.anchor_keys == ("proc.order.fulfilment",)
 
 
 def test_a_chunk_mentioning_nothing_is_dark() -> None:
