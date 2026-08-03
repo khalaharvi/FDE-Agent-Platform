@@ -17,9 +17,12 @@ are replaced with observed ones. Until then, treat everything below as
 ## 1. What the button deploys
 
 One CloudFormation stack (`FdePlatformStack`, `infra/cdk/fde_cdk/stack.py`),
-one template URL, ten single-responsibility constructs built in this order:
-`Network → Database → Identity → IamRoles → Migrations → Services → Agents
-→ GateService → OpsLayer → Outputs`.
+one template URL, nine single-responsibility constructs plus a plain
+`add_outputs` function (not a tenth `Construct` — see `outputs.py`'s own
+docstring for why: clean, unhashed `CfnOutput` names on the CloudFormation
+console), built/called in this order: `Network → Database → Identity →
+IamRoles → Migrations → Services → Agents → GateService → OpsLayer →
+Outputs`.
 
 **Network** (`network.py`) — one VPC, 2 AZs, one NAT gateway (a deliberate
 single point of failure for this demo-cost posture), public + private-with-
@@ -106,9 +109,9 @@ way around.
 | `DeployTier` | `demo` | `demo` = Aurora Serverless v2 (2–8 ACU floor, sized so the HNSW index survives a scale-down — docs/09 §2); `production` = `db.r6g.xlarge` + deletion protection |
 | `ModelProvider` | `bedrock` | `bedrock` / `anthropic` / `openai` / `gemini` / `openai-compat` — the multi-provider seam (docs/12) |
 | `ModelId` | *(blank)* | Required for non-bedrock providers; ignored under `bedrock` (per-agent defaults apply — enforced by the stack, not just documented) |
-| `ProviderApiKey` | *(blank)* | **NoEcho.** Mirrored into one Secrets Manager secret, read by every consumer via a `{{resolve:secretsmanager:...}}` dynamic reference — never baked into the template in plaintext. Blank is valid for `bedrock` |
+| `ProviderApiKey` | *(blank)* | **NoEcho.** Mirrored into **one** Secrets Manager secret, read by every consumer via a `{{resolve:secretsmanager:...}}` dynamic reference — never baked into the template in plaintext. Blank is valid for `bedrock`. **This one secret feeds both `FDE_MODEL_API_KEY` and `FDE_EMBED_API_KEY`** — see the one-vendor-key caveat below |
 | `CompatBaseUrl` | *(blank)* | `openai-compat` only. Shared between the model provider and the embedding provider (v1 has one base-URL parameter, not two) |
-| `EmbedProvider` | `bedrock` | `bedrock` / `openai` / `gemini` / `openai-compat` — chosen independently of `ModelProvider` |
+| `EmbedProvider` | `bedrock` | `bedrock` / `openai` / `gemini` / `openai-compat` — the *provider choice* is independent of `ModelProvider`, but see the one-vendor-key caveat below: `ProviderApiKey` is the one secret both providers' API-key env vars read from |
 | `EmbedModelId` | `amazon.titan-embed-text-v2:0` | |
 | `AdminEmail` | *(required, no default)* | Seeds the Cognito admin user **and** the `hitl.reviewer` row the review console needs on first login. Read §5 before you assume the console works immediately after login |
 | `ReleaseTag` | pinned per release | Selects the ECR Public image set and the two artifact zips (gate Lambda, migration runner) this launch uses |
@@ -116,6 +119,36 @@ way around.
 | `OpsMode` | `email` | `email` / `topic-only` / `off` — see §4 |
 | `OpsAlertEmail` | *(blank → falls back to `AdminEmail`)* | Where the ops SNS topic's default email subscription and the budget notification go, when `OpsMode=email` |
 | `MonthlyBudgetUsd` | `300` | AWS Budgets monthly threshold (80% actual-spend trigger). `0` disables the `AWS::Budgets::Budget` resource entirely, independent of `OpsMode` |
+
+### 2.1 The one-vendor-key limitation
+
+`params.py` has exactly one API-key parameter, `ProviderApiKey` — there is
+no separate `EmbedApiKey`. `gate.py` and `services.py` both feed that same
+secret into `FDE_MODEL_API_KEY` (the model provider's key) **and**
+`FDE_EMBED_API_KEY` (the embedding provider's key), via the identical
+`dynamic_secret_env_value` helper. That means:
+
+- **Same-vendor pairings work:** `ModelProvider=openai` +
+  `EmbedProvider=openai` (one OpenAI key covers both), or `bedrock`
+  for either/both (no key needed at all).
+- **A cross-vendor pairing that needs two *different* keys does not work
+  out of the box** — e.g. `ModelProvider=anthropic` (chat) +
+  `EmbedProvider=openai` (embeddings, since Anthropic has no embeddings
+  API — docs/12 §1) needs an `ANTHROPIC_API_KEY` *and* an
+  `OPENAI_API_KEY`, but this stack's launch parameters can only carry one
+  secret value into both env vars. Launching this pairing as-is will
+  authenticate one of the two providers with the wrong vendor's key and
+  fail.
+- **Workaround today (post-launch, manual):** after the stack is up, either
+  edit the MCP/embedder Fargate task definitions' environment directly (ECS
+  console, or a follow-up `cdk deploy` from a local checkout with a second
+  secret wired in by hand) to point `FDE_EMBED_API_KEY` at a second,
+  manually created Secrets Manager secret, or create that second secret
+  yourself and reference its ARN in place of the shared one.
+- **The real fix is v2 scope**, not something to hand-patch into this
+  launch stack: a second `EmbedApiKey` `CfnParameter` + a second Secrets
+  Manager secret, mirroring `ProviderApiKey`'s own shape. Tracked in §8's
+  hardening list.
 
 ---
 
@@ -378,6 +411,25 @@ stack's Aurora cluster.
 these are the launch-stack-specific items this build knows about and did
 not fix, named explicitly rather than left implicit):
 
+- [ ] **Second API-key parameter (the one-vendor-key fix).** §2.1 names the
+      limitation: `ProviderApiKey` is the only key parameter this stack has,
+      shared between the model and embedding providers, so a cross-vendor
+      pairing needing two different keys is not expressible today. v2 fix:
+      an `EmbedApiKey` `CfnParameter` + its own Secrets Manager secret,
+      mirroring `ProviderApiKey`'s existing shape exactly.
+- [ ] **Business-metrics dashboard.** The `FdeOps` dashboard (`ops.py`) is
+      infra-only — Lambda/ALB/Fargate/Aurora/queue metrics. Docs/07 §8's
+      product-health numbers (median `review_seconds` by gate kind, edit
+      rate, expiry rate) have no CloudWatch publisher anywhere in this
+      stack; they live only in `hitl.*` tables today and need an
+      application-level metrics publisher (or a console-side report) before
+      they can appear next to the infra panels.
+- [ ] **Per-AgentCore-runtime alarms.** The eight alarms in §4 do not cover
+      the three AgentCore Runtimes individually — a runtime invocation
+      failure surfaces only indirectly, via `FdeGateErrors` if it also
+      breaks a gate-mediated call, not as its own signal. Add per-runtime
+      CloudWatch alarms (AgentCore's own emitted metrics — docs/09 §8) once
+      a live launch shows which failure modes actually matter to catch.
 - [ ] **Per-agent IAM role split.** `runtime_role` (`iam_roles.py`) is one
       shared role for all three AgentCore runtimes, not the least-privilege
       ideal of one role per runtime — the repo's own
