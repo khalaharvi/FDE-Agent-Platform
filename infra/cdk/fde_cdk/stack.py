@@ -3,6 +3,8 @@ from __future__ import annotations
 import aws_cdk as cdk
 from constructs import Construct
 
+from fde_cdk.params import add_launch_params
+
 
 class FdePlatformStack(cdk.Stack):
     """Root stack behind the README Launch-Stack button. One template URL,
@@ -18,3 +20,4 @@ class FdePlatformStack(cdk.Stack):
             synthesizer=cdk.BootstraplessSynthesizer(),
             **kwargs,  # type: ignore[arg-type]
         )
+        self.params = add_launch_params(self)

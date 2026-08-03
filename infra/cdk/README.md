@@ -44,16 +44,25 @@ test.
 uv sync --frozen                                             # install deps exactly as locked
 uv run pytest tests -v                                       # synth tests
 uv run python app.py                                         # synth -> cdk.out/FdePlatform.template.json
-uv run cfn-lint cdk.out/FdePlatform.template.json             # validate the emitted template
+uv run cfn-lint cdk.out/FdePlatform.template.json -i W2001 W7001 W8001   # validate the emitted template
 uv run ruff check .                                           # lint
 uv run ruff format --check .                                  # format check
+uv lock --check                                                # lockfile hasn't drifted from pyproject.toml
 ```
 
 One-liner (synth + lint), what CI runs:
 
 ```bash
-uv run pytest tests && uv run python app.py && uv run cfn-lint cdk.out/FdePlatform.template.json
+uv run pytest tests && uv run python app.py && uv run cfn-lint cdk.out/FdePlatform.template.json -i W2001 W7001 W8001
 ```
+
+Note the `-i` flags are positioned AFTER the template path: `cfn-lint`'s
+`-i`/`--ignore-checks` takes an unbounded list of rule IDs (`nargs='+'`), so
+if it comes first on the command line it greedily swallows the template
+path too, leaving cfn-lint with no `TEMPLATE` argument at all (it then
+falls back to validating an effectively-empty template and reports
+`E1001` -- a confusing false error). `cfn-lint TEMPLATE -i CODE...` is the
+only safe order.
 
 ## aws-cdk-lib version and `aws_bedrockagentcore` availability
 
@@ -110,6 +119,35 @@ CLI turns this on by default, which is where CDK's standard (harmless,
 asset-free) `AWS::CDK::Metadata` resource normally comes from. Since this
 project bypasses that CLI entirely, it defaults to off — and a template with
 literally zero resources fails CloudFormation's own schema (`cfn-lint`
-E1001, "'Resources' is a required property"). This won't matter in practice
-once task 2 adds real constructs, but was needed to make `cfn-lint` clean
-for this scaffold task, which has no resources yet by design.
+E1001, "'Resources' is a required property").
+
+Task 2 (parameters, conditions, the region mapping) does **not** remove this
+need: `Parameters`/`Conditions`/`Mappings` are separate template sections
+from `Resources`, so a parameters-only template still has an empty
+`Resources` section without this flag. The flag stays `True` until a later
+task's first real construct (network/database, task 3) gives the stack a
+genuine resource — `tests/test_params.py::test_no_cdk_metadata_resource` is
+an `xfail(strict=False)` forcing-function test that should be un-xfailed (and
+this flag flipped to `False`) in that same commit.
+`test_cdk_metadata_present_via_real_app_config` in the same file documents
+today's actual state precisely, since `tests/test_synth.py`'s
+`synth_template()` helper builds its own bare `cdk.App()` and therefore never
+exercises this flag at all — only the real `app.py` invocation does.
+
+## Another currently-expected quirk: unused-parameter/condition/mapping warnings
+
+Task 2 creates the full `Parameters`/`Conditions`/`Mappings` click surface
+before any construct exists to consume it (that's tasks 3–7). `cfn-lint`
+correctly flags this as suspicious: `W2001` (parameter never referenced),
+`W8001` (condition never referenced), `W7001` (mapping never referenced).
+These are genuine warnings about a template that is, right now, deliberately
+incomplete — not a false positive to silence structurally the way `E1001`
+was. `cfn-lint` is invoked with `-i W2001 W7001 W8001` to ignore exactly
+those three rule IDs and nothing else; every other rule (including all `E`
+rules) still gates the build. As tasks 3–7 wire each parameter/condition/
+mapping into a real resource (`is_production` into the database construct's
+removal policy, `AssetsRegionMap` into the migration Lambda's code location,
+etc.), the warning for that specific entity disappears on its own — the
+`-i` list does not need to shrink, but it's worth deleting once every
+parameter, condition, and the mapping all have a real consumer (verify with
+a bare `cfn-lint cdk.out/FdePlatform.template.json`, no `-i`, going clean).

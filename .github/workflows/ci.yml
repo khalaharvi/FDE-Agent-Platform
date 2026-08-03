@@ -55,7 +55,16 @@ jobs:
           uv sync --frozen
           uv run pytest tests
           uv run python app.py
-          uv run cfn-lint cdk.out/FdePlatform.template.json
+          # -i W2001 W7001 W8001: task 2's Parameters/Conditions/Mappings are
+          # deliberately not yet consumed by any resource (that lands in
+          # tasks 3-7) -- see infra/cdk/README.md's "currently-expected
+          # quirk" section. These three rule IDs MUST come after the
+          # template path: cfn-lint's -i takes an unbounded arg list and
+          # would otherwise swallow the path itself.
+          uv run cfn-lint cdk.out/FdePlatform.template.json -i W2001 W7001 W8001
+      - name: lockfile is current
+        working-directory: infra/cdk
+        run: uv lock --check
 
   # -------------------------------------------------------------------
   # The database contract: migrations must apply IN ORDER on an EMPTY
