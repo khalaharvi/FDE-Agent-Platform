@@ -16,6 +16,8 @@ import psycopg
 import pytest
 from psycopg import errors as pg_errors
 
+from fde_gate import http as http_module
+from fde_gate import ui
 from fde_gate.handler import ROUTER
 from fde_gate.http import (
     GateError,
@@ -221,6 +223,78 @@ def test_a_parse_refusal_reaches_the_wire_as_a_400_with_its_message() -> None:
     assert result["statusCode"] == HTTPStatus.BAD_REQUEST
     assert "scan.pdf" in result["body"]
     assert ".md" in result["body"]
+
+
+def test_a_parse_refusal_on_a_console_path_is_a_page_not_an_envelope() -> None:
+    """The upload box is on /ui/sources, so this refusal is a browser's.
+
+    `ui._forbidden`'s docstring names the case: the JSON envelope is right for
+    the API and wrong for a browser, where it renders as a wall of braces in
+    place of the page. That fix covered the 403s the console itself raises,
+    and left the ones raised BEFORE routing -- which is every refusal the
+    multipart parser produces, all of them from a form somebody filled in.
+    """
+    from fde_gate.handler import lambda_handler  # noqa: PLC0415 -- see test_devserver
+
+    body = _multipart([("file", "scan.pdf", b"%PDF-1.4\x00\xff\xfe binary \x80\x81")])
+    event = _multipart_event(body)
+    event["requestContext"]["authorizer"] = {"jwt": {"claims": {"sub": "sme@example.com"}}}
+    result = lambda_handler(event, None)
+
+    assert result["statusCode"] == HTTPStatus.BAD_REQUEST
+    assert result["headers"]["content-type"].startswith("text/html")
+    assert result["body"].lstrip().startswith("<!DOCTYPE html>")
+    assert "scan.pdf" in result["body"], "the parser's message, on the page"
+    # The chrome an operator navigates by, and the identity the authorizer
+    # verified -- "unauthenticated" here would be a false statement.
+    assert "Back to the review queue" in result["body"]
+    assert "sme@example.com" in result["body"]
+
+
+def test_a_parse_refusal_on_an_api_path_stays_the_json_envelope() -> None:
+    """The other surface, unchanged. A client parsing `{"error": ...}` must
+    not start receiving HTML because the console's pages learned to.
+    """
+    from fde_gate.handler import lambda_handler  # noqa: PLC0415
+
+    result = lambda_handler(_event("POST", "/api/items/1", body="{not json"), None)
+
+    assert result["statusCode"] == HTTPStatus.BAD_REQUEST
+    assert result["headers"]["content-type"] == "application/json"
+    assert json.loads(result["body"]) == {"error": "request body is not valid JSON"}
+
+
+def test_only_the_console_prefix_gets_the_page_treatment() -> None:
+    """Exact-or-child. "/uipsum" is not a console route, and answering it with
+    page chrome would be a claim about a route that does not exist.
+    """
+    assert ui.is_console_path("/ui")
+    assert ui.is_console_path("/ui/sources/new")
+    assert not ui.is_console_path("/uipsum")
+    assert not ui.is_console_path("/api/proposals")
+    assert not ui.is_console_path("/healthz")
+
+
+def test_everything_the_handler_imports_from_http_is_exported() -> None:
+    """`__all__` is this module's description of itself, and `handler.py`
+    imports `error_response` by name -- so the list was untrue while the
+    contract's own entry point was missing from it.
+    """
+    import fde_gate.handler as handler_module  # noqa: PLC0415
+
+    # Both conditions are needed. `__module__` alone catches `handler.ROUTER`,
+    # a `Router` INSTANCE that reports http as its module while being the
+    # handler's own object; identity alone catches `re` and `HTTPStatus`,
+    # which both modules import from the stdlib and therefore share.
+    imported = {
+        name
+        for name, value in vars(handler_module).items()
+        if not name.startswith("_")
+        and getattr(http_module, name, None) is value
+        and getattr(value, "__module__", None) == "fde_gate.http"
+    }
+    assert imported, "the handler imports from http; this test found nothing to check"
+    assert imported <= set(http_module.__all__), sorted(imported - set(http_module.__all__))
 
 
 def test_a_malformed_json_body_also_reaches_the_wire_as_a_400() -> None:

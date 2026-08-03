@@ -22,9 +22,13 @@
 <form method="get" action="/ui/runs">
   <fieldset>
     <legend>New run</legend>
+    {# `pick_`, not `f_`: generated controls take their id from
+       `Field.input_name`, so `f_` is theirs in the id namespace too and a
+       schema field named `workflow` would render a second element with this
+       one's id. See `_fields.html.j2`. #}
     <div class="field">
-      <label for="f_workflow">Workflow</label>
-      <select id="f_workflow" name="workflow_id" required>
+      <label for="pick_workflow">Workflow</label>
+      <select id="pick_workflow" name="workflow_id" required>
         <option value="">— choose —</option>
         {% for w in workflows %}
           <option value="{{ w.workflow_id }}"{% if selected_workflow and w.workflow_id == selected_workflow.workflow_id %} selected{% endif %}>{{ w.title }} ({{ w.slug }} v{{ w.version }})</option>
@@ -59,8 +63,8 @@
         This workflow declares no input shape, so there are no fields to
         generate. Give the input as a JSON object, or leave it empty.
       </p>
-      <label style="display:block" for="f_input">Input (JSON object, becomes <code>$.input</code> in the run context):
-        <textarea id="f_input" name="input" placeholder="{}"></textarea>
+      <label style="display:block" for="start_input">Input (JSON object, becomes <code>$.input</code> in the run context):
+        <textarea id="start_input" name="input" placeholder="{}"></textarea>
       </label>
     {% endif %}
     <button type="submit">Start</button>

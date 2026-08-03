@@ -9,6 +9,14 @@
    names come from an agent-authored `human_schema` and share a namespace
    with the forms' own control fields. See `forms.Field.input_name`.
 
+   The `id` is `f.input_name` too, and that reserves the `f_` prefix in the
+   id namespace as well: a page's OWN control may not use it. Two elements
+   with one id is not a parse error, so nothing complains -- the `<label
+   for=...>` simply binds to whichever came first, and clicking the label of
+   a generated field focused the picker at the top of the page instead. The
+   console's hand-written ids are prefixed by what they are for
+   (`pick_`, `start_`) for that reason.
+
    Each tag's optional attributes are on ONE line, with the space INSIDE the
    `{% if %}`. The environment is built with `lstrip_blocks`, which eats the
    indentation in front of a block tag -- so an attribute per line renders

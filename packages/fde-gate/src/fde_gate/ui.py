@@ -45,7 +45,16 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from fde_gate.forms import fields_from_schema, values_from_form
 from fde_gate.http import GateError, Request, Response, pg_message
 from fde_gate.runner import advance, default_invoker
-from fde_gate.service import agents, drift, proposals, reviewers, runs, sources, workflows
+from fde_gate.service import (
+    agents,
+    drift,
+    is_missing,
+    proposals,
+    reviewers,
+    runs,
+    sources,
+    workflows,
+)
 
 if TYPE_CHECKING:
     from fde_gate.http import Router
@@ -56,7 +65,23 @@ from fde_mcp.logging import get_logger
 
 log = get_logger(__name__)
 
-__all__ = ["register", "render"]
+__all__ = ["is_console_path", "register", "render", "request_refused"]
+
+#: Everything the console serves. Kept here, next to `register`, because this
+#: module is the one that decides which paths are pages -- `handler.py` asks
+#: rather than re-deriving the prefix, so adding a console route cannot leave
+#: a second copy of the rule behind.
+_CONSOLE_PREFIX = "/ui"
+
+
+def is_console_path(path: str) -> bool:
+    """Is this path one of the console's pages rather than the JSON API?
+
+    Exact-or-child, not `startswith("/ui")`: a hypothetical "/uipsum" is not
+    a page, and answering it with page chrome would be a claim about a route
+    that does not exist.
+    """
+    return path == _CONSOLE_PREFIX or path.startswith(f"{_CONSOLE_PREFIX}/")
 
 
 def _template_dir() -> Path:
@@ -174,6 +199,35 @@ async def _forbidden(request: Request, exc: GateError) -> Response:
     )
 
 
+def request_refused(exc: GateError, *, principal: str = "") -> Response:
+    """A refusal raised BEFORE routing, rendered as a page for a console path.
+
+    The sibling of `_forbidden`, and it exists for the reason that one's
+    docstring gives: the JSON envelope is right for the API and renders as a
+    wall of braces in place of the page for a browser. The difference is when
+    it is reachable -- `parse_apigw_event` runs before any route is matched,
+    so there is no `Request` yet, and the refusals it raises (a PDF in the
+    upload box, a mismatched multipart boundary) used to reach the operator
+    as that wall.
+
+    Nothing here touches the database, so `is_admin` is false rather than
+    looked up: the nav loses one link on an error page, which is a better
+    trade than a query on the path where the request could not even be read.
+    """
+    return Response.html(
+        render(
+            "request_refused.html.j2",
+            principal=principal,
+            is_admin=False,
+            error=None,
+            notice=None,
+            rendered_at=time.time(),
+            reason=exc.message,
+        ),
+        status=exc.status,
+    )
+
+
 def _back(location: str, *, error: str | None = None, notice: str | None = None) -> Response:
     """Redirect, carrying a message the destination page will display.
 
@@ -272,7 +326,7 @@ async def queue_page(request: Request) -> Response:
 async def proposal_page(request: Request) -> Response:
     proposal_id = request.param_int("proposal_id")
     proposal = await proposals.get_proposal(proposal_id, request.principal)
-    if "error" in proposal:
+    if is_missing(proposal, "proposal_id"):
         return await _page(request, "not_found.html.j2", what=f"proposal {proposal_id}")
     return await _page(request, "proposal.html.j2", proposal=proposal)
 
@@ -340,7 +394,7 @@ async def workflow_page(request: Request) -> Response:
     """
     workflow_id = request.param_int("workflow_id")
     playbook = await workflows.get_playbook(workflow_id)
-    if "error" in playbook:
+    if is_missing(playbook, "workflow"):
         return await _page(request, "not_found.html.j2", what=f"workflow {workflow_id}")
     return await _page(
         request,
@@ -729,7 +783,7 @@ async def source_page(request: Request) -> Response:
         if exc.status == HTTPStatus.FORBIDDEN:
             return await _forbidden(request, exc)
         raise
-    if "error" in detail:
+    if is_missing(detail, "source"):
         return await _page(request, "not_found.html.j2", what=f"source {source_id}")
     return await _page(
         request,

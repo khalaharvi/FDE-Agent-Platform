@@ -20,9 +20,13 @@
 <form method="get" action="/ui/agents/run">
   <fieldset>
     <legend>Pick a task</legend>
+    {# `pick_`, not `f_`: generated controls take their id from
+       `Field.input_name`, so `f_` is theirs in the id namespace too and a
+       task field named `agent` would render a second element with the id of
+       the picker below. See `_fields.html.j2`. #}
     <div class="field">
-      <label for="f_engagement">Engagement</label>
-      <select id="f_engagement" name="engagement_id" required>
+      <label for="pick_engagement">Engagement</label>
+      <select id="pick_engagement" name="engagement_id" required>
         <option value="">— choose —</option>
         {% for e in engagements %}
           <option value="{{ e }}"{% if e == engagement_id %} selected{% endif %}>{{ e }}</option>
@@ -30,8 +34,8 @@
       </select>
     </div>
     <div class="field">
-      <label for="f_agent">Agent</label>
-      <select id="f_agent" name="agent" required>
+      <label for="pick_agent">Agent</label>
+      <select id="pick_agent" name="agent" required>
         <option value="">— choose —</option>
         {% for name in agent_tasks %}
           <option value="{{ name }}"{% if name == agent %} selected{% endif %}>{{ name }}</option>
@@ -41,8 +45,8 @@
         workflow agent works on workflows and drift.</div>
     </div>
     <div class="field">
-      <label for="f_task">Task</label>
-      <select id="f_task" name="task" required>
+      <label for="pick_task">Task</label>
+      <select id="pick_task" name="task" required>
         <option value="">— choose —</option>
         {# Every agent's tasks in one list, prefixed, because a select cannot
            depend on another select without JavaScript. The server refuses a
