@@ -12,8 +12,19 @@ import argparse
 
 import pytest
 
-from fde_agents.common.config import DEFAULT_MODEL_ID, MODEL_PRESETS, resolve_model_id
+from fde_agents.common.config import (
+    DEFAULT_MODEL_ID,
+    MODEL_PRESETS,
+    get_agent_runtime_settings,
+    resolve_model_id,
+)
 from fde_agents.deploy.runtimes import _resolved_model_id
+from fde_mcp.config import get_settings
+
+
+def _clear_settings_caches() -> None:
+    get_settings.cache_clear()
+    get_agent_runtime_settings.cache_clear()
 
 
 def test_default_when_nothing_set(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,3 +77,22 @@ def test_deploy_resolution_matches_runtime_order() -> None:
     )
     assert _resolved_model_id("development", _deploy_args(None, "balanced")) == DEFAULT_MODEL_ID
     assert _resolved_model_id("workflow", _deploy_args("us.x.y-v1:0", "budget")) == "us.x.y-v1:0"
+
+
+def test_non_bedrock_provider_requires_explicit_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FDE_MODEL_PROVIDER", "anthropic")
+    monkeypatch.delenv("FDE_MODEL_ID", raising=False)
+    _clear_settings_caches()  # use this module's existing cache-clear helper/fixture
+    with pytest.raises(ValueError, match="FDE_MODEL_ID"):
+        resolve_model_id("engagement")
+
+
+def test_non_bedrock_provider_with_explicit_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FDE_MODEL_PROVIDER", "anthropic")
+    monkeypatch.setenv("FDE_MODEL_ID", "claude-sonnet-5")
+    _clear_settings_caches()
+    assert resolve_model_id("engagement") == "claude-sonnet-5"

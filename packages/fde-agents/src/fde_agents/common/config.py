@@ -115,6 +115,17 @@ def resolve_model_id(agent_key: str) -> str:
     explicit = get_settings().agent.model_id
     if explicit:
         return explicit
+    provider = ModelBackendSettings.from_env().provider  # cheap; no cache interplay
+    if provider != "bedrock":
+        # `explicit` is already known falsy here -- the unconditional check
+        # above returned already if it were set. mypy --strict flags a
+        # second `if explicit: return explicit` here as unreachable.
+        msg = (
+            f"FDE_MODEL_PROVIDER={provider!r} requires an explicit FDE_MODEL_ID "
+            "(MODEL_PRESETS name Bedrock model ids, which mean nothing to other "
+            "providers)"
+        )
+        raise ValueError(msg)
     preset_name = os.environ.get("FDE_MODEL_PRESET")
     if not preset_name:
         return DEFAULT_MODEL_ID
@@ -223,6 +234,38 @@ class GatewaySettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelBackendSettings:
+    """Which inference backend authors agent turns, and how to reach it.
+
+    Attributes:
+        provider: `FDE_MODEL_PROVIDER`, default "bedrock". One of
+            providers.PROVIDER_KEYS; validated in providers.build_model
+            (not here) so the error can name every valid value.
+        base_url: `FDE_MODEL_BASE_URL`. openai-compat endpoint; presence
+            wins over `compat_preset`.
+        compat_preset: `FDE_MODEL_COMPAT_PRESET`. Named openai-compat
+            endpoint (see providers.COMPAT_PRESETS).
+        max_tokens: `FDE_MODEL_MAX_TOKENS`, default 8192. Anthropic's
+            Messages API requires an explicit ceiling; other providers
+            use their own defaults and ignore this.
+    """
+
+    provider: str
+    base_url: str | None
+    compat_preset: str | None
+    max_tokens: int
+
+    @classmethod
+    def from_env(cls) -> ModelBackendSettings:
+        return cls(
+            provider=_env_str("FDE_MODEL_PROVIDER", "bedrock"),
+            base_url=_env_opt_str("FDE_MODEL_BASE_URL"),
+            compat_preset=_env_opt_str("FDE_MODEL_COMPAT_PRESET"),
+            max_tokens=_env_int("FDE_MODEL_MAX_TOKENS", 8192),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AgentProcessSettings:
     """Per-invocation runtime knobs for the agent's own entrypoint --
     everything `common/runtime.py` needs beyond what `fde_mcp.config`
@@ -289,10 +332,15 @@ class AgentRuntimeSettings:
 
     gateway: GatewaySettings
     process: AgentProcessSettings
+    model_backend: ModelBackendSettings
 
     @classmethod
     def from_env(cls) -> AgentRuntimeSettings:
-        return cls(gateway=GatewaySettings.from_env(), process=AgentProcessSettings.from_env())
+        return cls(
+            gateway=GatewaySettings.from_env(),
+            process=AgentProcessSettings.from_env(),
+            model_backend=ModelBackendSettings.from_env(),
+        )
 
 
 @lru_cache(maxsize=1)
