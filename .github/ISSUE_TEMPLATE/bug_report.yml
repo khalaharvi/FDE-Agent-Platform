@@ -1,0 +1,76 @@
+name: Bug report
+description: Something behaves differently than the code or docs claim
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected
+      description: >-
+        Cite the doc/docstring/test that made you expect it — this repo's
+        docs are load-bearing, so a docs-vs-behavior mismatch is a real bug
+        even when the code is "working as coded".
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro
+      description: Commands, starting from a clean `./db/rebuild.sh` where relevant.
+      render: bash
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: "OS / architecture"
+    validations:
+      required: false
+
+  - type: input
+    id: pg-version
+    attributes:
+      label: "Postgres + pgvector version"
+      description: "`SELECT extversion FROM pg_extension WHERE extname='vector';`"
+    validations:
+      required: false
+
+  - type: input
+    id: uv-python
+    attributes:
+      label: "uv --version, Python version"
+    validations:
+      required: false
+
+  - type: input
+    id: model-ids
+    attributes:
+      label: "Model IDs in play (if agent behavior)"
+      description: "`FDE_MODEL_ID` / `FDE_MODEL_PRESET`"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: layer
+    attributes:
+      label: "Layer (best guess)"
+      options:
+        - SQL
+        - MCP tools
+        - agents
+        - gate service
+        - SoR adapters
+        - training
+        - deploy CLI
+        - not sure
+    validations:
+      required: true
