@@ -26,8 +26,8 @@ distinguish the approach here:
 - **Enforcement depth.** An application-layer check is one forgotten call,
   refactor, or new code path away from being bypassed. Here the agent role
   never holds write privileges on the graph — a grant that does not exist
-  cannot be bypassed by any code path, and CI asserts eight such denials on
-  every build.
+  cannot be bypassed by any code path, and CI asserts twenty-five such
+  denials on every build.
 - **Deterministic routing.** Which approvals a change needs is computed by
   pure SQL over a policy table — reproducible, auditable, and immune to the
   agent talking its way into a lighter review. Most hand-rolled approval
@@ -41,12 +41,20 @@ the governance and learning layer for agent writes to shared state.
 
 ## Can I use it without AWS?
 
-Yes, for everything except model inference and embeddings. The database, the
-gates, the review console, the 21-tool MCP server, and the training export
-all run locally — that is the [quickstart](/quickstart), and it is the fully
-tested surface. The agents themselves and query embedding call Amazon
-Bedrock, and the runtime story targets AgentCore. Those paths are written
-against verified API shapes but not validated live — see
+Yes — and since the provider work landed, that includes inference and
+embeddings. The database, the gates, the review console, the 22-tool MCP
+server, and the training export all run locally with no credentials at all;
+that is the [quickstart](/quickstart), and it is the fully tested surface.
+
+Bedrock is the default for model calls and query embedding, not a
+requirement: `FDE_MODEL_PROVIDER` and `FDE_EMBED_PROVIDER` also accept
+Anthropic's API, OpenAI, Gemini, and any OpenAI-compatible `/v1` endpoint,
+with keys stored in the OS keychain by `fde-providers login`. The repo's
+`docs/12-providers.md` is the source of truth for that path.
+
+What remains AWS-shaped is the *deployment* story — running the agents as
+Bedrock AgentCore runtimes and the gate service as Lambda. Those paths are
+written against verified API shapes but have not been validated live — see
 [Status and honesty](/status).
 
 ## Can I adopt just the gate model?
@@ -61,8 +69,8 @@ Apache-2.0 license permits exactly this kind of reuse.
 ## Is this production-ready?
 
 No production deployment exists, and the project says so plainly rather than
-implying otherwise. The local surface is thoroughly tested (609 tests, 599 of
-them in one run, 25 smoke tests, 8 CI-asserted invariants); the AWS surface
+implying otherwise. The local surface is thoroughly tested (814 tests, 804 of
+them in one run, 25 smoke tests, 25 CI-asserted invariants); the AWS surface
 is a validated design awaiting a first live deployment. Read
 [Status and honesty](/status) before making commitments on top of it.
 

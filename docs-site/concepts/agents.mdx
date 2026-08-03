@@ -1,6 +1,6 @@
 ---
 title: "The three agents"
-description: "Engagement, Workflow, and Development: what each agent does, how they form a loop, and the 21 MCP tools they share."
+description: "Engagement, Workflow, and Development: what each agent does, how they form a loop, and the 22 MCP tools they share."
 ---
 
 The platform ships three agents, designed to run as Amazon Bedrock AgentCore
@@ -63,17 +63,17 @@ decisions becomes a training label.
   />
 </Frame>
 
-## One tool surface: 21 MCP tools
+## One tool surface: 22 MCP tools
 
 The agents never touch the database directly. All access goes through an MCP
-server exposing 21 typed tools:
+server exposing 22 typed tools:
 
 | Group | Tools |
 |---|---|
 | Graph reads (9) | search, lexical search, get node, traverse, dependency closure, impact radius, process flow, head commit, as-of snapshot |
 | Proposals (3) | propose, submit, status |
 | Drift (3) | list, scan, triage |
-| Workflow (3) | draft, get, list |
+| Workflow (4) | draft, get, list, export playbook |
 | Evidence (3) | register source, ingest chunks, list sources |
 
 Every tool is a thin typed wrapper over the same SQL functions — no
@@ -96,8 +96,10 @@ surface an agent gets:
 
 ```bash
 uv run fde-mcp --help                    # prints the env contract
-FDE_MCP_TRANSPORT=stdio uv run fde-mcp   # serve the 21 tools over stdio
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp   # serve the 22 tools over stdio
 ```
 
-Tools that embed queries (such as `kg_search`) call Bedrock and need AWS
-credentials; everything else works against your local Postgres.
+Tools that embed queries (such as `kg_search`) call an embedding provider —
+Bedrock by default, so they need AWS credentials unless you point
+`FDE_EMBED_PROVIDER` at OpenAI, Gemini, or an OpenAI-compatible endpoint.
+Everything else works against your local Postgres.

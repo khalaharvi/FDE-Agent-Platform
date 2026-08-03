@@ -36,6 +36,10 @@
         ]
       },
       {
+        "group": "Guides",
+        "pages": ["guides/for-operators"]
+      },
+      {
         "group": "Running the platform",
         "pages": ["architecture", "models-and-cost", "deployment"]
       },
