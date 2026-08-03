@@ -109,7 +109,7 @@ where it does.
 |---|---|
 | `app.py` | CDK app entry point (`uv run python app.py`); builds `FdePlatformStack` and calls `app.synth()` with an explicit `outdir="cdk.out"` |
 | `cdk.json` | Tells any CDK tooling how to run the app: `{"app": "uv run python app.py"}` |
-| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; wires `Network` -> `Database` -> `Identity` -> `IamRoles` -> `Migrations` -> (the shared `provider_api_key_secret`) -> `Services` -> `GateService` into itself, not new stacks. `Services` before `GateService`: the gate Lambda's `FDE_MCP_URL` env needs `services.mcp_url`. Task 7's `Agents` construct will insert between `Services` and `GateService` (see `gate.py`'s module docstring) |
+| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; wires `Network` -> `Database` -> `Identity` -> `IamRoles` -> `Migrations` -> (the shared `provider_api_key_secret`) -> `Services` -> `Agents` -> `GateService` -> `add_outputs` into itself, not new stacks. `Services` before `Agents`/`GateService`: both need `services.mcp_url`. `Agents` before `GateService`: the gate Lambda's `FDE_RUNTIME_ARN_*` envs need `agents.runtime_arns` |
 | `fde_cdk/network.py` | `Network` — the one VPC (2 AZ, 1 NAT, public + private-with-egress) everything else attaches to |
 | `fde_cdk/database.py` | `Database` — the Aurora PostgreSQL (pgvector) cluster, tier-switched between Serverless v2 (demo) and provisioned `db.r6g.xlarge` (production) via `Fn::If` on `is_production` |
 | `fde_cdk/identity.py` | `Identity` — one Cognito user pool: admin-seeded human login (`console_client`, hosted UI, auth-code grant), a stable JWT audience (`api_client`), and a client-credentials M2M client scoped to `gateway/invoke` (`m2m_client`) |
@@ -124,6 +124,9 @@ where it does.
 | `fde_cdk/gate.py` | `GateService` — the `fde-gate-service` Lambda (VPC-attached, code from S3, `function_name=GATE_FUNCTION_NAME` verbatim), its `apigatewayv2.HttpApi` (JWT-authorized `ANY /{proxy+}`, unauthenticated `GET /healthz`), and the two EventBridge schedules. Also `provider_api_key_secret`/consumed via `params.dynamic_secret_env_value` — the one Secrets Manager mirror of `ProviderApiKey` shared with `Services` |
 | `fde_cdk/services.py` | `Services` — one `ecs.Cluster`; `mcp_service` (ARM64 Fargate, `{ECR_PUBLIC_BASE}/fde-mcp:{tag}`) behind an internal ALB (`mcp_url` output); `embedder_service` (same image, `command=["fde-embedder"]`, no ALB) |
 | `tests/test_services.py` | Synth tests for `GateService` (Lambda shape, HTTP API routes/authorizer, schedules, the supplemental `gate_role` secret grant) and `Services` (internal ALB, ARM64 task definitions, container image/env/command, the shared provider-API-key secret's conditional wiring, the Migrations dependency) |
+| `fde_cdk/agents.py` | `Agents` — one `ecr.CfnPullThroughCacheRule` (`ecr-public` prefix, `public.ecr.aws` upstream); one `CfnGateway`+`CfnGatewayTarget` (MCP protocol, SEMANTIC search, CUSTOM_JWT against Cognito, target = `services.mcp_url`); one `CfnMemory` (semantic/summary/user-preference strategies, 90-day expiry); three `CfnRuntime`s (Engagement/Workflow/Development, PUBLIC network mode, container URI through the pull-through cache, `FDE_GATEWAY_URL`/provider envs). All L1 `Cfn*` — this lib version has no L2 for `aws_bedrockagentcore`. `.runtime_arns: dict[str, str]` feeds `GateService`'s `FDE_RUNTIME_ARN_*` envs |
+| `fde_cdk/outputs.py` | `add_outputs(stack, ...)` — a plain function (not a nested Construct — see its own docstring for why), five `CfnOutput`s built directly on the stack: `ReviewConsoleUrl`, `CognitoLoginUrl` (via `UserPoolDomain.sign_in_url`), `ApiEndpoint`, `McpEndpoint` (internal-only), `FirstStepsUrl` |
+| `tests/test_agents_outputs.py` | Synth tests for `Agents` (runtime count/network mode/role/container-URI/env shape, cache-rule shape, gateway CUSTOM_JWT/audience/target, memory strategy count/expiry/role) and the five `Outputs`; plus the Task 7 behavior-change tests on `GateService`'s `FDE_RUNTIME_ARN_*` envs (real tokens, correctly matched per agent) |
 
 ## A quirk resolved in Task 3: `analytics_reporting`
 
@@ -215,3 +218,35 @@ parameter and condition its first consumer. The `-i` list (here and in
 way permanently: any later task that gives another Lambda/Fargate construct
 both an explicit `role=`/target-group wiring and its own VPC attachment
 will very likely reproduce it again, and that is fine.
+
+**Task 7 added five new AgentCore/ECR resource types
+(`AWS::ECR::PullThroughCacheRule`, `AWS::BedrockAgentCore::{Runtime,Gateway,
+GatewayTarget,Memory}`) and kept the `-i` list at exactly `-i W3005` (still
+3 occurrences, unchanged from Task 6 — none of the five new resource types
+reproduce the explicit-`role=`-plus-target-group pattern that causes it).**
+Two real findings surfaced by giving these resource types their first
+consumer, both fixed rather than added to the `-i` list (neither is a false
+positive to silence):
+
+- `agents.py`'s runtime container URI (`CfnRuntime.AgentRuntimeArtifact.
+  ContainerConfiguration.ContainerUri`) is schema-validated by cfn-lint
+  against a `\d{12}\.dkr\.ecr\....` pattern requiring a lowercase ECR
+  repository path — `params.py`'s `ECR_PUBLIC_ALIAS` local/dev placeholder
+  default was `"REPLACE_AT_RELEASE"` (all-caps) since Task 6, which never
+  had a consumer strict enough to catch this (`services.py`'s own
+  `ecs.ContainerImage.from_registry` has no such schema). Fixed by
+  lowercasing the placeholder default to `"replace-at-release"` — still an
+  obvious non-alias, just a syntactically legal one.
+- `CfnMemory`'s real CloudFormation schema requires strategy/memory `name`
+  fields to match `^[a-zA-Z][a-zA-Z0-9_]{0,47}$` (no hyphens) and namespace
+  templates to use only `{actorId}`/`{sessionId}`/`{memoryStrategyId}`
+  placeholders — `packages/fde-agents/src/fde_agents/deploy/memory.py`'s
+  own literals (`fde-semantic`, `fde-agent-memory`, `{strategyId}`, ...)
+  violate both, apparently never caught because that boto3 script has never
+  run against a live account (AWS honesty rule). `agents.py` uses
+  corrected literals (`fde_semantic`, `fde_agent_memory`,
+  `{memoryStrategyId}`) rather than reproducing the bug — see `agents.py`'s
+  own comment on `_MEMORY_NAME`/`_NAMESPACE_TEMPLATE` for the full
+  reasoning, and the Task 7 report's "concerns" section for the follow-up
+  this implies for `memory.py` itself (out of scope for this CDK-only
+  task).

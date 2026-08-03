@@ -37,7 +37,26 @@ _DEFAULT_ASSETS_BUCKET = "fde-platform-assets-us-east-1"
 # resource, so there is no per-region value for a mapping to hold -- a
 # `CfnMapping` keyed by `AWS::Region` here would have exactly one branch,
 # used unconditionally, which is just a constant with extra ceremony.
-ECR_PUBLIC_BASE = f"public.ecr.aws/{os.environ.get('FDE_ECR_PUBLIC_ALIAS', 'REPLACE_AT_RELEASE')}"
+#
+# Task 7's `Agents` construct needs the bare alias (not the
+# `public.ecr.aws/`-prefixed form below): its runtime container URIs go
+# through the ECR-Public pull-through cache
+# (`{account}.dkr.ecr.{region}.amazonaws.com/ecr-public/{alias}/fde-{agent}:
+# {tag}`), which is a *private* ECR registry path, not `public.ecr.aws/...`.
+# `ECR_PUBLIC_BASE` below is built from this constant (not a second,
+# independent `os.environ.get` call) so the two can never read a different
+# alias from the same process.
+# Lowercase (Task 7 fix): ECR repository-path segments are lowercase-only
+# (`[a-z0-9]+(?:[._-][a-z0-9]+)*`) -- `cfn-lint` only started enforcing this
+# for the alias once `agents.py` gave it a consumer with a strict pattern
+# (`CfnRuntime.AgentRuntimeArtifact.ContainerConfiguration.ContainerUri`;
+# `services.py`'s own `ECR_PUBLIC_BASE` consumer, `ecs.ContainerImage.
+# from_registry`, has no such schema constraint, so the all-caps literal
+# never surfaced a lint failure through Task 6). Still an obvious,
+# not-a-real-alias placeholder -- just one that is syntactically valid so a
+# local/dev bare synth (no `FDE_ECR_PUBLIC_ALIAS`) stays cfn-lint-clean.
+ECR_PUBLIC_ALIAS = os.environ.get("FDE_ECR_PUBLIC_ALIAS", "replace-at-release")
+ECR_PUBLIC_BASE = f"public.ecr.aws/{ECR_PUBLIC_ALIAS}"
 
 
 @dataclass(frozen=True)
@@ -322,4 +341,28 @@ def dynamic_secret_env_value(secret: secretsmanager.ISecret, params: LaunchParam
     dynamic_ref = cdk.SecretValue.secrets_manager(secret.secret_arn).unsafe_unwrap()
     return cdk.Token.as_string(
         cdk.Fn.condition_if(params.has_provider_key.logical_id, dynamic_ref, "")
+    )
+
+
+def model_id_env(params: LaunchParams) -> str:
+    """`Fn::If(IsBedrockModel, "", ModelId)` -- the `FDE_MODEL_ID` env value
+    shared by every process that authors an agent turn. `params.py`'s own
+    `ModelId` description is the rule this encodes: "ignored for bedrock
+    (per-agent defaults apply)" -- a launcher who left `ModelProvider` at
+    its `bedrock` default but still typed something into `ModelId` must not
+    have that value leak into the environment, because the per-agent
+    resolution `fde_agents.common.config.resolve_model_id`/`MODEL_PRESETS`
+    already picks a concrete Bedrock model id at runtime.
+
+    Extracted here (Task 7) from `gate.py`, which had the only copy through
+    Task 6, so `Agents`' three runtimes (Task 7's actual, audit-relevant
+    consumer -- see `agents.py`'s module docstring for why the gate
+    Lambda's own copy of this value is inert pass-through, not what an
+    agent process reads) and `GateService`'s Lambda env compute the exact
+    same `Fn::If` rather than two hand-copied literals that could drift
+    apart. `gate.py` was updated in the same commit to call this instead of
+    inlining its own copy.
+    """
+    return cdk.Token.as_string(
+        cdk.Fn.condition_if(params.is_bedrock_model.logical_id, "", params.model_id.value_as_string)
     )

@@ -78,9 +78,17 @@ def test_gate_lambda_env_has_expected_keys() -> None:
     assert "FDE_DB_SECRET_ARN" in env
     assert "FDE_MCP_URL" in env
     assert env["FDE_MODEL_PROVIDER"] == {"Ref": "ModelProvider"}
-    # Placeholder runtime ARNs (Task 7 not built yet): present, blank.
+    # Task 7 behavior change: stack.py now constructs Agents before
+    # GateService and passes `agents.runtime_arns` through, so every
+    # FDE_RUNTIME_ARN_* env carries a real `attr_agent_runtime_arn` token
+    # (an Fn::GetAtt dict), never the "" placeholder this test pinned
+    # through Task 6 (see gate.py's module docstring and
+    # tests/test_agents_outputs.py for the fuller contract, including that
+    # each env references its OWN agent's runtime, not just any token).
     for agent in ("ENGAGEMENT", "WORKFLOW", "DEVELOPMENT"):
-        assert env[f"FDE_RUNTIME_ARN_{agent}"] == ""
+        value = env[f"FDE_RUNTIME_ARN_{agent}"]
+        assert value != ""
+        assert isinstance(value, dict)
 
 
 def test_gate_lambda_model_id_env_is_fn_if_on_is_bedrock_model() -> None:

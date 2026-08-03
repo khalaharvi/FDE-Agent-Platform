@@ -3,19 +3,23 @@ from __future__ import annotations
 import aws_cdk as cdk
 from constructs import Construct
 
+from fde_cdk.agents import Agents
 from fde_cdk.database import Database
 from fde_cdk.gate import GateService, provider_api_key_secret
 from fde_cdk.iam_roles import IamRoles
 from fde_cdk.identity import Identity
 from fde_cdk.migrations import Migrations
 from fde_cdk.network import Network
+from fde_cdk.outputs import add_outputs
 from fde_cdk.params import add_launch_params
 from fde_cdk.services import Services
 
 
 class FdePlatformStack(cdk.Stack):
     """Root stack behind the README Launch-Stack button. One template URL,
-    eight single-responsibility constructs (added by later tasks)."""
+    nine single-responsibility constructs: Network -> Database -> Identity
+    -> IamRoles -> Migrations -> Services -> Agents -> GateService ->
+    Outputs."""
 
     def __init__(self, scope: Construct, construct_id: str, **kwargs: object) -> None:
         super().__init__(
@@ -68,15 +72,10 @@ class FdePlatformStack(cdk.Stack):
         # either construct).
         self.provider_api_key_secret = provider_api_key_secret(self, self.params)
 
-        # Services before GateService: GateService's FDE_MCP_URL env needs
-        # services.mcp_url (the internal ALB's URL), which does not exist
-        # until Services is built. The eventual order (per the plan) is
-        # Migrations -> Services -> Agents (Task 7) -> GateService, because
-        # GateService's FDE_RUNTIME_ARN_* env vars need Task 7's runtime
-        # ARNs; Agents does not exist yet, so GateService here takes
-        # `runtime_arns=None` (placeholder "" envs -- see gate.py's module
-        # docstring) and Task 7 re-wires this call with `agents.
-        # runtime_arns` once it exists.
+        # Services before Agents/GateService: both need services.mcp_url
+        # (the internal ALB's URL) -- Agents' Gateway target points at it
+        # directly, GateService's FDE_MCP_URL env carries it too -- and
+        # neither exists until Services is built.
         self.services = Services(
             self,
             "Services",
@@ -91,6 +90,29 @@ class FdePlatformStack(cdk.Stack):
         # run once, so both constructs must deploy strictly after it.
         self.services.node.add_dependency(self.migrations.resource)
 
+        # Agents before GateService: GateService's FDE_RUNTIME_ARN_* envs
+        # need the three real runtime ARNs Agents creates (see gate.py's
+        # module docstring -- before this task, GateService took
+        # `runtime_arns=None` and emitted "" placeholders; now it always
+        # gets `agents.runtime_arns`). Agents itself is built with the
+        # Gateway before the Runtimes internally (see agents.py's module
+        # docstring for the ordering this resolves) -- that internal order
+        # is independent of where `Agents(...)` sits in THIS constructor,
+        # which only needs to be after `Services` (Gateway target =
+        # `services.mcp_url`) and before `GateService` (runtime ARNs).
+        self.agents = Agents(
+            self,
+            "Agents",
+            params=self.params,
+            runtime_role=self.iam_roles.runtime_role,
+            gateway_service_role=self.iam_roles.gateway_service_role,
+            memory_role=self.iam_roles.memory_role,
+            jwt_discovery_url=self.identity.discovery_url,
+            jwt_allowed_audience=self.identity.m2m_client.user_pool_client_id,
+            mcp_url=self.services.mcp_url,
+            provider_api_key_secret=self.provider_api_key_secret,
+        )
+
         self.gate_service = GateService(
             self,
             "GateService",
@@ -101,6 +123,7 @@ class FdePlatformStack(cdk.Stack):
             identity=self.identity,
             mcp_url=self.services.mcp_url,
             provider_api_key_secret=self.provider_api_key_secret,
+            runtime_arns=self.agents.runtime_arns,
         )
         self.gate_service.node.add_dependency(self.migrations.resource)
 
@@ -121,3 +144,16 @@ class FdePlatformStack(cdk.Stack):
         assert cfn_console_client is not None
         cfn_console_client.add_property_override("CallbackURLs", [console_url])
         cfn_console_client.add_property_override("LogoutURLs", [console_url])
+
+        # Outputs last: every value they print (the console URL, the login
+        # URL, the two endpoints) is built from constructs above them.
+        # `add_outputs` is a plain function, not a nested Construct -- see
+        # outputs.py's module docstring for why (clean, unhashed output
+        # names on the CloudFormation console).
+        add_outputs(
+            self,
+            identity=self.identity,
+            gate_service=self.gate_service,
+            services=self.services,
+            console_url=console_url,
+        )

@@ -9,16 +9,28 @@ configuration expressed as CloudFormation instead of boto3 calls. Read all
 three before changing anything here.
 
 Cross-construct ordering (see the plan's own note, and `docs/superpowers/
-plans/2026-08-02-one-click-aws-deploy.md`'s Task 6 section): the *eventual*
-construct order is Migrations -> Services -> Agents (Task 7) -> GateService,
-because the Lambda's `FDE_RUNTIME_ARN_*` env vars need the three AgentCore
-runtime ARNs Task 7's `Agents` construct creates. Task 7 does not exist yet.
-`GateService` accepts `runtime_arns: dict[str, str] | None = None`; when it
-is `None` (this task's stack wiring), every `FDE_RUNTIME_ARN_{AGENT}` env
-var is set to `""` rather than omitted, so the Lambda's environment shape
-(the set of keys) does not change once Task 7 supplies real values --
-only the values do. Task 7 re-wires `stack.py` to construct `Agents` before
-`GateService` and pass `agents.runtime_arns` through.
+plans/2026-08-02-one-click-aws-deploy.md`'s Task 6 section): the construct
+order is Migrations -> Services -> Agents -> GateService, because the
+Lambda's `FDE_RUNTIME_ARN_*` env vars need the three AgentCore runtime ARNs
+`Agents` (Task 7, `agents.py`) creates. `GateService` accepts
+`runtime_arns: dict[str, str] | None = None`; `stack.py` now always passes
+`agents.runtime_arns` (three real `attr_agent_runtime_arn` tokens), so every
+`FDE_RUNTIME_ARN_{AGENT}` env var carries a real `Fn::GetAtt`, not the `""`
+placeholder this construct emitted before `Agents` existed. The `None`
+default stays (a construct-level API should not require a caller who
+doesn't care about runtime ARNs to fabricate a dict), and the loop below
+still falls back to `""` per-key for exactly that caller -- but the stack's
+own wiring no longer exercises that fallback.
+
+Note this construct's own `FDE_MODEL_PROVIDER`/`FDE_MODEL_ID`/
+`FDE_MODEL_BASE_URL`/`FDE_MODEL_API_KEY` envs are NOT what actually
+authors an agent turn -- `agents.py`'s three AgentCore runtimes are the
+real consumers of the provider config (see that module's docstring; each
+runtime gets its own copy of the same four envs, built the same way).
+Nothing in `packages/fde-gate/src/fde_gate` reads any of these four names
+today (verified by grep) -- they are inert pass-through on this Lambda,
+kept for parity with the runtimes' environment shape rather than because
+`fde_gate` currently does anything with them.
 
 The `FDE_DB_SECRET_ARN` / `gate_role` mismatch this construct works around
 ------------------------------------------------------------------------
@@ -70,6 +82,7 @@ from fde_cdk.params import (
     LaunchParams,
     dynamic_secret_env_value,
     fde_db_secrets_wildcard_arn,
+    model_id_env,
     resolve_assets_bucket_name,
 )
 
@@ -88,9 +101,10 @@ _MEMORY_MB = 512
 _GATE_DB_SECRET_NAME = "fde/db/gate"
 
 # The three agents `fde_gate.config.GateSettings.runtime_arn_for` looks up
-# by name (packages/fde-gate/src/fde_gate/config.py) -- fixed here so the
-# placeholder-env-var shape (see module docstring) matches exactly what
-# Task 7's `Agents.runtime_arns` will eventually supply keys for.
+# by name (packages/fde-gate/src/fde_gate/config.py) -- fixed here so this
+# env-var shape matches exactly what `agents.py`'s `Agents.runtime_arns`
+# supplies keys for (uppercase; `Agents.AGENT_NAMES` is the lowercase form
+# the AgentCore API itself uses).
 _AGENT_NAMES = ("ENGAGEMENT", "WORKFLOW", "DEVELOPMENT")
 
 # (logical id suffix, schedule expression, event payload, description) --
@@ -220,21 +234,19 @@ class GateService(Construct):
         # "", ModelId) enforces that at the env-var level (blank even if a
         # launcher set ModelId while ModelProvider=bedrock), rather than
         # trusting every future consumer to re-implement the same
-        # precedence rule. This is also IsBedrockModel's first consumer
-        # (see infra/cdk/README.md's W8001 ledger) and ModelId's only one.
-        model_id_env = cdk.Token.as_string(
-            cdk.Fn.condition_if(
-                params.is_bedrock_model.logical_id, "", params.model_id.value_as_string
-            )
-        )
-
+        # precedence rule. `params.model_id_env` (Task 7 extraction --
+        # `agents.py`'s three runtimes call the exact same helper, so the
+        # gate Lambda's inert copy and the runtimes' real one can never
+        # compute a different value from the same params). This is also
+        # IsBedrockModel's first consumer (see infra/cdk/README.md's W8001
+        # ledger) and ModelId's only one.
         environment: dict[str, str] = {
             "FDE_DB_SECRET_ARN": gate_db_secret.secret_arn,
             "FDE_GATE_FUNCTION_NAME": GATE_FUNCTION_NAME,
             "FDE_SERVICE_NAME": "fde-gate",
             "FDE_MCP_URL": mcp_url,
             "FDE_MODEL_PROVIDER": params.model_provider.value_as_string,
-            "FDE_MODEL_ID": model_id_env,
+            "FDE_MODEL_ID": model_id_env(params),
             # CompatBaseUrl is the one base-URL launch parameter v1 has --
             # shared between the model provider and (services.py) the
             # embedding provider, same simplification as the API key
@@ -242,10 +254,12 @@ class GateService(Construct):
             "FDE_MODEL_BASE_URL": params.compat_base_url.value_as_string,
             "FDE_MODEL_API_KEY": dynamic_secret_env_value(provider_api_key_secret, params),
         }
-        # Placeholder shape until Task 7's Agents construct exists (see
-        # module docstring): every FDE_RUNTIME_ARN_* key is always present,
-        # "" until a real runtime_arns dict supplies it, so this task's
-        # Lambda environment shape is stable and testable without Agents.
+        # Every FDE_RUNTIME_ARN_* key is always present: a real
+        # `attr_agent_runtime_arn` token when `runtime_arns` carries one
+        # (the stack's real wiring, since Task 7), `""` for any key a
+        # caller's `runtime_arns` dict doesn't supply (or when it is
+        # `None` entirely) -- so the Lambda's environment SHAPE (the set of
+        # keys) never depends on whether real values are available.
         resolved_runtime_arns = runtime_arns or {}
         for agent_name in _AGENT_NAMES:
             environment[f"FDE_RUNTIME_ARN_{agent_name}"] = resolved_runtime_arns.get(agent_name, "")

@@ -63,6 +63,7 @@ class Identity(Construct):
     api_client: cognito.UserPoolClient
     m2m_client: cognito.UserPoolClient
     discovery_url: str
+    hosted_ui_domain: cognito.UserPoolDomain
 
     def __init__(
         self,
@@ -127,7 +128,13 @@ class Identity(Construct):
         # still get two different domains.
         stack_id_suffix = cdk.Fn.select(2, cdk.Fn.split("/", cdk.Aws.STACK_ID))
         domain_prefix = cdk.Fn.join("-", ["fde", stack_id_suffix])
-        cognito.UserPoolDomain(
+        # Stored (Task 7), not just constructed inline: `outputs.py`'s
+        # `CognitoLoginUrl` needs the domain object itself to call its own
+        # `sign_in_url(client, redirect_uri=...)` helper (the L2's
+        # purpose-built way to build a hosted-UI login URL, rather than
+        # this stack hand-assembling the same `https://{domain}.auth.
+        # {region}.amazoncognito.com/login?...` shape a second time).
+        self.hosted_ui_domain = cognito.UserPoolDomain(
             self,
             "HostedUiDomain",
             user_pool=self.user_pool,
