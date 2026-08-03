@@ -344,6 +344,41 @@ emit identical bytes.
 *Failure mode:* an unknown `workflow_id` returns the standard
 `{error, hint}` envelope (Section 7) rather than raising.
 
+### 2.5 Evidence tools
+
+The ingest side of the graph: register where a claim came from, attach the
+verbatim text, and find what is already there. `fde_agent` holds `INSERT` on
+`kg.source`/`kg.chunk`/`kg.embed_queue` and nothing more (Section 8) — no
+`UPDATE`, no `DELETE`, because re-ingest is a new version and an audit trail
+is only an audit trail if the old rows cannot be edited.
+
+#### `kg_register_source(engagement_id, *, source_kind: SourceKind, title, captured_at, uri=None, captured_by=None, checksum=None, metadata=None) -> dict`
+
+Creates the `kg.source` row a chunk hangs off and a proposal cites. `captured_at`
+is when the material was produced, not when it was ingested — it is what makes
+"what did we believe at the time" answerable later. `checksum` is how
+re-ingesting the same document is recognised as the same document.
+
+#### `kg_ingest_chunks(engagement_id, source_id: int, chunks: list[ChunkIn]) -> dict`
+
+Attaches evidence text to a registered source and queues it for embedding.
+Each chunk carries an `ordinal`, `content` (verbatim, ≤ 8000 chars — split
+longer passages rather than truncating), and **`anchor_keys`: the `node_key`s
+this passage is evidence for**.
+
+*The failure mode worth knowing:* `anchor_keys` is optional to the schema and
+load-bearing in practice. `kg.hybrid_search`'s chunk arm drops chunks with
+empty `anchor_keys` (`db/008`), so an unanchored chunk is stored, embedded,
+and never retrieved — evidence that exists and cannot be found. Ingest without
+anchors and retrieval silently never sees it; nothing errors.
+
+#### `kg_list_sources(engagement_id, source_kind: SourceKind | None = None, limit: int = 50 [1-200]) -> dict`
+
+Registered sources, newest capture first, with each source's chunk count and
+how many of those are embedded yet. Use it to find the `source_id` to cite in
+a proposal's `source_ids`, and to check whether a document was already ingested
+before ingesting it again.
+
 ---
 
 ## 3. Deployment shape A: in-runtime MCP

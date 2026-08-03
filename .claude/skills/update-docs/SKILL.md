@@ -96,8 +96,8 @@ silently, they rot on pages your diff never pointed at, and the same count is
 usually stated on three or four pages at once. Sweep first, unconditionally:
 
 ```bash
-grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+) ([a-z]+ )?(tests|migrations|smoke tests|tools|packages|agents|pages|layers|denials|kinds|types|policies|axes|bugs|documents|diagrams|reviewers|tables|images|runtimes|traces|files|invariants|commands|steps|members)' \
-    docs-site/ README.md CONTRIBUTING.md claude-plugin/
+grep -rnEi '\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|[0-9]+)[- ]([a-z]+[- ])?(tests?|migrations?|smoke tests?|tools?|packages?|agents?|pages?|layers?|denials?|kinds?|types?|policies|axes|bugs?|documents?|diagrams?|reviewers?|tables?|images?|runtimes?|traces?|files?|invariants?|commands?|steps?|members?|statements?|gates?)' \
+    docs-site/ README.md CONTRIBUTING.md CLAUDE.md claude-plugin/
 ```
 
 Three things that pattern is built for:
@@ -113,6 +113,16 @@ Three things that pattern is built for:
 - **`CONTRIBUTING.md` is in the file set**, not only the pathspec in step 1. It
   is a public doc that states the test, migration, smoke and denial counts in its
   own quickstart block, and nothing else sweeps it.
+- **Counts appear hyphenated and singular, as adjectives** — "the *21-tool*
+  loop", "a *four-layer* invariant" — which is why the noun alternatives carry
+  `?` and the separator accepts `-`. That form is exactly how the last stale
+  count survived a sweep that was otherwise clean.
+
+One thing the sweep cannot catch: a count corrected in the first half of a
+sentence and left stale in the second. "CI asserts twenty-five denials … if any
+of the eight statements succeeds" matches on the first number and reads as a
+hit you have already fixed. **Read the whole sentence around every hit**, not
+the number the grep highlighted.
 
 Extend the noun list when the docs start claiming a count it misses. Verify an
 extension the way you would verify a code change: run it, and read every new hit
