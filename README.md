@@ -191,7 +191,7 @@ fde-platform/
 
 **Gates, all green:** `ruff check` (183 files) + `ruff format --check` (181) ·
 `mypy --strict` on the four production packages (90 files, 0 issues) ·
-`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 814 Python tests
+`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 867 Python tests
 against live Postgres · twenty-nine privilege-denial invariants, all correctly denied.
 
 </details>
@@ -310,7 +310,7 @@ model — the one to read if you read only one**), and
 |---|---|
 | 18 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate |
 | 25 end-to-end smoke tests pass | incl. fail-closed submit, unauthorised approval, review→edit→merge→label, workflow publish/run/human-response, observation dedup, as-of traversal |
-| 814 Python tests, 804 of them in one run against live Postgres | fde-mcp 110 · fde-agents 117 · fde-training 183 · fde-gate 234 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
+| 867 Python tests, 857 of them in one run against live Postgres | fde-mcp 110 · fde-agents 117 · fde-training 183 · fde-gate 287 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
 | 29 privilege-denial invariants hold | asserted in CI, not trusted |
 | 6 diagrams screenshot-verified | both colour schemes |
 
