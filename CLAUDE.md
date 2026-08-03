@@ -56,6 +56,7 @@ PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 - Docs are tested: `test_docs_sync.py` pins docs/06's reward-weight table to
   `DEFAULT_WEIGHTS` and requires 0.78/0.82 (docs/06) and 0.78 (README) to
   stay present. The CI step name hardcodes the smoke-test count.
+- Public docs drift: run the `update-docs` skill; it ends in a mandatory marketing-strategist review.
 - MCP tool docstrings are the model-facing prompt — edit them like prompts,
   not comments (`docs/11` §6). New env vars go in the package's `config.py`,
   nowhere else.
