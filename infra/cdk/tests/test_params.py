@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from tests.test_synth import synth_template
 
 
@@ -28,44 +26,44 @@ def test_conditions_and_mapping_present() -> None:
     assert template["Mappings"]["AssetsRegionMap"]["us-east-1"]["bucket"]
 
 
-@pytest.mark.xfail(
-    reason="flips in Task 3 with first real resource (network/database constructs)",
-    strict=False,
-)
 def test_no_cdk_metadata_resource() -> None:
     """Forcing function for the analytics_reporting=True workaround (see
-    app.py / README): this task adds Parameters/Conditions/Mappings only,
-    no Resources, so cfn-lint's E1001 ('Resources' is a required property)
-    still needs the synthetic CDKMetadata resource to keep the template
-    non-empty. Un-xfail this the moment a later task's first real construct
-    lands and app.py flips analytics_reporting to False.
+    app.py / README), now resolved: Task 2 had no Resources of its own, so
+    cfn-lint's E1001 ('Resources' is a required property) needed the
+    synthetic CDKMetadata resource to keep the template non-empty. Task 3's
+    Network/Database constructs give the stack genuine Resources, so
+    app.py's analytics_reporting flips to False in this same commit and
+    this test drops the `xfail(strict=False)` it carried through Task 2.
 
-    Caveat, spelled out rather than left implicit: `synth_template()` builds
-    its own bare `cdk.App()` (see tests/test_synth.py), which never sets
-    `analytics_reporting` at all -- so this assertion is currently vacuously
-    true (there are no Resources of ANY kind via this helper, CDKMetadata
-    included) rather than a genuine red/green signal against app.py's real
-    config. See `test_cdk_metadata_present_via_real_app_config` below for
-    the test that actually exercises app.py's `analytics_reporting=True`."""
+    `synth_template()` builds its own bare `cdk.App()` (see
+    tests/test_synth.py), which never set `analytics_reporting` at all --
+    so this assertion was already true before Task 3 (vacuously, since
+    there were no Resources of any kind via this helper) and stays true now
+    for a real reason (Network/Database resources exist, and still no
+    CDKMetadata). `test_no_cdk_metadata_via_real_app_config` below is the
+    companion that exercises app.py's actual (now False) configuration."""
     resource_types = {r["Type"] for r in synth_template().to_json().get("Resources", {}).values()}
     assert "AWS::CDK::Metadata" not in resource_types
 
 
-def test_cdk_metadata_present_via_real_app_config() -> None:
-    """Companion to the xfail test above, using the SAME App() construction
-    app.py actually uses (`analytics_reporting=True`), unlike
-    `synth_template()`'s bare `cdk.App()`. This is what really keeps
-    cfn-lint's E1001 satisfied today, given this task adds no Resources of
-    its own. Task 3 should delete or invert this test in the same commit
-    that flips `analytics_reporting` to False in app.py."""
+def test_no_cdk_metadata_via_real_app_config() -> None:
+    """Companion to the test above, using the SAME App() construction
+    app.py actually uses (`analytics_reporting=False`, post-Task-3), unlike
+    `synth_template()`'s bare `cdk.App()`. Inverted from its Task 2
+    predecessor (`test_cdk_metadata_present_via_real_app_config`, which
+    asserted CDKMetadata WAS present under the old `analytics_reporting=
+    True` workaround): now that the stack has genuine Resources
+    (Network/Database), app.py no longer needs the workaround, and this
+    proves the real app.py invocation stays E1001-clean without it."""
     import aws_cdk as cdk
     from aws_cdk.assertions import Template
 
     from fde_cdk.stack import FdePlatformStack
 
-    app = cdk.App(analytics_reporting=True)
+    app = cdk.App(analytics_reporting=False)
     stack = FdePlatformStack(app, "FdePlatform")
     resource_types = {
         r["Type"] for r in Template.from_stack(stack).to_json().get("Resources", {}).values()
     }
-    assert "AWS::CDK::Metadata" in resource_types
+    assert "AWS::CDK::Metadata" not in resource_types
+    assert resource_types  # E1001 guard: Resources section must be non-empty

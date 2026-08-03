@@ -109,45 +109,70 @@ where it does.
 |---|---|
 | `app.py` | CDK app entry point (`uv run python app.py`); builds `FdePlatformStack` and calls `app.synth()` with an explicit `outdir="cdk.out"` |
 | `cdk.json` | Tells any CDK tooling how to run the app: `{"app": "uv run python app.py"}` |
-| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; later tasks add constructs to this stack, not new stacks |
+| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; wires the `Network` and `Database` constructs (and later tasks' constructs) into itself, not new stacks |
+| `fde_cdk/network.py` | `Network` — the one VPC (2 AZ, 1 NAT, public + private-with-egress) everything else attaches to |
+| `fde_cdk/database.py` | `Database` — the Aurora PostgreSQL (pgvector) cluster, tier-switched between Serverless v2 (demo) and provisioned `db.r6g.xlarge` (production) via `Fn::If` on `is_production` |
 | `tests/test_synth.py` | `synth_template()` helper (imported by later tasks' tests) plus the two contract tests: synthesizes, and never touches CDK-bootstrap assets |
+| `tests/test_network_db.py` | VPC topology, Aurora engine/snapshot-policy, and secret-shape tests for `Network`/`Database` |
 
-## A currently-expected quirk: `analytics_reporting=True`
+## A quirk resolved in Task 3: `analytics_reporting`
 
-`app.py` passes `analytics_reporting=True` to `cdk.App(...)`. The Node `cdk`
-CLI turns this on by default, which is where CDK's standard (harmless,
-asset-free) `AWS::CDK::Metadata` resource normally comes from. Since this
-project bypasses that CLI entirely, it defaults to off — and a template with
-literally zero resources fails CloudFormation's own schema (`cfn-lint`
-E1001, "'Resources' is a required property").
+Through Task 2, `app.py` passed `analytics_reporting=True` to `cdk.App(...)`
+as a workaround: the Node `cdk` CLI turns this on by default, which is where
+CDK's standard (harmless, asset-free) `AWS::CDK::Metadata` resource normally
+comes from, and this project bypasses that CLI entirely (so it defaults to
+off). A template with literally zero resources fails CloudFormation's own
+schema (`cfn-lint` E1001, "'Resources' is a required property"), and Task 2's
+`Parameters`/`Conditions`/`Mappings`-only template had exactly that problem —
+those are separate template sections from `Resources`.
 
-Task 2 (parameters, conditions, the region mapping) does **not** remove this
-need: `Parameters`/`Conditions`/`Mappings` are separate template sections
-from `Resources`, so a parameters-only template still has an empty
-`Resources` section without this flag. The flag stays `True` until a later
-task's first real construct (network/database, task 3) gives the stack a
-genuine resource — `tests/test_params.py::test_no_cdk_metadata_resource` is
-an `xfail(strict=False)` forcing-function test that should be un-xfailed (and
-this flag flipped to `False`) in that same commit.
-`test_cdk_metadata_present_via_real_app_config` in the same file documents
-today's actual state precisely, since `tests/test_synth.py`'s
-`synth_template()` helper builds its own bare `cdk.App()` and therefore never
-exercises this flag at all — only the real `app.py` invocation does.
+Task 3's `Network`/`Database` constructs give the stack its first genuine
+resources, so the workaround is no longer needed: `app.py` no longer passes
+`analytics_reporting` at all (its default is already `False`). The forcing
+functions that tracked this — `tests/test_params.py::test_no_cdk_metadata_resource`
+(was `xfail(strict=False)`, now a plain passing assertion) and
+`test_cdk_metadata_present_via_real_app_config` (inverted into
+`test_no_cdk_metadata_via_real_app_config`, which now proves the real
+`app.py` invocation stays clean *without* the flag) — were both resolved in
+the same commit that added `network.py`/`database.py`.
 
-## Another currently-expected quirk: unused-parameter/condition/mapping warnings
+## Unused-parameter/condition/mapping warnings — still expected, narrower
 
-Task 2 creates the full `Parameters`/`Conditions`/`Mappings` click surface
-before any construct exists to consume it (that's tasks 3–7). `cfn-lint`
-correctly flags this as suspicious: `W2001` (parameter never referenced),
-`W8001` (condition never referenced), `W7001` (mapping never referenced).
-These are genuine warnings about a template that is, right now, deliberately
-incomplete — not a false positive to silence structurally the way `E1001`
-was. `cfn-lint` is invoked with `-i W2001 W7001 W8001` to ignore exactly
-those three rule IDs and nothing else; every other rule (including all `E`
-rules) still gates the build. As tasks 3–7 wire each parameter/condition/
-mapping into a real resource (`is_production` into the database construct's
-removal policy, `AssetsRegionMap` into the migration Lambda's code location,
-etc.), the warning for that specific entity disappears on its own — the
-`-i` list does not need to shrink, but it's worth deleting once every
-parameter, condition, and the mapping all have a real consumer (verify with
-a bare `cfn-lint cdk.out/FdePlatform.template.json`, no `-i`, going clean).
+Task 2 created the full `Parameters`/`Conditions`/`Mappings` click surface
+before any construct existed to consume it. `cfn-lint` correctly flags this
+as suspicious: `W2001` (parameter never referenced), `W8001` (condition
+never referenced), `W7001` (mapping never referenced). These are genuine
+warnings about a template that is, right now, deliberately incomplete — not
+a false positive to silence structurally the way `E1001` was. `cfn-lint` is
+invoked with `-i W2001 W7001 W8001` to ignore exactly those three rule IDs
+and nothing else; every other rule (including all `E` rules) still gates the
+build.
+
+Task 3 wires `deploy_tier`/`is_production` into the database construct
+(`DBInstanceClass` and `DeletionProtection`, both `Fn::If`'d on
+`IsProduction`), which is the first entity in any of these three rules to
+gain a real consumer. Verified with a bare `cfn-lint
+cdk.out/FdePlatform.template.json` (no `-i`) before and after this task:
+
+| Rule | Before Task 3 | After Task 3 |
+|---|---|---|
+| `W2001` (param unused) | 7 (`ModelId`, `CompatBaseUrl`, `EmbedProvider`, `EmbedModelId`, `AdminEmail`, `ReleaseTag`, `AssetsBucket`) | 7 — unchanged |
+| `W8001` (condition unused) | 3 (`IsProduction`, `IsBedrockModel`, `HasProviderKey`) | 2 (`IsProduction` dropped) |
+| `W7001` (mapping unused) | 1 (`AssetsRegionMap`) | 1 — unchanged |
+
+`DeployTier`, `ModelProvider`, and `ProviderApiKey` were never in the `W2001`
+list even in Task 2: cfn-lint's `Ref` scan already counted them "used" via
+their own (otherwise-unconsumed) `CfnCondition` expressions
+(`IsProduction`/`IsBedrockModel`/`HasProviderKey`), which is a materially
+different check from `W8001`'s "is this *condition* used by a resource or
+`Fn::If`" — so wiring `is_production` into a resource could only ever move
+the `W8001` count, not `W2001`'s. `AssetsRegionMap` (`W7001`) and the other
+two conditions (`W8001`) stay unconsumed until later tasks (the migration
+Lambda's code location, the model-provider/API-key secrets) reach them.
+
+Since every one of the three rule IDs still fires at least once, **the
+`-i` list does not shrink this task** — removing any of the three would
+break `cdk-lint` in CI. Revisit the bare-lint check after each of tasks
+4–7 lands its constructs; delete a rule ID from the `-i` list (both here and
+in `.github/workflows/ci.yml`) only once a bare run shows zero remaining
+occurrences of it.
