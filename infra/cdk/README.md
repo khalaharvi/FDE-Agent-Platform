@@ -109,11 +109,14 @@ where it does.
 |---|---|
 | `app.py` | CDK app entry point (`uv run python app.py`); builds `FdePlatformStack` and calls `app.synth()` with an explicit `outdir="cdk.out"` |
 | `cdk.json` | Tells any CDK tooling how to run the app: `{"app": "uv run python app.py"}` |
-| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; wires the `Network` and `Database` constructs (and later tasks' constructs) into itself, not new stacks |
+| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; wires the `Network`, `Database`, `Identity`, and `IamRoles` constructs (and later tasks' constructs) into itself, not new stacks, in that fixed order |
 | `fde_cdk/network.py` | `Network` — the one VPC (2 AZ, 1 NAT, public + private-with-egress) everything else attaches to |
 | `fde_cdk/database.py` | `Database` — the Aurora PostgreSQL (pgvector) cluster, tier-switched between Serverless v2 (demo) and provisioned `db.r6g.xlarge` (production) via `Fn::If` on `is_production` |
+| `fde_cdk/identity.py` | `Identity` — one Cognito user pool: admin-seeded human login (`console_client`, hosted UI, auth-code grant), a stable JWT audience (`api_client`), and a client-credentials M2M client scoped to `gateway/invoke` (`m2m_client`) |
+| `fde_cdk/iam_roles.py` | `IamRoles` — every execution role, rendered from the repo's own checked-in IAM policy JSON (`packages/fde-agents/.../deploy/iam/*.json`, `packages/fde-gate/.../deploy/iam/*.json`) via `_role_from_template`'s `${VAR}` substitution, plus three roles derived from `gateway.py`/`memory.py`'s API calls and the migration Lambda's stated needs (no repo template for those three) |
 | `tests/test_synth.py` | `synth_template()` helper (imported by later tasks' tests) plus the two contract tests: synthesizes, and never touches CDK-bootstrap assets |
 | `tests/test_network_db.py` | VPC topology, Aurora engine/snapshot-policy, and secret-shape tests for `Network`/`Database` |
+| `tests/test_identity_iam.py` | Cognito pool/client/domain/resource-server shape, IAM role trust/permissions substitution, and the fixed `fde-gate-service` function-name tests for `Identity`/`IamRoles` |
 
 ## A quirk resolved in Task 3: `analytics_reporting`
 
@@ -154,11 +157,11 @@ Task 3 wires `deploy_tier`/`is_production` into the database construct
 gain a real consumer. Verified with a bare `cfn-lint
 cdk.out/FdePlatform.template.json` (no `-i`) before and after this task:
 
-| Rule | Before Task 3 | After Task 3 |
-|---|---|---|
-| `W2001` (param unused) | 7 (`ModelId`, `CompatBaseUrl`, `EmbedProvider`, `EmbedModelId`, `AdminEmail`, `ReleaseTag`, `AssetsBucket`) | 7 — unchanged |
-| `W8001` (condition unused) | 3 (`IsProduction`, `IsBedrockModel`, `HasProviderKey`) | 2 (`IsProduction` dropped) |
-| `W7001` (mapping unused) | 1 (`AssetsRegionMap`) | 1 — unchanged |
+| Rule | Before Task 3 | After Task 3 | After Task 4 |
+|---|---|---|---|
+| `W2001` (param unused) | 7 (`ModelId`, `CompatBaseUrl`, `EmbedProvider`, `EmbedModelId`, `AdminEmail`, `ReleaseTag`, `AssetsBucket`) | 7 — unchanged | 6 (`AdminEmail` dropped — `Identity` reads `params.admin_email.value_as_string` to seed the Cognito admin user) |
+| `W8001` (condition unused) | 3 (`IsProduction`, `IsBedrockModel`, `HasProviderKey`) | 2 (`IsProduction` dropped) | 2 — unchanged |
+| `W7001` (mapping unused) | 1 (`AssetsRegionMap`) | 1 — unchanged | 1 — unchanged |
 
 `DeployTier`, `ModelProvider`, and `ProviderApiKey` were never in the `W2001`
 list even in Task 2: cfn-lint's `Ref` scan already counted them "used" via
@@ -171,8 +174,13 @@ two conditions (`W8001`) stay unconsumed until later tasks (the migration
 Lambda's code location, the model-provider/API-key secrets) reach them.
 
 Since every one of the three rule IDs still fires at least once, **the
-`-i` list does not shrink this task** — removing any of the three would
-break `cdk-lint` in CI. Revisit the bare-lint check after each of tasks
-4–7 lands its constructs; delete a rule ID from the `-i` list (both here and
-in `.github/workflows/ci.yml`) only once a bare run shows zero remaining
-occurrences of it.
+`-i` list does not shrink after Task 3 or Task 4** — removing any of the
+three would break `cdk-lint` in CI. Task 4's `Identity`/`IamRoles`
+constructs consume `AdminEmail` (moving the `W2001` count from 7 to 6, see
+table above) but touch none of the `W8001` conditions or the `W7001`
+mapping — those are read by later tasks (the migration Lambda's code
+location for `AssetsRegionMap`/`W7001`; the model-provider/API-key secrets
+for `IsBedrockModel`/`HasProviderKey`/`W8001`). Revisit the bare-lint check
+after each of tasks 5–7 lands its constructs; delete a rule ID from the
+`-i` list (both here and in `.github/workflows/ci.yml`) only once a bare
+run shows zero remaining occurrences of it.

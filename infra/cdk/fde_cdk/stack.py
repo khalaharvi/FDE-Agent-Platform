@@ -4,6 +4,8 @@ import aws_cdk as cdk
 from constructs import Construct
 
 from fde_cdk.database import Database
+from fde_cdk.iam_roles import IamRoles
+from fde_cdk.identity import Identity
 from fde_cdk.network import Network
 from fde_cdk.params import add_launch_params
 
@@ -29,3 +31,16 @@ class FdePlatformStack(cdk.Stack):
         # `self.network.vpc`.
         self.network = Network(self, "Network")
         self.database = Database(self, "Database", params=self.params, vpc=self.network.vpc)
+
+        # Identity (Cognito) has no dependency on Database -- it only reads
+        # `params.admin_email` -- but comes after it anyway to match the
+        # brief's fixed construct order (Network -> Database -> Identity ->
+        # IamRoles), so the order every later task documents the stack by
+        # is the same order the constructor actually builds it in.
+        self.identity = Identity(self, "Identity", params=self.params)
+        self.iam_roles = IamRoles(
+            self,
+            "IamRoles",
+            db_secret=self.database.secret,
+            db_cluster=self.database.cluster,
+        )
