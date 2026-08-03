@@ -61,6 +61,34 @@ def engagement(seed: dict[str, Any]) -> str:
 
 
 @pytest.fixture
+def registered_source(engagement: str, sql: Any) -> int:
+    """A source on this engagement whose two chunks are the document.
+
+    Needed because the source-fed path is the one where the snapshot has to
+    keep something: with a pasted transcript there is nothing to identify the
+    launch by once `material` is elided.
+    """
+    rows = sql(
+        """
+        INSERT INTO kg.source (engagement_id, source_kind, title, captured_at, captured_by)
+        VALUES (%(eng)s::uuid, 'interview', 'RevOps interview', now(), %(by)s)
+        RETURNING source_id
+        """,
+        {"eng": engagement, "by": SME},
+    )
+    source_id = int(rows[0]["source_id"])
+    for ordinal, content in enumerate((TRANSCRIPT, "The deal desk analyst owns it."), start=1):
+        sql(
+            """
+            INSERT INTO kg.chunk (engagement_id, source_id, ordinal, content, anchor_keys)
+            VALUES (%(eng)s::uuid, %(sid)s, %(ord)s, %(content)s, ARRAY['act.x'])
+            """,
+            {"eng": engagement, "sid": source_id, "ord": ordinal, "content": content},
+        )
+    return source_id
+
+
+@pytest.fixture
 def runtime_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FDE_RUNTIME_ARN_ENGAGEMENT", ENGAGEMENT_ARN)
     get_gate_settings.cache_clear()
@@ -107,6 +135,21 @@ def _launches(sql: Any, engagement_id: str) -> list[dict[str, Any]]:
         """,
         {"eng": engagement_id},
     )
+
+
+def _launch_row(body: str, engagement_id: str) -> str:
+    """The one `<tr>` of the launches table belonging to this engagement.
+
+    `/ui/runs` lists launches across every engagement, so an assertion against
+    the whole page is an assertion about whatever else the suite has left in
+    the table. That is survivable for a positive claim and wrong for a
+    negative one -- "the queued row does not say `nothing has reported back`"
+    is false the moment another test's running row is on screen, and it was.
+    Slicing to the row is what makes both directions mean what they say.
+    """
+    marker = body.index(engagement_id)
+    start = body.rindex("<tr>", 0, marker)
+    return body[start : body.index("</tr>", marker)]
 
 
 async def _launch(engagement_id: str, executor: Any, *, principal: str = SME) -> dict[str, Any]:
@@ -353,6 +396,42 @@ async def test_the_transcript_is_counted_not_stored(engagement: str, sql: Any) -
 
 
 @pytest.mark.requires_db
+@pytest.mark.usefixtures("runtime_configured")
+async def test_a_source_fed_launch_keeps_which_document_and_drops_the_text(
+    engagement: str, registered_source: int, sql: Any
+) -> None:
+    """The two halves of `_resolve_material`'s output land on opposite sides
+    of the snapshot rule, and both sides matter.
+
+    That function reads a registered source's chunks into `material` AND
+    re-attaches `source_id` alongside them, precisely so "which document was
+    this?" stays answerable. Elide `material` without keeping `source_id` and
+    the record degrades to "somebody ingested 97 characters" — unrecognisable
+    among a day's launches, which is the state the whole table exists to
+    prevent. Keep `material` and the record becomes a second copy of evidence
+    that already lives in `kg.chunk` under stricter grants.
+
+    So this pins both: the identifier survives, the document does not.
+    """
+    await agents.launch(
+        SME,
+        agent="engagement",
+        task="ingest_interview",
+        engagement_id=engagement,
+        form={f"{FIELD_PREFIX}source_id": str(registered_source), f"{FIELD_PREFIX}material": ""},
+        executor=_fake_executor(_FakeAgentCore()),
+    )
+
+    (record,) = _launches(sql, engagement)
+    assert record["input"]["source_id"] == registered_source, "which document, still answerable"
+    assert "material" not in record["input"]
+    assert TRANSCRIPT not in str(record["input"]), "the chunks are not copied into the record"
+    # The chunks were read -- the count is of the rejoined document, not of an
+    # empty paste box -- so this is eliding text that really was resolved.
+    assert record["input"]["material_chars"] > len(TRANSCRIPT)
+
+
+@pytest.mark.requires_db
 async def test_the_answers_that_are_choices_are_kept_whole(
     engagement: str, sql: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -472,9 +551,36 @@ async def test_the_runs_page_says_what_a_running_launch_does_and_does_not_mean(
     )
 
     page = await ui.runs_page(Request(method="GET", path="/ui/runs", principal=SME))
-    body = " ".join(str(page.body).split())
-    assert "nothing has reported back yet" in body
-    assert "the request that was waiting for it is gone" in body
+    row = _launch_row(" ".join(str(page.body).split()), engagement)
+    assert "nothing has reported back yet" in row
+    assert "the request that was waiting for it is gone" in row
+
+
+@pytest.mark.requires_db
+@pytest.mark.usefixtures("runtime_configured")
+async def test_the_runs_page_explains_a_queued_launch_too(engagement: str, sql: Any) -> None:
+    """`queued` is a small window, not a dead branch.
+
+    The row is committed as `queued` and flipped to `running` in a second
+    transaction, so a process that dies between them leaves one -- accurately,
+    since nothing was dispatched. That window is narrow enough that no test
+    reaches it by racing, and rare enough that the operator who does see it
+    has never seen it before. It is exactly the row that needs a sentence, so
+    the state is forced here the way the `running` case above forces its own.
+    """
+    await _launch(engagement, _fake_executor(_FakeAgentCore()))
+    sql(
+        "UPDATE wf.agent_launch SET status='queued', completed_at=NULL, "
+        "runtime_session_id=NULL WHERE engagement_id = %(eng)s::uuid",
+        {"eng": engagement},
+    )
+
+    page = await ui.runs_page(Request(method="GET", path="/ui/runs", principal=SME))
+    row = _launch_row(" ".join(str(page.body).split()), engagement)
+    assert "accepted, not yet dispatched" in row
+    # And it does not borrow the running row's sentence, which would tell the
+    # operator to go looking for an agent that was never invoked.
+    assert "nothing has reported back yet" not in row
 
 
 @pytest.mark.requires_db
