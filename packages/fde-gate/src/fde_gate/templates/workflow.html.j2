@@ -1,0 +1,117 @@
+{% extends "base.html.j2" %}
+{% block title %}{{ workflow.title }}{% endblock %}
+{% block content %}
+<h1>{{ workflow.title }}</h1>
+<p>
+  <span class="pill">{{ workflow.status }}</span>
+  <span class="muted">
+    {{ workflow.slug }} v{{ workflow.version }} &middot; {{ workflow.root_process_key }} &middot;
+    autonomy {{ workflow.autonomy_level }} &middot;
+    runnable by {{ workflow.runnable_by | join(", ") or "anyone in product ops" }}
+  </span>
+</p>
+<p class="muted">
+  Pinned to commit {{ workflow.pinned_commit_id }}{% if workflow.pinned_digest %} &middot;
+  <code>{{ workflow.pinned_digest }}</code>{% endif %} &middot;
+  authored by {{ workflow.authored_by }}{% if workflow.published_by %} &middot;
+  published by {{ workflow.published_by }} at {{ workflow.published_at }}{% endif %}
+</p>
+{% if workflow.description %}<p>{{ workflow.description }}</p>{% endif %}
+
+<p><a href="/api/workflows/{{ workflow.workflow_id }}/playbook.md">Export this
+  playbook as Markdown</a> — the same document, plain Markdown, for a vault or a
+  wiki.</p>
+
+<h2>Process context</h2>
+{% if not process_flow %}
+  <p class="empty">The graph records no activities under
+    {{ workflow.root_process_key }}. Each step's grounding is listed with the step.</p>
+{% else %}
+{# Read from the CURRENT graph, not the pinned commit, and labelled as such:
+   the steps below are frozen and this table is not, and a reader who assumes
+   one vintage for both is eventually wrong about something that matters. #}
+<p class="muted">The process as the graph records it <strong>today</strong>. The
+  steps below are frozen to the pinned commit.</p>
+<table>
+  <tr><th>#</th><th>Activity</th><th>Performed by</th><th>Gated by</th>
+      <th>Recorded in</th><th>Followed by</th></tr>
+  {% for a in process_flow %}
+  <tr>
+    <td>{{ a.ordinal }}</td>
+    <td>{{ a.label }}<div class="muted">{{ a.activity_key }}</div></td>
+    <td class="muted">{{ a.performed_by | sort | join(", ") or "—" }}</td>
+    <td class="muted">{{ a.gated_by | sort | join(", ") or "—" }}</td>
+    <td class="muted">{{ a.records_to | sort | join(", ") or "—" }}</td>
+    <td class="muted">{{ a.next_keys | sort | join(", ") or "—" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Steps</h2>
+{% if not steps %}
+  <p class="empty">This workflow has no steps.</p>
+{% endif %}
+{% for s in steps %}
+<fieldset>
+  <legend>{{ s.ordinal }}. {{ s.title }} <span class="pill">{{ s.kind }}</span></legend>
+  <p class="muted">
+    {{ s.step_key }} &middot;
+    {% if s.requires_human %}<strong>requires a human</strong>{% else %}may run unattended{% endif %}
+    &middot; on failure: {{ s.on_failure }}
+    {% if s.tool_name %}&middot; tool {{ s.tool_name }}{% endif %}
+    {% if s.sor_adapter_key %}&middot; adapter {{ s.sor_adapter_key }}{% endif %}
+    {% if s.sor_write_op %}&middot; write {{ s.sor_write_op }}{% endif %}
+  </p>
+  <p>{{ s.instruction }}</p>
+  {% if s.human_prompt %}
+    <p><strong>Ask the operator:</strong> {{ s.human_prompt }}</p>
+  {% endif %}
+  {% if s.human_schema %}
+    <p class="muted">Expected answer shape: <code>{{ s.human_schema | tojson }}</code></p>
+  {% endif %}
+  {% if s.kind == "decision" %}
+    <strong>Branches</strong>
+    {% if s.branches %}
+      <pre>{{ s.branches | tojson(indent=2) }}</pre>
+    {% else %}
+      <p class="overdue">No branches are defined. A decision step with no branches
+        halts the run when it is reached.</p>
+    {% endif %}
+  {% endif %}
+
+  <strong>Grounded in</strong>
+  {% if s.bindings %}
+  <table>
+    <tr><th>Relation</th><th>Element</th><th>Label at pin time</th></tr>
+    {% for b in s.bindings %}
+    <tr>
+      <td>{{ b.relation }}</td>
+      <td>{{ b.subject_kind }} <code>{{ b.subject_key }}</code></td>
+      <td class="muted">{{ b.pinned_label or "—" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% elif s.kind == "notify" %}
+    <p class="muted">No grounding required: notify steps are exempt from the
+      faithfulness check.</p>
+  {% else %}
+    <p class="overdue">No grounding recorded. A step that cites no graph element
+      cannot be published — add a binding to the element this step implements.</p>
+  {% endif %}
+</fieldset>
+{% endfor %}
+
+{% if workflow.status in ("draft", "review") %}
+<h2>Publish</h2>
+<p class="muted">Publishing freezes this workflow against its pinned commit and
+  makes it runnable. It is refused unless every non-notify step cites a graph
+  element that is live at that commit.</p>
+<form method="post" action="/ui/workflows/{{ workflow.workflow_id }}/publish">
+  <button type="submit">Publish this workflow</button>
+</form>
+{% elif workflow.status == "published" %}
+<h2>Run</h2>
+<p><a href="/ui/runs">Start a run of this workflow</a></p>
+{% endif %}
+{% endblock %}

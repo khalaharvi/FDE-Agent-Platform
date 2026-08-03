@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import re
 from http import HTTPStatus
 from typing import Any
 
@@ -83,6 +84,22 @@ def _limit(request: Request, default: int = 100) -> int:
 
 def _flag(request: Request, key: str) -> bool:
     return request.query.get(key) in ("1", "true", "yes")
+
+
+_UNSAFE_IN_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _playbook_filename(playbook: dict[str, Any]) -> str:
+    """A vault-friendly filename built from the workflow's slug and version.
+
+    The slug is agent-authored text on its way into a `Content-Disposition`
+    header, where a quote or a newline would let it break out of the header
+    value. Everything outside `[A-Za-z0-9._-]` collapses to a hyphen, so the
+    worst a hostile slug can produce is an ugly filename.
+    """
+    workflow = playbook["workflow"]
+    slug = _UNSAFE_IN_FILENAME.sub("-", str(workflow["slug"])).strip("-") or "workflow"
+    return f"{slug}-v{int(workflow['version'])}.md"
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +186,24 @@ async def get_workflow(request: Request) -> Response:
     if "error" in result:
         return Response.json(result, status=HTTPStatus.NOT_FOUND)
     return Response.json(result)
+
+
+async def get_playbook(request: Request) -> Response:
+    """The workflow as Markdown -- the file an operator drops into a vault.
+
+    Served as an attachment named after the slug and version rather than as
+    `playbook.md` for every workflow, because the destination is a folder of
+    other people's playbooks, and `playbook (3).md` is not a document anyone
+    can find again.
+    """
+    result = await workflows.get_playbook(request.param_int("workflow_id"))
+    if "error" in result:
+        return Response.json(result, status=HTTPStatus.NOT_FOUND)
+    return Response(
+        body=str(result["markdown"]),
+        content_type="text/markdown; charset=utf-8",
+        headers={"content-disposition": f'attachment; filename="{_playbook_filename(result)}"'},
+    )
 
 
 async def post_publish(request: Request) -> Response:
@@ -296,7 +331,7 @@ async def post_triage(request: Request) -> Response:
 
 
 def build_router() -> Router:
-    """The whole HTTP surface: 18 JSON routes plus the console."""
+    """The whole HTTP surface: 19 API routes (18 JSON, 1 Markdown) plus the console."""
     router = Router()
 
     router.get("/healthz", healthz)
@@ -310,6 +345,7 @@ def build_router() -> Router:
 
     router.get("/api/workflows", list_workflows)
     router.get("/api/workflows/{workflow_id}", get_workflow)
+    router.get("/api/workflows/{workflow_id}/playbook.md", get_playbook)
     router.post("/api/workflows/{workflow_id}/publish", post_publish)
     router.post("/api/workflows/{workflow_id}/runs", post_run)
 
