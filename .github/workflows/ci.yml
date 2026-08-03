@@ -73,8 +73,23 @@ jobs:
         # reviewer checked a proposal against, and the platform's central
         # guarantee is gone. Asserted here rather than trusted.
         #
-        # The first eight are the original set and are not to be edited --
-        # they are the four-layer invariant itself. The twelve after them
+        # The first eight are the original set: they are the four-layer
+        # invariant itself, and their roles, targets and claims are not to be
+        # edited. On 2026-08-03 three of them had their statement SHAPE --
+        # and only that -- rewritten, because a guard that cannot detect the
+        # break it guards is not a guard. Each of the three still failed
+        # after the privilege it asserts had been granted, so assert_denied
+        # would have printed "ok" straight through a broken invariant: the
+        # kg.node INSERT named commit_id 1, which no database has ever had
+        # (rebuild.sh's smoke test consumes the identity values and rolls
+        # back, so the demo seed's own commits start at 7), and died on
+        # node_commit_id_fkey; the two SECURITY DEFINER calls pass a proposal
+        # and a workflow id that do not exist, so the body raises "not found"
+        # even for a caller that holds EXECUTE. All three now match no rows,
+        # which leaves the privilege as the only thing left to fail on. The
+        # standard they were held to, and that any new line should be held
+        # to, is both directions: denied for the role under test, and
+        # SUCCEEDING once the privilege is granted. The twelve after them
         # guard the reviewer roster (db/016): the console may administer it,
         # nothing else may touch it, and even the console may only write the
         # columns db/016 names. The last five guard evidence intake
@@ -91,13 +106,13 @@ jobs:
               echo "ok: $1 denied -- ${2:0:60}"
             fi
           }
-          assert_denied fde_agent "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) VALUES (gen_random_uuid(),'x','activity','x',1);"
-          assert_denied fde_agent "SELECT hitl.merge_proposal(1,'x');"
+          assert_denied fde_agent "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) SELECT gen_random_uuid(),'x','activity','x',1 WHERE false;"
+          assert_denied fde_agent "SELECT hitl.merge_proposal(1,'x') WHERE false;"
           assert_denied fde_agent "UPDATE wf.workflow SET status='published';"
           assert_denied fde_agent "UPDATE trn.trace_session SET outcome='accepted';"
           assert_denied fde_rl_rollout "INSERT INTO hitl.proposal (engagement_id,title,rationale,authored_by,agent_name) VALUES (gen_random_uuid(),'t','r','a','engagement');"
           assert_denied fde_rl_rollout "UPDATE trn.trace_session SET outcome='accepted';"
-          assert_denied fde_agent "SELECT wf.publish_workflow(1,'x');"
+          assert_denied fde_agent "SELECT wf.publish_workflow(1,'x') WHERE false;"
           assert_denied fde_prodops "UPDATE wf.workflow SET status='published';"
 
           # The reviewer roster decides who may clear a gate. An agent that
@@ -123,9 +138,12 @@ jobs:
           # invariant is already broken.
           #
           # The INSERTs select literals rather than reading the target the
-          # way db/017's pair below does, because fde_prodops and
-          # fde_rl_rollout hold no SELECT on the roster at all -- that form
-          # would have them denying for the wrong reason.
+          # way db/017's pair below does, because that form would leave two
+          # of these roles denying for the wrong reason: fde_prodops holds no
+          # SELECT on the roster tables, and fde_rl_rollout cannot reach them
+          # at all -- db/012:55 revokes schema hitl from it outright, which is
+          # the barrier its line actually hits and why that one denies on the
+          # schema rather than on the table.
           assert_denied fde_agent "INSERT INTO hitl.reviewer (principal,display_name) SELECT 'x','x' WHERE false;"
           assert_denied fde_agent "UPDATE hitl.reviewer SET is_active = true WHERE false;"
           assert_denied fde_agent "INSERT INTO hitl.reviewer_authority (reviewer_id,engagement_id,gate_kind,granted_by) SELECT 1,gen_random_uuid(),'control','x' WHERE false;"
