@@ -22,6 +22,7 @@ fde-engagement = "fde_agents.engagement.agent:main"
 fde-workflow = "fde_agents.workflow.agent:main"
 fde-development = "fde_agents.development.agent:main"
 fde-agents-deploy = "fde_agents.deploy.cli:main"
+fde-agents-local = "fde_agents.local_runner:main"
 
 [build-system]
 requires = ["hatchling"]
