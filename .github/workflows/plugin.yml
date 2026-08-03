@@ -1,0 +1,56 @@
+name: Plugin
+
+# claude-plugin/fde-operator is the Claude Code plugin this repo ships. There
+# is no pytest harness for plugins, so check_plugin.py is the whole gate: every
+# JSON file parses, command and skill frontmatter parses as YAML, the files the
+# manifest promises are present, the tool counts in plugin prose match
+# fde-mcp's registrations, and every repository path cited in a plugin file
+# still exists. That last check is the one that rots -- a command pointing at a
+# moved file sends a fresh session somewhere that is not there.
+#
+# Deliberately not a required check, for a different reason than docs.yml's: a
+# paths-filtered workflow does not start at all on a pull request that touches
+# nothing under claude-plugin/, and a check that never starts never reports, so
+# requiring it would leave every unrelated PR blocked on a pending status.
+# Read it on the PRs where it runs.
+on:
+  pull_request:
+    paths:
+      - "claude-plugin/**"
+      - ".claude-plugin/**"
+      # check_plugin.py counts fde-mcp's tool registrations and resolves the
+      # repository paths the plugin cites, so a tool added, removed or moved
+      # there is exactly what makes a plugin file wrong -- and it happens in a
+      # PR that touches no plugin file at all.
+      - "packages/fde-mcp/**"
+      - ".github/workflows/plugin.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: validate plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # From .python-version rather than a literal, so the plugin check cannot
+      # drift onto a different interpreter than the rest of the repo.
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      # The script's only third-party import. It is deliberately not a
+      # workspace dependency: check_plugin.py is a standalone checker invoked
+      # with python3, not through uv, so this job never syncs the venv.
+      - name: install pyyaml
+        run: pip install pyyaml
+
+      - name: check plugin
+        run: python3 claude-plugin/fde-operator/scripts/check_plugin.py
