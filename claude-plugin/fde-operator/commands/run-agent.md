@@ -15,6 +15,11 @@ naming the valid ones:
 | `engagement` | `map_process`, `score_opportunities`, `detect_bottlenecks`, `ingest_interview` |
 | `workflow` | `author_workflow`, `monitor_drift`, `triage_drift`, `reauthor_stale` |
 
+The `development` agent is omitted deliberately, matching the console launcher
+(`packages/fde-gate/src/fde_gate/service/agents.py`): its tasks author agents,
+which is an engineering surface run from a terminal, not product-operations
+work. Do not add it here.
+
 Do this:
 
 1. `kg_head_commit(engagement_id)` and report the commit id — it is the base the

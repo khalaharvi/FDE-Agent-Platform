@@ -110,9 +110,24 @@ def check_plugin_name() -> None:
     manifest = PLUGIN / ".claude-plugin/plugin.json"
     if not manifest.is_file():
         return
-    name = json.loads(manifest.read_text()).get("name")
+    plugin = json.loads(manifest.read_text())
+    name = plugin.get("name")
     if name != PLUGIN.name:
         fail(".claude-plugin/plugin.json", f"name {name!r} != directory {PLUGIN.name!r}")
+
+    # Three files declare this plugin's version -- plugin.json, the MCPB
+    # manifest, and the marketplace entry (checked in check_marketplace). They
+    # ship as one artifact, so a bumped version that reaches only one of them
+    # means Claude Code and Claude Desktop advertise different releases of the
+    # same thing.
+    bundle = PLUGIN / "mcpb/manifest.json"
+    if bundle.is_file():
+        bundled = json.loads(bundle.read_text()).get("version")
+        if bundled != plugin.get("version"):
+            fail(
+                "mcpb/manifest.json",
+                f"version {bundled!r} != plugin.json {plugin.get('version')!r}",
+            )
 
 
 def check_marketplace() -> None:
@@ -203,6 +218,7 @@ def main() -> int:
         f"json parses ({len(JSON_FILES)} files)",
         "expected files present",
         "marketplace entry resolves to this plugin",
+        "version agrees across plugin.json / mcpb / marketplace",
         "command + skill frontmatter parses as YAML",
         "every cited repo path exists",
         "no absolute paths or email addresses",

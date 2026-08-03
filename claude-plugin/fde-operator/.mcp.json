@@ -12,7 +12,7 @@
       ],
       "env": {
         "FDE_MCP_TRANSPORT": "stdio",
-        "FDE_DB_DSN": "${FDE_DB_DSN}"
+        "FDE_DB_DSN": "${FDE_DB_DSN:-postgresql:///fde}"
       }
     }
   }

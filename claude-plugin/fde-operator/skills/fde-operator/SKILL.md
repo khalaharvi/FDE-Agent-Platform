@@ -89,9 +89,10 @@ number as a fraction of the total. Then:
    they do, the nodes do not exist and re-anchoring cannot work.
 3. Re-ingest the still-dark passages against the now-live nodes: the console's
    source page has a re-ingest action that carries them into a new source
-   version, re-anchored (`packages/fde-gate/src/fde_gate/intake.py`). Prefer it
-   over re-chunking by hand — it re-runs the same anchor matcher the original
-   intake used. Report the new `source_id` and the new coverage.
+   version, re-anchored (`packages/fde-gate/src/fde_gate/service/sources.py`).
+   Prefer it over re-chunking by hand — it re-runs the same anchor matcher the
+   original intake used (`packages/fde-gate/src/fde_gate/intake.py`). Report the
+   new `source_id` and the new coverage.
 
 ## 3. Getting a proposal made
 
@@ -126,6 +127,11 @@ rejected:
 | `workflow` | `monitor_drift` | `min_severity` (default `medium`) |
 | `workflow` | `triage_drift` | `signal_ids` |
 | `workflow` | `reauthor_stale` | `workflow_id` |
+
+`fde-agents-local` also accepts a third agent, `development`. It is out of scope
+here for the same reason the console launcher omits it
+(`packages/fde-gate/src/fde_gate/service/agents.py`): its tasks author agents —
+an engineering surface, not product-operations work.
 
 **`ingest_interview` takes the transcript inline as `material`, not a
 `source_id`.** It does not read what you ingested in §2 — registering evidence
