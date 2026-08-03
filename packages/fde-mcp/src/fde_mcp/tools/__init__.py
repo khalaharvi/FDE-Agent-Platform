@@ -1,4 +1,4 @@
-"""fde_mcp.tools -- the 21 MCP tool implementations, grouped by concern.
+"""fde_mcp.tools -- the 22 MCP tool implementations, grouped by concern.
 
 `register_all` is the single seam between "a FastMCP instance exists" and
 "it has tools on it" -- server.py calls it once and does not know or care
@@ -21,7 +21,7 @@ __all__ = ["register_all"]
 
 
 def register_all(mcp: FastMCP[None]) -> None:
-    """Register all 21 tools (9 graph, 3 proposal, 3 drift, 3 workflow, 3 evidence)."""
+    """Register all 22 tools (9 graph, 3 proposal, 3 drift, 4 workflow, 3 evidence)."""
     graph.register(mcp)
     proposals.register(mcp)
     drift.register(mcp)
