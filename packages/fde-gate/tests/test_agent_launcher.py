@@ -881,16 +881,17 @@ async def test_a_successful_launch_lands_where_the_outcome_is(
 
 
 @pytest.mark.requires_db
-async def test_the_launcher_says_a_launch_leaves_no_record(
+async def test_the_launcher_says_where_the_launch_is_recorded(
     engagement: str, registered_source: int
 ) -> None:
-    """The wait is the honest weak point of this feature, so the page says so.
+    """The wait is still the honest weak point, so the page still says so.
 
-    A launch writes nothing -- there is no table for one -- and the deployed
-    front door's request limit is shorter than a long task, so the operator
-    can be shown an error for work that is still running. The one thing that
-    makes that survivable is knowing where the outcome shows up instead of
-    launching a second time.
+    What changed with db/018 is the second half of the sentence. The page used
+    to say "Nothing records the launch itself", which was true and left the
+    operator with only the review queue to check. It now names the record --
+    written before dispatch, so it exists even when this page does not come
+    back -- and keeps the caveat that produced it, because the request limit
+    did not go away.
     """
     context = await agents.launcher_context(
         SME, engagement_id=engagement, agent="engagement", task="ingest_interview"
@@ -907,9 +908,11 @@ async def test_the_launcher_says_a_launch_leaves_no_record(
     # Whitespace-normalised: these are claims about the sentences an operator
     # reads, not about where the template happens to wrap them.
     prose = " ".join(page.split())
-    assert "Nothing records the launch itself" in prose
-    assert 'href="/ui"' in prose, "and it links to where the outcome will be"
+    assert "Nothing records the launch" not in prose, "db/018 made that untrue"
+    assert "recorded before it is dispatched" in prose
+    assert 'href="/ui/runs"' in prose, "and it links to the record"
+    assert 'href="/ui"' in prose, "and to where the proposal will be"
+    # The gateway-timeout caveat stays. It is why the record exists.
     assert "errors here while the agent keeps running on the server" in prose
-    assert "whatever it proposes still arrives there" in prose
     # No invented timeout number -- the honesty rule's register.
     assert not re.search(r"\b\d+\s*(seconds|minutes|s)\b", prose)

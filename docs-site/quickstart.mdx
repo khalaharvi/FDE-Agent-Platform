@@ -4,7 +4,7 @@ description: "Clone to green tests and a running review console in about ten min
 ---
 
 This walkthrough takes you from a fresh clone to a fully verified local
-installation: schema built, 804 of 814 tests green with the rest skipped by
+installation: schema built, 857 of 867 tests green with the rest skipped by
 design, and the human review console running in your browser. Nothing here
 requires an AWS account.
 
@@ -73,7 +73,7 @@ you bring your own Postgres.
   </Step>
 
   <Step title="Build the schema">
-    Applies all 17 migrations to an empty database, then runs the 25-test SQL
+    Applies all 18 migrations to an empty database, then runs the 25-test SQL
     smoke suite — the same gate CI runs.
 
     <CodeGroup>
@@ -106,10 +106,10 @@ you bring your own Postgres.
     uv run pytest packages
     ```
 
-    814 tests collect. The tail you should see is:
+    867 tests collect. The tail you should see is:
 
     ```text
-    804 passed, 10 skipped
+    857 passed, 10 skipped
     ```
 
     Those 10 are skipped by design: nine need the optional `train` extra, which
@@ -149,7 +149,7 @@ else. [Your first merge](/first-merge) is what fills it.
 
 ## What you just verified
 
-- 17 migrations apply cleanly, in order, on an empty database.
+- 18 migrations apply cleanly, in order, on an empty database.
 - The core invariant holds: the smoke suite includes a merge attempted before
   gates clear (refused), an unauthorized approval (ignored), and a full
   review → edit → merge → training-label pass.

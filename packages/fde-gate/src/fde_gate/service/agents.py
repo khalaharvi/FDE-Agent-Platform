@@ -32,19 +32,25 @@ SDK"), and `fde_agents` pulls both. So `AGENT_TASKS` below is a copy, and
 `tests/test_agent_launcher.py::test_task_lists_match_the_agents` imports the
 real ones and fails when this copy falls behind.
 
-Nothing here writes
---------------------
-A launch reads material and dispatches; the agent's own MCP session is what
+The one thing this writes
+--------------------------
+`wf.agent_launch`, and only that -- one row per launch, filed before the
+dispatch and stamped with how it ended (db/018). Everything else about a
+launch still happens elsewhere: the agent's own MCP session is what
 proposes, under `fde_agent`, through the grants db/010 and db/011 already
-draw. This module needs no new privilege, and the invariant is untouched: a
-console launch cannot write the graph any more than a terminal one can.
+draw. The invariant is untouched, and the denial matrix says so from the
+outside: a console launch cannot write the graph any more than a terminal
+one can, and the record it leaves is not a graph fact -- it is the receipt
+for having asked.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
+
+from psycopg.types.json import Jsonb
 
 from fde_gate.config import get_gate_settings
 from fde_gate.executors import AgentExecutor, StepExecutionError, new_runtime_session_id
@@ -65,6 +71,7 @@ __all__ = [
     "TASK_SUMMARY",
     "launch",
     "launcher_context",
+    "list_launches",
     "task_fields",
 ]
 
@@ -544,6 +551,175 @@ async def launcher_context(
 
 
 # ---------------------------------------------------------------------------
+# The launch record (db/018)
+#
+# A launch used to leave nothing behind, and the deployed front door is an
+# API Gateway HTTP API whose integration times out well before the wait
+# below does -- so an operator could be shown an error for work that was
+# still running, with no page anywhere that would later say whether it
+# finished. The row is what makes that survivable. It is filed BEFORE the
+# dispatch, in the transaction that authorised the caller, and stamped
+# afterwards; a launch that dies at the gateway leaves a `running` row,
+# which is the honest reading of "dispatched, and nothing reported back".
+# ---------------------------------------------------------------------------
+
+#: How many launches the console lists at once. Same ceiling `runs.list_runs`
+#: applies, for the same reason -- a page is not an export.
+_MAX_LAUNCHES = 500
+
+#: The field whose value is a document rather than an answer. Every task form
+#: that has one names it `material` (`_ingest_interview_fields`,
+#: `_map_process_fields`), so this is one name and not a per-task rule.
+_BULK_FIELD = "material"
+
+
+def _input_snapshot(task_input: Mapping[str, Any]) -> dict[str, Any]:
+    """What the record keeps of a launch's input: everything but the document.
+
+    `material` is a transcript -- an interview, an SOP, whatever somebody
+    pasted -- and this row is an operational trace, not a second evidence
+    store. Where the text came from a registered source it is already in
+    `kg.chunk`, which is INSERT-only and which the denial matrix keeps that
+    way; copying it here would put the same evidence in two places with two
+    different safety stories, only one of them audited. Where it was pasted,
+    it was never evidence at all -- nothing anchored it and nothing can
+    retrieve it.
+
+    So the key is replaced rather than kept, and replaced by a COUNT rather
+    than by a shortened version of itself. A truncated transcript looks like
+    the transcript and reads like a different one, which is the worst of both
+    -- `material_chars` cannot be mistaken for the text.
+    """
+    snapshot = {key: value for key, value in task_input.items() if key != _BULK_FIELD}
+    material = task_input.get(_BULK_FIELD)
+    if material is not None:
+        snapshot[f"{_BULK_FIELD}_chars"] = len(str(material))
+    return snapshot
+
+
+async def _record_launch(
+    cur: Any,
+    *,
+    actor: str,
+    agent: str,
+    task: str,
+    engagement_id: str,
+    task_input: dict[str, Any],
+) -> int:
+    """File the launch, in the caller's transaction. Returns its id.
+
+    Written inside the transaction that just checked the caller is an active
+    reviewer, which is what makes the `principal` column an attribution
+    rather than a claim: the roster cannot change between the check and the
+    row. db/018 grants no UPDATE on that column to anyone, so it stays one.
+    """
+    await cur.execute(
+        """
+        INSERT INTO wf.agent_launch (engagement_id, agent, task, principal, input)
+        VALUES (%(eng)s::uuid, %(agent)s, %(task)s, %(who)s, %(input)s::jsonb)
+        RETURNING launch_id
+        """,
+        {
+            "eng": engagement_id,
+            "agent": agent,
+            "task": task,
+            "who": actor,
+            "input": Jsonb(_input_snapshot(task_input)),
+        },
+    )
+    row = await fetchone(cur)
+    if row is None:  # pragma: no cover -- RETURNING on a successful INSERT
+        raise GateError(HTTPStatus.INTERNAL_SERVER_ERROR, "the launch record could not be written.")
+    return int(row["launch_id"])
+
+
+async def _mark_dispatched(launch_id: int, session_id: str) -> None:
+    """queued -> running, stamping the session the trace will be under.
+
+    Its own transaction, and that is the whole point of the two-step: the
+    INSERT has to be COMMITTED before the dispatch starts, or the row is
+    invisible for the entire minutes-long window it exists to cover.
+    """
+    async with db.tool_transaction(role=_gate_role()) as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            UPDATE wf.agent_launch
+               SET status = 'running', runtime_session_id = %(sid)s
+             WHERE launch_id = %(lid)s
+            """,
+            {"sid": session_id, "lid": launch_id},
+        )
+
+
+async def _mark_finished(launch_id: int, *, status: str, error: dict[str, Any] | None) -> None:
+    """Stamp how a launch ended. `error` is stored verbatim when there is one.
+
+    Verbatim for `StepExecutionError.detail`'s own reason: docs/10 §2 tells
+    an operator to read the error, and this row is now the only place a
+    timed-out launch's error survives at all.
+    """
+    async with db.tool_transaction(role=_gate_role()) as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            UPDATE wf.agent_launch
+               SET status = %(status)s, error = %(err)s::jsonb, completed_at = now()
+             WHERE launch_id = %(lid)s
+            """,
+            {
+                "status": status,
+                "err": None if error is None else Jsonb(error),
+                "lid": launch_id,
+            },
+        )
+
+
+async def list_launches(*, engagement_id: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """Launches, most recent first. Rendered as a section of `/ui/runs`.
+
+    Fifty by default where `runs.list_runs` takes a hundred, and the
+    difference is deliberate rather than left over: this is the SECOND list on
+    a page whose subject is runs, and each launch row can carry a failure
+    message several lines long. The operator reading it is chasing a launch
+    they made minutes ago, which is at the top either way. The 500 ceiling is
+    the same as the runs list's, for the same reason -- a page is not an
+    export.
+
+    No reviewer check, deliberately, and the asymmetry with `launch` is the
+    point: WRITING a launch record is an act attributed to a person, so it is
+    refused to anyone who is not an active reviewer; READING the list is the
+    same class of fact as `/ui/runs` showing every run's `started_by`, which
+    that page has never gated. Gating it would take the runs page away from
+    everyone who is not on the roster in order to hide a task name from them.
+
+    Runs as the gate role rather than `fde_prodops` because db/018 grants
+    `wf.agent_launch` to the gate service alone -- prodops is the narrower of
+    the console's two roles and widening it "because it is also the console"
+    is what db/017 declined to do.
+    """
+    limit = max(1, min(limit, _MAX_LAUNCHES))
+    async with db.tool_transaction(role=_gate_role()) as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT launch_id, engagement_id, agent, task, principal,
+                   status, input, runtime_session_id, error,
+                   requested_at, completed_at
+              FROM wf.agent_launch
+             WHERE (%(eng)s::uuid IS NULL OR engagement_id = %(eng)s::uuid)
+             ORDER BY requested_at DESC, launch_id DESC
+             LIMIT %(limit)s
+            """,
+            {"eng": engagement_id, "limit": limit},
+        )
+        launches = await fetchall(cur)
+
+    return {
+        "engagement_id": engagement_id,
+        "returned": len(launches),
+        "launches": launches,
+    }
+
+
+# ---------------------------------------------------------------------------
 # The launch
 # ---------------------------------------------------------------------------
 
@@ -647,21 +823,42 @@ async def launch(
 ) -> dict[str, Any]:
     """Run one agent task and return what it streamed back.
 
-    Synchronous, and that is the weak part of this feature rather than a
-    design anyone would choose. Returning immediately needs somewhere to
-    record the launch, there is no table for one, and inventing a row the
-    gate service could write would mean a new grant -- the one thing this
-    feature may not add on its own. So the request waits.
-
-    What that costs, stated plainly: the wait is bounded here by
+    Synchronous, and that is still the weak part of this feature rather than
+    a design anyone would choose: the wait is bounded here by
     `FDE_GATE_STEP_TIMEOUT_SECONDS`, but the deployed front door is an API
-    Gateway HTTP API, whose integrations time out well before that. A long
-    task therefore returns an error to the browser while the Lambda -- and
-    the agent -- keep going, and because nothing records the launch there is
-    no page that will later say whether it finished. The only observable
-    outcome is what the agent proposes, so the launcher's copy sends the
-    operator to the review queue rather than telling them to retry. A launch
-    record would fix this properly and needs a migration.
+    Gateway HTTP API whose integrations time out well before that, so a long
+    task returns an error to the browser while the Lambda -- and the agent --
+    keep going.
+
+    What changed is that this is now survivable rather than silent. The
+    launch is recorded before it is dispatched (db/018), so the operator whose
+    request died has a row to read: `running` with no `completed_at` means
+    dispatched and nothing reported back, and a terminal row says which way it
+    went and why. Making the launch itself asynchronous is a bigger change and
+    a different one -- it would need a dispatcher and a poller and a second
+    place the payload contract could drift -- and it is not what the harm was.
+    The harm was that a timed-out launch left nothing behind.
+
+    Where the record starts, and where it deliberately does not
+    -----------------------------------------------------------
+    The row is filed at the point where the request is COMPLETE and VALID and
+    the only thing left is dispatch. Two refusals therefore land in front of
+    it and record nothing:
+
+      * Someone who may not launch anything. The row's `principal` is an
+        attribution, and writing one for a caller the roster just refused
+        would make the record assert something untrue -- and would let an
+        anonymous request write a row.
+      * A submission that does not parse: no material, both a source and
+        pasted text, a source from another engagement, a missing required
+        field. Nothing was requested that could have been dispatched; the
+        operator is still filling the form in, and it re-renders with what
+        they typed still in it. A launch log of typos answers no question.
+
+    An unconfigured runtime is on the OTHER side of that line and does get a
+    row, failed. The request was complete and valid; what was missing was the
+    deployment. That is exactly the outcome somebody needs to find later, and
+    it is the one a retry will keep reproducing.
 
     `executor` is injected the way `runner.advance`'s is, so the dispatch
     path is exercisable end to end against a fake with no AWS.
@@ -682,22 +879,38 @@ async def launch(
         if task == "ingest_interview":
             task_input = await _resolve_material(cur, task_input, engagement_id)
 
+        # Last statement in the transaction that authorised: the record is
+        # committed the moment this block exits, which is what makes it
+        # visible for the whole dispatch that follows.
+        launch_id = await _record_launch(
+            cur,
+            actor=actor,
+            agent=agent,
+            task=task,
+            engagement_id=engagement_id,
+            task_input=task_input,
+        )
+
     settings = get_gate_settings().gate
     if not settings.runtime_arn_for(agent):
         # The same selection `AgentExecutor` makes, asked one step early so
         # the refusal can be a sentence rather than a step-failure envelope.
         # The executor keeps its own check for the workflow-step path.
-        raise GateError(
-            HTTPStatus.SERVICE_UNAVAILABLE,
-            _NO_RUNTIME.format(
-                agent=agent,
-                var=agent.upper(),
-                task=task,
-                engagement_id=engagement_id,
-            ),
+        #
+        # The record closes as failed and never leaves `runtime_session_id`
+        # set, because nothing was ever sent: a null session id means there
+        # is no trace to go looking for, which is the useful reading.
+        unconfigured = _NO_RUNTIME.format(
+            agent=agent,
+            var=agent.upper(),
+            task=task,
+            engagement_id=engagement_id,
         )
+        await _mark_finished(launch_id, status="failed", error={"error": unconfigured})
+        raise GateError(HTTPStatus.SERVICE_UNAVAILABLE, unconfigured)
 
     session_id = new_runtime_session_id()
+    await _mark_dispatched(launch_id, session_id)
     step: dict[str, Any] = {
         # Not a `wf.step` row -- there is no workflow here. The keys are the
         # ones `AgentExecutor` reads: `tool_name` picks the runtime,
@@ -721,20 +934,42 @@ async def launch(
         output = await (executor or AgentExecutor()).execute(step, run)
     except StepExecutionError as failure:
         detail = failure.detail
-        log.info("agent_launch_failed", actor=actor, agent=agent, task=task, detail=detail)
+        log.info(
+            "agent_launch_failed",
+            actor=actor,
+            agent=agent,
+            task=task,
+            launch_id=launch_id,
+            detail=detail,
+        )
+        await _mark_finished(launch_id, status="failed", error=detail)
         raise GateError(HTTPStatus.BAD_GATEWAY, str(detail.get("error", detail))) from None
+    except Exception as crash:
+        # Anything the executor did not wrap -- a bug here, a botocore
+        # exception that is not a step failure. The row must not be left
+        # saying `running` when this process already knows it stopped:
+        # `running` means "nobody reported back", and there is a difference
+        # between not knowing and not saying. Re-raised untouched; the
+        # console turns it into a 500 the operator can read.
+        await _mark_finished(
+            launch_id, status="failed", error={"error": f"{type(crash).__name__}: {crash}"}
+        )
+        raise
 
     events = output.get("events") or []
+    await _mark_finished(launch_id, status="succeeded", error=None)
     log.info(
         "agent_launched",
         actor=actor,
         agent=agent,
         task=task,
         engagement_id=engagement_id,
+        launch_id=launch_id,
         runtime_session_id=session_id,
         events=len(events),
     )
     return {
+        "launch_id": launch_id,
         "agent": agent,
         "task": task,
         "engagement_id": engagement_id,

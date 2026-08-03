@@ -93,4 +93,49 @@
   {% endfor %}
 </table>
 {% endif %}
+
+{# Launches are not runs and this section does not pretend they are: a launch
+   has no workflow, no steps and no pinned commit. It is here because it
+   answers the same question one table down -- what did I set going, and how
+   did it end -- and because the operator who needs it is the one whose
+   browser gave up on a launch, who has no reason to go looking anywhere
+   else. Deliberately unfiltered by `?status=`: those values are
+   `wf.run_status` members and a launch can be none of them. #}
+<h2>Agent launches ({{ launches | length }})</h2>
+<p class="muted">
+  Tasks started from <a href="/ui/agents/run">Run an agent</a>. The console
+  records each one before it dispatches, so a launch whose page timed out
+  still shows up here. What the agent PROPOSED is on the
+  <a href="/ui">review queue</a> — this is the record of the asking.
+</p>
+{% if not launches %}
+  <p class="empty">No agent has been launched from the console yet.</p>
+{% else %}
+<table>
+  <tr><th>Launch</th><th>Agent &middot; task</th><th>Status</th>
+      <th>Launched by</th><th>Requested</th><th>Finished</th></tr>
+  {% for l in launches %}
+  <tr>
+    <td>#{{ l.launch_id }}</td>
+    <td>{{ l.agent }} &middot; {{ l.task }}
+        <div class="muted">{{ l.engagement_id }}</div></td>
+    <td><span class="pill">{{ l.status }}</span>
+        {% if l.status == 'running' %}
+          {# The honest reading of the state this table exists for. A row can
+             sit here because the agent is still working, or because whatever
+             was waiting for it is gone; from the database the two are the
+             same row, so the page says both rather than picking one. #}
+          <div class="muted">nothing has reported back yet — still working, or
+            the request that was waiting for it is gone</div>
+        {% elif l.status == 'queued' %}
+          <div class="muted">accepted, not yet dispatched</div>
+        {% endif %}
+        {% if l.error %}<div class="muted">{{ l.error | error_text }}</div>{% endif %}</td>
+    <td>{{ l.principal }}</td>
+    <td>{{ l.requested_at }}</td>
+    <td>{{ l.completed_at or "—" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
 {% endblock %}

@@ -50,17 +50,17 @@ pages for them.
 |---|---|---|
 | `index` | positioning, who it's for, honest status, migration count | `README.md` framing, `db/` migration count, release state |
 | `quickstart` | clone → green tests → running console, no AWS | `db/rebuild.sh`, `db/seed_demo.sql`, `pyproject.toml` deps, test/migration counts, `fde-gate-dev`, `FDE_DB_DSN` / `FDE_GATE_DEV_PRINCIPAL` |
-| `first-merge` | the propose → gate → approve → merge walkthrough, run by hand | `db/seed_demo.sql` (the walkthrough uses its seeded item), `hitl.*` in `db/004`–`db/005`, the fde-gate review console UI, the twenty-five privilege denials |
+| `first-merge` | the propose → gate → approve → merge walkthrough, run by hand | `db/seed_demo.sql` (the walkthrough uses its seeded item), `hitl.*` in `db/004`–`db/005`, the fde-gate review console UI, the twenty-nine privilege denials |
 | `architecture` | five packages, DB roles, quality gates, where things run | workspace members in `pyproject.toml`, `packages/*` layout, roles in `db/010`–`db/014`, CI job list |
 | `models-and-cost` | preset table, override order, cost anchors | `packages/fde-agents/src/fde_agents/common/config.py` (preset map, `DEFAULT_MODEL_ID`), `fde-agents-deploy --model-preset`, `FDE_MODEL_ID` / `FDE_MODEL_PRESET` |
 | `deployment` | AgentCore runtimes, artifact shapes, CI deploy path | `fde-agents-deploy` subcommands and flags (`codezip`, `runtimes`), `infra/`, deploy workflows — **and the honesty labels below** |
 | `status` | what is verified vs not, bug ledger, release state | test counts, `docs/99-sources.md` §7–§8, `CHANGELOG.md`, the version |
 | `faq` | FDE definition, comparisons, no-AWS answer, cost | test count, cost figures (must equal `models-and-cost`), `CONTRIBUTING.md` |
-| `concepts/human-gates` | `hitl.compute_required_gates`, four enforcement layers, four gate kinds, strict quorum | any `db/` migration touching `hitl.*`; the twenty-five CI denial assertions |
+| `concepts/human-gates` | `hitl.compute_required_gates`, four enforcement layers, four gate kinds, strict quorum | any `db/` migration touching `hitl.*`; the twenty-nine CI denial assertions |
 | `concepts/knowledge-graph` | closed ontology, two time axes, hybrid retrieval, drift-as-SQL | ontology types in `db/001`–`db/002`, `kg.hybrid_search` in `db/008`, drift SQL in `db/007` |
 | `concepts/agents` | three agents, the loop, the MCP tool count | tool registrations in `packages/fde-mcp/src/fde_mcp/tools/`, agent definitions in `fde-agents` |
 | `concepts/training-flywheel` | gate outcomes → SFT/preference data, the kappa band, "stop before RL" | `packages/fde-training` (`rewards.DEFAULT_WEIGHTS`, `rival_grader` kappa constants), `docs/06-training.md` |
-| `guides/for-operators` | the product-ops funnel — reviewer roster, transcript intake and its coverage number, agent launcher, review/merge, publish, playbook export — with **no terminal commands on the page** | the `/ui/*` routes in `packages/fde-gate/src/fde_gate/ui.py` (a renamed or added route breaks the walkthrough), `GET /api/workflows/{id}/playbook.md`, the `fde-operator` plugin's command list, the reviewer-roster denials |
+| `guides/for-operators` | the product-ops funnel — reviewer roster, transcript intake and its coverage number, agent launcher and where a launch is recorded, review/merge, publish, playbook export — with **no terminal commands on the page** | the `/ui/*` routes in `packages/fde-gate/src/fde_gate/ui.py` (a renamed or added route breaks the walkthrough), `GET /api/workflows/{id}/playbook.md`, the `fde-operator` plugin's command list, the reviewer-roster denials, `wf.agent_launch` and its statuses (`db/018`) — the page tells an operator what a `running` record means |
 | `guides/model-providers` | the non-Bedrock path — provider matrix, the chat/embeddings pairing rule, `fde-providers login`, the no-AWS local run, `openai-compat` presets — **and the stub-tested-not-live-validated label**, which is the AWS honesty rule applied to every other provider | `PROVIDER_KEYS` in `packages/fde-agents/src/fde_agents/common/providers.py`, `PROVIDER_ENV_VARS` and `COMPAT_PRESETS` in `packages/fde-mcp/src/fde_mcp/credentials.py`, `fde-providers` subcommands in `packages/fde-mcp/src/fde_mcp/providers_cli.py`, `_doctor_checks()` in `packages/fde-agents/src/fde_agents/local_runner.py`, the 1024-dim domain in `db/001`, and `docs/12-providers.md` as the source |
 
 The README is a public doc too, and it duplicates claims the site makes. Its
@@ -78,7 +78,7 @@ sections carry their own triggers:
 
 | Doc | What it claims | Rewrite it when this changes |
 |---|---|---|
-| `CONTRIBUTING.md` | its own build-and-verify block, and the invariant a contributor must not break | test count, migration and smoke counts, the twenty-five privilege denials, the gate commands (`db/rebuild.sh`, `uv run pytest packages`) |
+| `CONTRIBUTING.md` | its own build-and-verify block, and the invariant a contributor must not break | test count, migration and smoke counts, the twenty-nine privilege denials, the gate commands (`db/rebuild.sh`, `uv run pytest packages`) |
 | `claude-plugin/fde-operator/README.md` | the plugin's install flow, its command and tool counts, its settings table, and the "runs as `fde_agent`, structurally cannot merge" safety claim | the MCP tool count, the commands in `claude-plugin/fde-operator/commands/`, `.mcp.json`'s env contract, `packages/fde-mcp/src/fde_mcp/config.py`'s DSN resolution order, and any grant that would weaken the safety claim — **and its verified / not-verified split, which is the AWS honesty rule applied to the plugin install** |
 
 Keep all four consistent with each other: the site, the README,
@@ -109,7 +109,7 @@ sweeps, and what to leave alone in the results:
   because the docs use it that far up; extend it if they go higher.
 - **The noun sits one to three words away from the number** — "four
   *enforcement* layers", "609 *Python* tests", "eight *gate* policies", and
-  "twenty-five *CI privilege-denial* checks", which needs two. That last one is
+  "twenty-nine *CI privilege-denial* checks", which needs two. That last one is
   not hypothetical: it is the agent definition's own phrasing, and a slot of
   one word did not match it, so a stale count sat in the file that writes the
   project's marketing copy. The slot is `{0,2}` for that reason. The list holds
@@ -147,7 +147,7 @@ sweeps, and what to leave alone in the results:
   count survived a sweep that was otherwise clean.
 
 One thing the sweep cannot catch: a count corrected in the first half of a
-sentence and left stale in the second. "CI asserts twenty-five denials … if any
+sentence and left stale in the second. "CI asserts twenty-nine denials … if any
 of the eight statements succeeds" matches on the first number and reads as a
 hit you have already fixed. **Read the whole sentence around every hit**, not
 the number the grep highlighted.

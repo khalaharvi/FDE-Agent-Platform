@@ -10,8 +10,8 @@ check it before "fixing" something that was already reconciled.
 
 ```bash
 uv sync --all-packages --frozen          # never plain `uv lock` casually; lock is CI-checked
-createdb fde && ./db/rebuild.sh fde      # 17 migrations + 25 smoke tests, rebuilds from scratch
-FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 814 tests; without DSN the db-marked ones skip
+createdb fde && ./db/rebuild.sh fde      # 18 migrations + 25 smoke tests, rebuilds from scratch
+FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 867 tests; without DSN the db-marked ones skip
 uv run ruff check packages && uv run ruff format --check packages
 uv run mypy                              # strict; covers fde-mcp, fde-agents, fde-gate, fde-sor
 uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task ... (docs/12)
@@ -20,9 +20,9 @@ uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task
 ## The invariant (do not weaken)
 
 Agents propose, humans dispose; only `hitl.merge_proposal` writes the graph.
-CI asserts twenty-five privilege denials (`.github/workflows/ci.yml`, "core
+CI asserts twenty-nine privilege denials (`.github/workflows/ci.yml`, "core
 invariants must hold"). Any new grant or SECURITY DEFINER function must keep
-all twenty-five failing and must `REVOKE ALL ... FROM PUBLIC` (functions default to
+all twenty-nine failing and must `REVOKE ALL ... FROM PUBLIC` (functions default to
 PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 
 ## Workspace map

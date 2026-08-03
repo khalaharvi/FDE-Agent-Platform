@@ -78,17 +78,21 @@
     {% for f in fields %}
       {{ fields_macro.field(f) }}
     {% endfor %}
-    {# The honest version of "please wait". Nothing records a launch -- there
-       is no table for one -- so an operator whose request dies has no page
-       that would tell them whether the agent ran. The only observable
-       outcome is what the agent proposes, and that is the review queue. #}
+    {# The honest version of "please wait". The wait is real and can outlast
+       the request, so the paragraph names both places the outcome shows up:
+       the launch RECORD (db/018, written before dispatch, so it exists even
+       when this page does not come back) and the proposal, which is the only
+       thing the agent actually produces. This paragraph re-renders with the
+       form when a launch is refused, so it is the error copy too. #}
     <p class="muted">
       This waits for the agent to finish, which can take minutes on a long
-      transcript. Leave the tab open. Nothing records the launch itself, so
-      if this page returns an error, check the
-      <a href="/ui">review queue</a> before launching again — a task long
-      enough to outlast the request limit errors here while the agent keeps
-      running on the server, and whatever it proposes still arrives there.
+      transcript. Leave the tab open. If this page returns an error, do not
+      launch again straight away — a task long enough to outlast the request
+      limit errors here while the agent keeps running on the server. The
+      launch is recorded before it is dispatched, so
+      <a href="/ui/runs">Runs → Agent launches</a> shows it either way, and
+      whatever the agent proposes still arrives on the
+      <a href="/ui">review queue</a>.
     </p>
     <button type="submit">Launch</button>
   </fieldset>

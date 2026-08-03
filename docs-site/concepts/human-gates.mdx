@@ -43,11 +43,12 @@ one does not open the door:
    exception rather than sailing through. "No policy matched" means "refuse,"
    never "no review needed."
 
-CI asserts twenty-five privilege denials on every build — the agent role inserting
+CI asserts twenty-nine privilege denials on every build — the agent role inserting
 a graph node, calling the merge function, publishing a workflow, labeling its
-own training data, and twenty-one more. Eight are the four-layer invariant
-itself, twelve guard the reviewer roster (`db/016`), and five guard evidence
-intake (`db/017`). If any of the twenty-five statements succeeds, the build
+own training data, and twenty-five more. Eight are the four-layer invariant
+itself, twelve guard the reviewer roster (`db/016`), five guard evidence
+intake (`db/017`), and four guard the record of who launched an agent
+(`db/018`). If any of the twenty-nine statements succeeds, the build
 fails. The invariant is asserted, not trusted.
 
 <Frame caption="Proposal to sealed commit. Remove any one of the four red checkpoints and the other three still catch it.">
