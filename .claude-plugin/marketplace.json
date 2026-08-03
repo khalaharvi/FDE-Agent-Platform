@@ -1,0 +1,28 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "fde-agent-platform",
+  "owner": {
+    "name": "FDE Agent Platform contributors",
+    "url": "https://github.com/khalaharvi/FDE-Agent-Platform"
+  },
+  "metadata": {
+    "description": "Claude surfaces for the FDE Agent Platform",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "fde-operator",
+      "source": "./claude-plugin/fde-operator",
+      "description": "Operate the FDE Agent Platform from Claude: ingest interviews as anchored evidence, launch agent tasks, and export workflow playbooks. Proposes only -- approvals stay in the review console.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "tags": [
+        "knowledge-graph",
+        "human-in-the-loop",
+        "product-operations",
+        "playbooks",
+        "mcp"
+      ]
+    }
+  ]
+}

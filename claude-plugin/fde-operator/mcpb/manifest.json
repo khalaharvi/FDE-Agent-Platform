@@ -1,0 +1,89 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/schemas/mcpb-manifest-v0.4.schema.json",
+  "manifest_version": "0.4",
+  "name": "fde-operator",
+  "display_name": "FDE Agent Platform",
+  "version": "0.1.0",
+  "description": "Search an FDE knowledge graph, register interview evidence, and export workflow playbooks. Proposes only; approvals stay in the review console.",
+  "long_description": "Exposes the FDE Agent Platform's 22 MCP tools to Claude Desktop over stdio.\n\nThe server runs as the Postgres role `fde_agent`: it can read the graph, register evidence, and write proposals, and it holds no privilege to write `kg.*` or to decide a gate. Approvals and merges happen in the review console under the reviewer's own JWT — that boundary is enforced by database grants, not by prompting.\n\nPrerequisites, both provisioned by whoever runs the platform: a checkout of the repository, and `uv` (https://docs.astral.sh/uv/) on PATH. The bundle launches the server from that checkout so it runs the exact code the project's CI tests.",
+  "author": {
+    "name": "FDE Agent Platform contributors",
+    "url": "https://github.com/khalaharvi/FDE-Agent-Platform"
+  },
+  "homepage": "https://github.com/khalaharvi/FDE-Agent-Platform",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/khalaharvi/FDE-Agent-Platform"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "knowledge-graph",
+    "human-in-the-loop",
+    "product-operations",
+    "playbooks"
+  ],
+  "server": {
+    "type": "python",
+    "entry_point": "README.md",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${user_config.repo_dir}",
+        "--all-packages",
+        "--frozen",
+        "fde-mcp"
+      ],
+      "env": {
+        "FDE_MCP_TRANSPORT": "stdio",
+        "FDE_DB_DSN": "${user_config.db_dsn}"
+      }
+    }
+  },
+  "user_config": {
+    "db_dsn": {
+      "type": "string",
+      "title": "Database DSN",
+      "description": "Postgres DSN for the fde_agent role, with the db/ migrations applied. Provisioned by whoever runs the platform, e.g. postgresql://fde_agent@host:5432/fde",
+      "sensitive": true,
+      "required": true
+    },
+    "repo_dir": {
+      "type": "directory",
+      "title": "Platform checkout",
+      "description": "Directory containing the FDE Agent Platform repository. The server is launched from here with uv, so it runs the same code as CI.",
+      "default": "${HOME}/FDE-Agent-Platform",
+      "required": true
+    }
+  },
+  "tools_generated": false,
+  "tools": [
+    { "name": "kg_head_commit", "description": "The engagement's latest sealed commit — call first; everything else reads as of it." },
+    { "name": "kg_as_of", "description": "Read the graph as it stood at a past timestamp." },
+    { "name": "kg_search", "description": "Hybrid semantic + lexical search over nodes and anchored evidence chunks." },
+    { "name": "kg_lexical_search", "description": "Exact-name search for a term you can quote." },
+    { "name": "kg_get_node", "description": "One node with its attributes and evidence." },
+    { "name": "kg_traverse", "description": "Walk typed edges out from a node." },
+    { "name": "kg_dependency_closure", "description": "Everything a node transitively depends on." },
+    { "name": "kg_impact_radius", "description": "Everything transitively affected by a node." },
+    { "name": "kg_process_flow", "description": "A process walked end to end, in order." },
+    { "name": "kg_propose", "description": "Draft a proposal — never writes the graph." },
+    { "name": "kg_submit_proposal", "description": "Submit a proposal, freezing the gate set a human must clear." },
+    { "name": "kg_proposal_status", "description": "A proposal's status and its outstanding gates." },
+    { "name": "drift_list", "description": "Open drift signals for an engagement." },
+    { "name": "drift_scan", "description": "Re-run drift detection against the system of record." },
+    { "name": "drift_triage", "description": "Record a triage decision on a drift signal." },
+    { "name": "wf_list", "description": "Workflows for an engagement." },
+    { "name": "wf_get", "description": "One workflow and its ordered steps." },
+    { "name": "wf_draft", "description": "Author a draft workflow — never publishes." },
+    { "name": "wf_export_playbook", "description": "Export a workflow as one Markdown document a person can follow." },
+    { "name": "kg_register_source", "description": "Register a piece of evidence so its text can be ingested and cited." },
+    { "name": "kg_ingest_chunks", "description": "Attach evidence text to a source, anchored to the nodes it supports." },
+    { "name": "kg_list_sources", "description": "Registered evidence sources, with chunk and embedding counts." }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"]
+  }
+}
