@@ -55,21 +55,22 @@ jobs:
           uv sync --frozen
           uv run pytest tests
           uv run python app.py
-          # -i W2001 W8001 W3005: task 2's Parameters/Conditions are
-          # consumed incrementally as tasks 3-7 land (task 3 wires
+          # -i W3005 only, as of task 6: task 2's Parameters/Conditions
+          # were consumed incrementally as tasks 3-6 landed (task 3 wired
           # deploy_tier/is_production into the database construct; task 5
           # retired W7001 entirely by giving AssetsRegionMap/ReleaseTag/
-          # AssetsBucket their first consumer, the migration-runner
-          # Lambda's code location) -- see infra/cdk/README.md's
-          # "Unused-parameter/condition/mapping warnings" section, which
-          # tracks exactly which occurrences of each rule remain. W3005
-          # (redundant DependsOn on an explicit Lambda role -- CDK adds it
-          # on purpose, for IAM eventual consistency) is expected to stay
-          # in this list permanently, not just until some later task lands.
-          # These rule IDs MUST come after the template path: cfn-lint's -i
-          # takes an unbounded arg list and would otherwise swallow the
-          # path itself.
-          uv run cfn-lint cdk.out/FdePlatform.template.json -i W2001 W8001 W3005
+          # AssetsBucket their first consumer; task 6 retired W2001 and
+          # W8001 entirely by giving every remaining parameter/condition a
+          # consumer in the gate Lambda/Fargate services' envs) -- see
+          # infra/cdk/README.md's cfn-lint ledger, which tracks exactly
+          # which occurrences of each rule remain. W3005 (redundant
+          # DependsOn on an explicit Lambda role/ECS target-group wiring --
+          # CDK adds it on purpose, for eventual-consistency reasons) is
+          # expected to stay in this list permanently, not just until some
+          # later task lands. This rule ID MUST come after the template
+          # path: cfn-lint's -i takes an unbounded arg list and would
+          # otherwise swallow the path itself.
+          uv run cfn-lint cdk.out/FdePlatform.template.json -i W3005
       - name: lockfile is current
         working-directory: infra/cdk
         run: uv lock --check

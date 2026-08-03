@@ -44,7 +44,7 @@ test.
 uv sync --frozen                                             # install deps exactly as locked
 uv run pytest tests -v                                       # synth tests
 uv run python app.py                                         # synth -> cdk.out/FdePlatform.template.json
-uv run cfn-lint cdk.out/FdePlatform.template.json -i W2001 W8001 W3005   # validate the emitted template
+uv run cfn-lint cdk.out/FdePlatform.template.json -i W3005   # validate the emitted template
 uv run ruff check .                                           # lint
 uv run ruff format --check .                                  # format check
 uv lock --check                                                # lockfile hasn't drifted from pyproject.toml
@@ -53,7 +53,7 @@ uv lock --check                                                # lockfile hasn't
 One-liner (synth + lint), what CI runs:
 
 ```bash
-uv run pytest tests && uv run python app.py && uv run cfn-lint cdk.out/FdePlatform.template.json -i W2001 W8001 W3005
+uv run pytest tests && uv run python app.py && uv run cfn-lint cdk.out/FdePlatform.template.json -i W3005
 ```
 
 Note the `-i` flags are positioned AFTER the template path: `cfn-lint`'s
@@ -109,7 +109,7 @@ where it does.
 |---|---|
 | `app.py` | CDK app entry point (`uv run python app.py`); builds `FdePlatformStack` and calls `app.synth()` with an explicit `outdir="cdk.out"` |
 | `cdk.json` | Tells any CDK tooling how to run the app: `{"app": "uv run python app.py"}` |
-| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; wires the `Network`, `Database`, `Identity`, `IamRoles`, and `Migrations` constructs (and later tasks' constructs) into itself, not new stacks, in that fixed order |
+| `fde_cdk/stack.py` | `FdePlatformStack` — the root stack. Bootstrap-free synthesizer lives here; wires `Network` -> `Database` -> `Identity` -> `IamRoles` -> `Migrations` -> (the shared `provider_api_key_secret`) -> `Services` -> `GateService` into itself, not new stacks. `Services` before `GateService`: the gate Lambda's `FDE_MCP_URL` env needs `services.mcp_url`. Task 7's `Agents` construct will insert between `Services` and `GateService` (see `gate.py`'s module docstring) |
 | `fde_cdk/network.py` | `Network` — the one VPC (2 AZ, 1 NAT, public + private-with-egress) everything else attaches to |
 | `fde_cdk/database.py` | `Database` — the Aurora PostgreSQL (pgvector) cluster, tier-switched between Serverless v2 (demo) and provisioned `db.r6g.xlarge` (production) via `Fn::If` on `is_production` |
 | `fde_cdk/identity.py` | `Identity` — one Cognito user pool: admin-seeded human login (`console_client`, hosted UI, auth-code grant), a stable JWT audience (`api_client`), and a client-credentials M2M client scoped to `gateway/invoke` (`m2m_client`) |
@@ -121,6 +121,9 @@ where it does.
 | `tests/test_network_db.py` | VPC topology, Aurora engine/snapshot-policy, and secret-shape tests for `Network`/`Database` |
 | `tests/test_identity_iam.py` | Cognito pool/client/domain/resource-server shape, IAM role trust/permissions substitution, and the fixed `fde-gate-service` function-name tests for `Identity`/`IamRoles` |
 | `tests/test_migration_runner.py` | `plan_migrations` unit tests (imports `handler.py` directly, no AWS) plus synth tests for the custom resource, the Lambda's code location/VPC attachment, and the Provider-free contract |
+| `fde_cdk/gate.py` | `GateService` — the `fde-gate-service` Lambda (VPC-attached, code from S3, `function_name=GATE_FUNCTION_NAME` verbatim), its `apigatewayv2.HttpApi` (JWT-authorized `ANY /{proxy+}`, unauthenticated `GET /healthz`), and the two EventBridge schedules. Also `provider_api_key_secret`/consumed via `params.dynamic_secret_env_value` — the one Secrets Manager mirror of `ProviderApiKey` shared with `Services` |
+| `fde_cdk/services.py` | `Services` — one `ecs.Cluster`; `mcp_service` (ARM64 Fargate, `{ECR_PUBLIC_BASE}/fde-mcp:{tag}`) behind an internal ALB (`mcp_url` output); `embedder_service` (same image, `command=["fde-embedder"]`, no ALB) |
+| `tests/test_services.py` | Synth tests for `GateService` (Lambda shape, HTTP API routes/authorizer, schedules, the supplemental `gate_role` secret grant) and `Services` (internal ALB, ARM64 task definitions, container image/env/command, the shared provider-API-key secret's conditional wiring, the Migrations dependency) |
 
 ## A quirk resolved in Task 3: `analytics_reporting`
 
@@ -143,17 +146,17 @@ functions that tracked this — `tests/test_params.py::test_no_cdk_metadata_reso
 `app.py` invocation stays clean *without* the flag) — were both resolved in
 the same commit that added `network.py`/`database.py`.
 
-## cfn-lint `-i` ignore list — still expected, narrower
+## cfn-lint `-i` ignore list — retired after Task 6, `W3005` only now
 
 Task 2 created the full `Parameters`/`Conditions`/`Mappings` click surface
-before any construct existed to consume it. `cfn-lint` correctly flags this
+before any construct existed to consume it. `cfn-lint` correctly flagged this
 as suspicious: `W2001` (parameter never referenced), `W8001` (condition
-never referenced), `W7001` (mapping never referenced). These are genuine
-warnings about a template that is, right now, deliberately incomplete — not
-a false positive to silence structurally the way `E1001` was. `cfn-lint` is
-invoked with `-i W2001 W7001 W8001` to ignore exactly those three rule IDs
-and nothing else; every other rule (including all `E` rules) still gates the
-build.
+never referenced), `W7001` (mapping never referenced). These were genuine
+warnings about a template that was, at the time, deliberately incomplete —
+not a false positive to silence structurally the way `E1001` was. `cfn-lint`
+was invoked with `-i W2001 W7001 W8001` (later just `-i W2001 W8001`, after
+Task 5 retired `W7001`) to ignore exactly those rule IDs and nothing else;
+every other rule (including all `E` rules) still gated the build throughout.
 
 Task 3 wires `deploy_tier`/`is_production` into the database construct
 (`DBInstanceClass` and `DeletionProtection`, both `Fn::If`'d on
@@ -161,12 +164,12 @@ Task 3 wires `deploy_tier`/`is_production` into the database construct
 gain a real consumer. Verified with a bare `cfn-lint
 cdk.out/FdePlatform.template.json` (no `-i`) before and after this task:
 
-| Rule | Before Task 3 | After Task 3 | After Task 4 | After Task 5 |
-|---|---|---|---|---|
-| `W2001` (param unused) | 7 (`ModelId`, `CompatBaseUrl`, `EmbedProvider`, `EmbedModelId`, `AdminEmail`, `ReleaseTag`, `AssetsBucket`) | 7 — unchanged | 6 (`AdminEmail` dropped — `Identity` reads `params.admin_email.value_as_string` to seed the Cognito admin user) | 4 (`ReleaseTag`, `AssetsBucket` dropped — both are now `Migrations` properties/code-location inputs) |
-| `W8001` (condition unused) | 3 (`IsProduction`, `IsBedrockModel`, `HasProviderKey`) | 2 (`IsProduction` dropped) | 2 — unchanged | 2 — unchanged (the new `HasAssetsBucket` condition is used immediately, so it never appears here) |
-| `W7001` (mapping unused) | 1 (`AssetsRegionMap`) | 1 — unchanged | 1 — unchanged | **0 — dropped from the `-i` list.** `Migrations`' `Fn::If(HasAssetsBucket, ..., FindInMap(AssetsRegionMap, ...))` is `AssetsRegionMap`'s first consumer |
-| `W3005` (redundant `DependsOn`) | n/a | n/a | n/a | 1 (new rule ID, added to `-i`) — see below |
+| Rule | Before Task 3 | After Task 3 | After Task 4 | After Task 5 | After Task 6 |
+|---|---|---|---|---|---|
+| `W2001` (param unused) | 7 (`ModelId`, `CompatBaseUrl`, `EmbedProvider`, `EmbedModelId`, `AdminEmail`, `ReleaseTag`, `AssetsBucket`) | 7 — unchanged | 6 (`AdminEmail` dropped — `Identity` reads `params.admin_email.value_as_string` to seed the Cognito admin user) | 4 (`ReleaseTag`, `AssetsBucket` dropped — both are now `Migrations` properties/code-location inputs) | **0 — dropped from the `-i` list.** `ModelId` (`gate.py`'s `FDE_MODEL_ID` env, `Fn::If`'d on `IsBedrockModel`), `CompatBaseUrl` (`FDE_MODEL_BASE_URL`/`FDE_EMBED_BASE_URL`), `EmbedProvider`/`EmbedModelId` (`services.py`'s embed-provider envs) all gain their first consumer here |
+| `W8001` (condition unused) | 3 (`IsProduction`, `IsBedrockModel`, `HasProviderKey`) | 2 (`IsProduction` dropped) | 2 — unchanged | 2 — unchanged (the new `HasAssetsBucket` condition is used immediately, so it never appears here) | **0 — dropped from the `-i` list.** `IsBedrockModel` (the `FDE_MODEL_ID` `Fn::If` above) and `HasProviderKey` (the provider-API-key secret's own `Condition:` plus the `Fn::If` wrapping every `{{resolve:secretsmanager:...}}` env value) both gain consumers |
+| `W7001` (mapping unused) | 1 (`AssetsRegionMap`) | 1 — unchanged | 1 — unchanged | **0 — dropped from the `-i` list.** `Migrations`' `Fn::If(HasAssetsBucket, ..., FindInMap(AssetsRegionMap, ...))` is `AssetsRegionMap`'s first consumer | 0 — unchanged |
+| `W3005` (redundant `DependsOn`) | n/a | n/a | n/a | 1 (new rule ID, added to `-i`) — see below | 3 (predicted: `GateService`'s Lambda reproduces the same explicit-`role=`-plus-VPC pattern as `Migrations`'; unpredicted third: `Services`' `ecs.FargateService` gets one too, between the ALB target group and the service's own `LoadBalancers` property) |
 
 `DeployTier`, `ModelProvider`, and `ProviderApiKey` were never in the `W2001`
 list even in Task 2: cfn-lint's `Ref` scan already counted them "used" via
@@ -185,8 +188,8 @@ once `AssetsRegionMap` has a real caller) and shrinks `W2001` by two.
 they wait for Task 6/7's model-provider/API-key secrets — so `W8001` stays
 in the `-i` list at its Task 4 count.
 
-`W3005` is new here and, unlike the other three, is **not** expected to
-shrink to zero as later tasks land: CDK's `lambda_.Function` L2
+`W3005` is new since Task 5 and, unlike the other three, is **not** expected
+to shrink to zero as later tasks land: CDK's `lambda_.Function` L2
 automatically adds an explicit `DependsOn` on an externally-passed `role=`
 (IAM eventual consistency: the role and its inline policy must finish
 propagating before the Lambda's first invoke, not just before the
@@ -194,13 +197,21 @@ CloudFormation resource is marked CREATE_COMPLETE) even though the
 function's `Role` property already carries an implicit `Fn::GetAtt`
 dependency on the same resource — cfn-lint's static DAG check flags the
 explicit one as redundant, but removing it would remove real
-eventual-consistency protection CDK added on purpose. Any later task that
-gives ANOTHER Lambda both an explicit `role=` and a VPC attachment (Task
-6's gate service is the obvious next candidate) will very likely reproduce
-this exact warning — that is expected, not a regression to chase down.
+eventual-consistency protection CDK added on purpose. Task 6's `GateService`
+Lambda reproduced this exact warning, as predicted; `Services`' ECS pattern
+(`FargateService` + `ApplicationListener.add_targets`) reproduces the same
+*class* of warning for a different reason — CDK adds an explicit
+`DependsOn` between the service and its target group alongside the
+`LoadBalancers[].TargetGroupArn` `Ref` that already implies it. Both are
+expected, not regressions to chase down.
 
-Revisit the bare-lint check after Task 6/7 land their constructs; delete
-`W2001`/`W8001` from the `-i` list (both here and in
-`.github/workflows/ci.yml`) only once a bare run shows zero remaining
-occurrences of each. `W3005` is expected to stay in the list permanently
-once any later task's Lambda reproduces it.
+**Task 6 retired `W2001` and `W8001` from the `-i` list entirely** (a bare
+`cfn-lint cdk.out/FdePlatform.template.json`, no `-i` at all, now reports
+only three `W3005` occurrences — verified directly, see the table above) --
+`gate.py`'s `FDE_MODEL_ID`/`FDE_MODEL_BASE_URL`/`FDE_MODEL_API_KEY` envs and
+`services.py`'s embed-provider envs gave every remaining unconsumed
+parameter and condition its first consumer. The `-i` list (here and in
+`.github/workflows/ci.yml`) is now just `-i W3005`, expected to stay that
+way permanently: any later task that gives another Lambda/Fargate construct
+both an explicit `role=`/target-group wiring and its own VPC attachment
+will very likely reproduce it again, and that is fine.

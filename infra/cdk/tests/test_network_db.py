@@ -31,5 +31,8 @@ def test_aurora_engine_and_snapshot_policy() -> None:
 
 def test_db_secret_is_rds_managed_shape() -> None:
     t = synth_template()
-    # provider key secret comes later; adjust in Task 6 if needed
-    t.resource_count_is("AWS::SecretsManager::Secret", 1)
+    # Task 6 added the second: GateService/Services' shared ProviderApiKey
+    # mirror (see gate.py's provider_api_key_secret and
+    # tests/test_services.py::test_provider_api_key_secret_is_conditioned_on_has_provider_key,
+    # which pins the RDS-managed one apart from the conditional one).
+    t.resource_count_is("AWS::SecretsManager::Secret", 2)

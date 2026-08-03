@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass
 
 import aws_cdk as cdk
+import aws_cdk.aws_secretsmanager as secretsmanager
 
 # A pragmatic (not RFC-5322-exhaustive) email shape: local@domain.tld.
 # Good enough to reject obvious garbage in the CloudFormation console before
@@ -23,6 +24,20 @@ _EMAIL_ALLOWED_PATTERN = r"[^\s@]+@[^\s@]+\.[^\s@]+"
 # FDE_ASSETS_BUCKET at synth time once the real bucket exists; the fallback
 # below is only ever seen in local/dev synths.
 _DEFAULT_ASSETS_BUCKET = "fde-platform-assets-us-east-1"
+
+# Task 6: the ECR Public repository alias `Services`/`GateService`'s
+# container images live under (`{ECR_PUBLIC_BASE}/fde-mcp:{ReleaseTag}`).
+# `FDE_ECR_PUBLIC_ALIAS` overrides it at synth time the same way
+# `FDE_ASSETS_BUCKET` overrides `_DEFAULT_ASSETS_BUCKET` above -- release.yml
+# sets it once the platform's real ECR Public alias exists; local/dev synths
+# fall back to a value that is obviously a placeholder rather than
+# something that looks like it might work. This is a plain synth-time
+# constant, not a `CfnMapping` like `AssetsRegionMap`: ECR Public
+# (`public.ecr.aws`) is one global namespace, not a per-`AWS::Region`
+# resource, so there is no per-region value for a mapping to hold -- a
+# `CfnMapping` keyed by `AWS::Region` here would have exactly one branch,
+# used unconditionally, which is just a constant with extra ceremony.
+ECR_PUBLIC_BASE = f"public.ecr.aws/{os.environ.get('FDE_ECR_PUBLIC_ALIAS', 'REPLACE_AT_RELEASE')}"
 
 
 @dataclass(frozen=True)
@@ -203,4 +218,108 @@ def add_launch_params(stack: cdk.Stack) -> LaunchParams:
         has_provider_key=has_provider_key,
         has_assets_bucket=has_assets_bucket,
         assets_region_map=assets_region_map,
+    )
+
+
+# ---------------------------------------------------------------------
+# Small pure helpers over a `LaunchParams` a later construct needs and
+# would otherwise duplicate. None of these create a `CfnParameter`/
+# `CfnCondition`/`CfnMapping` themselves (that would violate this module's
+# own charter, stated at the top of the file) -- they only read the ones
+# `add_launch_params` already built, so the exact `Fn::If`/dynamic-reference
+# shape has one source of truth instead of a copy per consumer.
+# ---------------------------------------------------------------------
+
+
+def resolve_assets_bucket_name(params: LaunchParams) -> str:
+    """`Fn::If(HasAssetsBucket, AssetsBucket, FindInMap(AssetsRegionMap,
+    AWS::Region, "bucket"))`, wrapped as a plain `str` carrying an embedded
+    CDK token (`cdk.Token.as_string`, matching `identity.py`'s
+    `discovery_url` -- see that module for why an f-string/token mix is the
+    CDK-endorsed way to build a composite string).
+
+    Extracted here (Task 6) from `migrations.py`, which had the only copy
+    through Task 5: `gate.py`'s Lambda code (`releases/{tag}/fde-gate.zip`)
+    resolves its S3 bucket exactly the same way `migrations.py`'s Lambda
+    code (`releases/{tag}/migration-runner.zip`) does, and a second
+    hand-copied `Fn::If`/`Fn::FindInMap` pair would be one more place a
+    future change to the resolution rule could drift from the other.
+    `migrations.py` was updated in the same commit to call this instead of
+    inlining its own copy.
+    """
+    return cdk.Token.as_string(
+        cdk.Fn.condition_if(
+            params.has_assets_bucket.logical_id,
+            params.assets_bucket.value_as_string,
+            cdk.Fn.find_in_map(params.assets_region_map.logical_id, cdk.Aws.REGION, "bucket"),
+        )
+    )
+
+
+def fde_db_secrets_wildcard_arn() -> str:
+    """`arn:aws:secretsmanager:{region}:{account}:secret:fde/db/*` -- the
+    three migration-minted login secrets (`fde/db/agent`, `fde/db/gate`,
+    `fde/db/ingest`; see `infra/cdk/lambdas/migration_runner/handler.py`'s
+    `LOGIN_SECRETS`).
+
+    `IamRoles.migration_role` already grants exactly this pattern (it
+    *mints* the three secrets -- see `iam_roles.py`'s `MintLoginUserSecrets`
+    statement). Every later task's compute that only *reads* one of the
+    three -- `GateService`'s supplemental grant on `gate_role` (see that
+    module's docstring for why `gate_role`'s own IAM template does not
+    already cover this), `Services`' two Fargate task roles -- reuses the
+    identical wildcard rather than a narrower per-secret ARN, both for
+    consistency with the migration role's own grant and because each
+    secret's real ARN carries a Secrets-Manager-generated 6-character
+    suffix that is not knowable at synth time (`Secret.from_secret_name_v2`
+    is used separately, for the env var *value*, precisely because it
+    tolerates that -- see `gate.py`).
+    """
+    return cdk.Fn.join(
+        "",
+        [
+            "arn:aws:secretsmanager:",
+            cdk.Aws.REGION,
+            ":",
+            cdk.Aws.ACCOUNT_ID,
+            ":secret:fde/db/*",
+        ],
+    )
+
+
+def dynamic_secret_env_value(secret: secretsmanager.ISecret, params: LaunchParams) -> str:
+    """`Fn::If(HasProviderKey, {{resolve:secretsmanager:<secret-arn>:
+    SecretString}}, "")` -- an env var value that resolves to `secret`'s
+    live content at CloudFormation deploy time (never baked into the
+    template as plaintext) when a launcher supplied a `ProviderApiKey`, and
+    to an empty string when they did not.
+
+    Built from CDK's own `SecretValue.secrets_manager(...).unsafe_unwrap()`
+    (not a hand-rolled `Fn::Join` of the `{{resolve:...}}` literal) --
+    `unsafe_unwrap()` is CDK's documented escape hatch for exactly this
+    case (a secret's value flowing into a property, like a Lambda/container
+    environment variable, that legitimately needs the raw dynamic-reference
+    string rather than a `SecretValue` wrapper). Verified via a standalone
+    synth (not against live AWS -- see the repo's AWS honesty rule) that
+    this produces `Fn::Join(["", ["{{resolve:secretsmanager:", {Ref:
+    <secret logical id>}, ":SecretString:::}}"]])`, which CloudFormation
+    resolves at deploy time the same way it would a literal `{{resolve:
+    ...}}` string used directly in a property value.
+
+    The `Fn::If` wrap matters independently of the secret's own content:
+    `secret`'s underlying `AWS::SecretsManager::Secret` resource (built by
+    `gate.py`'s `provider_api_key_secret`) is itself conditioned on
+    `HasProviderKey` (`Condition: HasProviderKey` on the resource, not just
+    on this value) -- when a launcher left `ProviderApiKey` blank, that
+    resource never exists in the deployed stack at all, so a dynamic
+    reference to it must never be *evaluated* by CloudFormation, only
+    *present* in the template's unused `Fn::If` branch. CloudFormation
+    does not evaluate the untaken branch of `Fn::If`, which is exactly what
+    makes referencing a conditionally-absent resource there safe (the same
+    pattern `database.py` and AWS's own docs use for conditionally-created
+    resources).
+    """
+    dynamic_ref = cdk.SecretValue.secrets_manager(secret.secret_arn).unsafe_unwrap()
+    return cdk.Token.as_string(
+        cdk.Fn.condition_if(params.has_provider_key.logical_id, dynamic_ref, "")
     )

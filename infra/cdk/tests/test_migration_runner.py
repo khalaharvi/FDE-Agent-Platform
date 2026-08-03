@@ -69,14 +69,23 @@ def test_custom_resource_exists_with_release_tag_and_admin_email() -> None:
     assert "ServiceToken" in resource["Properties"]
 
 
+def _migration_function(functions: dict) -> tuple[str, dict]:
+    """The migration-runner Lambda, picked out by its own fixed handler
+    string -- Task 6 added a second `AWS::Lambda::Function` (the gate
+    service), so `find_resources("AWS::Lambda::Function")` on its own no
+    longer identifies a single, unambiguous function."""
+    return next(
+        (k, v) for k, v in functions.items() if v["Properties"].get("Handler") == "handler.handler"
+    )
+
+
 def test_custom_resource_service_token_points_at_the_migration_function() -> None:
     t = synth_template()
     template = t.to_json()
     functions = {
         k: v for k, v in template["Resources"].items() if v["Type"] == "AWS::Lambda::Function"
     }
-    assert len(functions) == 1
-    function_logical_id = next(iter(functions))
+    function_logical_id, _ = _migration_function(functions)
 
     resource = next(iter(t.find_resources("AWS::CloudFormation::CustomResource").values()))
     assert resource["Properties"]["ServiceToken"] == {"Fn::GetAtt": [function_logical_id, "Arn"]}
@@ -85,8 +94,7 @@ def test_custom_resource_service_token_points_at_the_migration_function() -> Non
 def test_migration_function_is_python312_arm64_and_vpc_attached() -> None:
     t = synth_template()
     functions = t.find_resources("AWS::Lambda::Function")
-    assert len(functions) == 1
-    fn = next(iter(functions.values()))
+    _, fn = _migration_function(functions)
     props = fn["Properties"]
     assert props["Runtime"] == "python3.12"
     assert props["Architectures"] == ["arm64"]
@@ -98,7 +106,7 @@ def test_migration_function_is_python312_arm64_and_vpc_attached() -> None:
 
 def test_migration_function_code_points_at_release_tag_key() -> None:
     t = synth_template()
-    fn = next(iter(t.find_resources("AWS::Lambda::Function").values()))
+    _, fn = _migration_function(t.find_resources("AWS::Lambda::Function"))
     code = fn["Properties"]["Code"]
     assert code["S3Key"] == {
         "Fn::Join": ["", ["releases/", {"Ref": "ReleaseTag"}, "/migration-runner.zip"]]
@@ -110,7 +118,7 @@ def test_migration_function_code_bucket_is_fn_if_on_has_assets_bucket() -> None:
     (blank by default) resolves via `HasAssetsBucket` to either the
     override param or `AssetsRegionMap`'s region default."""
     t = synth_template()
-    fn = next(iter(t.find_resources("AWS::Lambda::Function").values()))
+    _, fn = _migration_function(t.find_resources("AWS::Lambda::Function"))
     bucket = fn["Properties"]["Code"]["S3Bucket"]
     assert bucket == {
         "Fn::If": [
@@ -131,13 +139,13 @@ def test_migration_function_uses_the_migration_role() -> None:
         for policy in v["Properties"].get("Policies", [])
         if policy["PolicyName"] == "migration-permissions"
     )
-    fn = next(iter(t.find_resources("AWS::Lambda::Function").values()))
+    _, fn = _migration_function(t.find_resources("AWS::Lambda::Function"))
     assert fn["Properties"]["Role"] == {"Fn::GetAtt": [migration_role_id, "Arn"]}
 
 
 def test_migration_function_has_db_secret_arn_env_var() -> None:
     t = synth_template()
-    fn = next(iter(t.find_resources("AWS::Lambda::Function").values()))
+    _, fn = _migration_function(t.find_resources("AWS::Lambda::Function"))
     env = fn["Properties"]["Environment"]["Variables"]
     assert "DB_SECRET_ARN" in env
 
@@ -146,10 +154,18 @@ def test_no_provider_framework_lambda_in_template() -> None:
     """Guards the Provider-free contract from this construct's own side:
     `aws_cdk.custom_resources.Provider` would add a SECOND
     `AWS::Lambda::Function` (its onEvent handler) plus a log-retention
-    custom resource of its own. Only the migration-runner function itself
-    should exist."""
+    custom resource of its own. Exactly one function with the
+    migration-runner's own handler string should exist (Task 6 added an
+    unrelated second function, the gate service -- see
+    tests/test_services.py -- so this no longer asserts a template-wide
+    total of one)."""
     t = synth_template()
-    assert len(t.find_resources("AWS::Lambda::Function")) == 1
+    migration_fns = [
+        f
+        for f in t.find_resources("AWS::Lambda::Function").values()
+        if f["Properties"].get("Handler") == "handler.handler"
+    ]
+    assert len(migration_fns) == 1
     assert len(t.find_resources("AWS::CloudFormation::CustomResource")) == 1
 
 

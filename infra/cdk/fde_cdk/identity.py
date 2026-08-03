@@ -154,14 +154,14 @@ class Identity(Construct):
 
         # No `callback_urls=` override: the review console's real URL isn't
         # known to this construct (it depends on the gate API's domain,
-        # which a later task builds -- see `GateService` in the plan). CDK
-        # fills the CloudFormation-required `CallbackURLs` list with its own
-        # default (`https://example.com`) when authorization-code-grant
-        # flows are enabled and none is given; that placeholder must be
-        # replaced with the real console URL once it exists (a `CfnOutput`
-        # or direct `add_property_override` in whichever later task wires
-        # the console's domain) -- tracked as a follow-up, not silently
-        # left as the shipped value.
+        # which `GateService`, Task 6, builds). CDK fills the
+        # CloudFormation-required `CallbackURLs` list with its own default
+        # (`https://example.com`) when authorization-code-grant flows are
+        # enabled and none is given. `FdePlatformStack.__init__` (stack.py)
+        # replaces that placeholder once `GateService.http_api` exists, via
+        # `add_property_override("CallbackURLs"/"LogoutURLs", ...)` on this
+        # client's L1 -- there is no L2 setter for either property
+        # post-construction, so the override is the only mechanism.
         self.console_client = cognito.UserPoolClient(
             self,
             "ConsoleClient",

@@ -72,12 +72,18 @@ def test_hosted_ui_domain_exists() -> None:
 
 
 def test_five_iam_roles_exist_with_expected_trust_services() -> None:
+    """Scoped to IamRoles' own roles by logical-id prefix -- Task 6 added
+    Fargate task roles (assumed by ecs-tasks.amazonaws.com) and a Lambda's
+    auto-generated execution role, neither built by IamRoles, so a bare
+    `find_resources("AWS::IAM::Role")` count/service-set would no longer
+    describe only this construct."""
     t = synth_template()
     roles = t.find_resources("AWS::IAM::Role")
-    # 5 roles from IamRoles, exactly. (No other IAM::Role in the stack yet.)
-    assert len(roles) == 5
+    iam_roles_roles = {k: v for k, v in roles.items() if k.startswith("IamRoles")}
+    # 5 roles from IamRoles, exactly.
+    assert len(iam_roles_roles) == 5
     services = set()
-    for role in roles.values():
+    for role in iam_roles_roles.values():
         for stmt in role["Properties"]["AssumeRolePolicyDocument"]["Statement"]:
             principal = stmt["Principal"]
             if "Service" in principal:

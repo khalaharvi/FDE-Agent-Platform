@@ -40,7 +40,7 @@ import aws_cdk.aws_s3 as s3
 import aws_cdk.aws_secretsmanager as secretsmanager
 from constructs import Construct
 
-from fde_cdk.params import LaunchParams
+from fde_cdk.params import LaunchParams, resolve_assets_bucket_name
 
 _HANDLER_ENTRYPOINT = "handler.handler"
 # Lambda's own ceiling (15 minutes); 15 migrations + role/secret work fits easily inside it.
@@ -73,26 +73,22 @@ class Migrations(Construct):
         super().__init__(scope, construct_id)
 
         # --- Fn::If bucket resolution (deferred from Task 2 to here, the
-        # first and only consumer of AssetsBucket/AssetsRegionMap) ---
-        # `Fn.condition_if` returns a jsii IResolvable, not a plain Python
-        # str -- `Bucket.from_bucket_name`'s generated type-check rejects
-        # that outright (verified). `cdk.Token.as_string(...)` wraps it
-        # into the same kind of token-embedded str `cdk.Aws.REGION` already
-        # is elsewhere in this codebase (e.g. `identity.py`'s
-        # `discovery_url`), which the L2 accepts and resolves at synth time
-        # into the exact `Fn::If`/`Fn::FindInMap` structure (verified via a
-        # standalone synth: `S3Bucket` ends up as `{"Fn::If": [
-        # "HasAssetsBucket", {"Ref": "AssetsBucket"}, {"Fn::FindInMap": [
-        # "AssetsRegionMap", {"Ref": "AWS::Region"}, "bucket"]}]}`) -- no L1
-        # `add_property_override` escape hatch needed.
-        code_bucket_name = cdk.Token.as_string(
-            cdk.Fn.condition_if(
-                params.has_assets_bucket.logical_id,
-                params.assets_bucket.value_as_string,
-                cdk.Fn.find_in_map(params.assets_region_map.logical_id, cdk.Aws.REGION, "bucket"),
-            )
+        # first consumer of AssetsBucket/AssetsRegionMap) ---
+        # `resolve_assets_bucket_name` (Task 6 extracted this from an
+        # inline copy that used to live here -- see that function's
+        # docstring in `params.py`) returns a plain Python `str` carrying
+        # an embedded CDK token; `Bucket.from_bucket_name`'s generated
+        # type-check requires exactly that (a raw `Fn.condition_if`
+        # IResolvable is rejected outright, verified) and resolves it at
+        # synth time into the exact `Fn::If`/`Fn::FindInMap` structure
+        # (verified via a standalone synth: `S3Bucket` ends up as
+        # `{"Fn::If": ["HasAssetsBucket", {"Ref": "AssetsBucket"},
+        # {"Fn::FindInMap": ["AssetsRegionMap", {"Ref": "AWS::Region"},
+        # "bucket"]}]}`) -- no L1 `add_property_override` escape hatch
+        # needed.
+        code_bucket = s3.Bucket.from_bucket_name(
+            self, "AssetsBucketRef", resolve_assets_bucket_name(params)
         )
-        code_bucket = s3.Bucket.from_bucket_name(self, "AssetsBucketRef", code_bucket_name)
         code_key = f"releases/{params.release_tag.value_as_string}/migration-runner.zip"
 
         self.function = lambda_.Function(
