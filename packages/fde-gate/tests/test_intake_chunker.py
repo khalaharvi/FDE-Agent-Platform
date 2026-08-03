@@ -240,6 +240,38 @@ def test_a_deep_key_keeps_everything_after_the_first_segment() -> None:
     assert chunk.anchor_keys == ("proc.order.fulfilment",)
 
 
+def test_a_one_word_key_tail_does_not_anchor_on_that_word() -> None:
+    """`act.review` leaves "review", which is in a transcript about anything.
+
+    A key tail is a slug, and a one-word slug is a category rather than a
+    name. An anchor that is true of every chunk tells retrieval nothing and
+    outranks the anchors that mean something, so key-derived phrases have to
+    be more than one word. The LABEL is untouched by this -- see below.
+    """
+    nodes = [LiveNode(node_key="act.review", label="ZZZ Unrelated Label")]
+    (chunk,) = match_anchors(["We review every deal before it ships."], nodes)
+    assert chunk.anchor_keys == ()
+    assert chunk.is_dark
+
+
+def test_a_one_word_label_still_anchors() -> None:
+    """The floor is on key-DERIVED phrases only. "Dunning" is what somebody
+    chose to call this thing, and one word is a perfectly good name.
+    """
+    nodes = [LiveNode(node_key="proc.dunning", label="Dunning")]
+    (chunk,) = match_anchors(["Dunning is handled by the collections team."], nodes)
+    assert chunk.anchor_keys == ("proc.dunning",)
+
+
+def test_a_multi_word_key_tail_is_unaffected_by_the_floor() -> None:
+    """The case the key path exists for. Two words are a name, not a category,
+    and this is the anchor that survives when the label does not match.
+    """
+    nodes = [LiveNode(node_key="act.discount_review", label="ZZZ Unrelated Label")]
+    (chunk,) = match_anchors(["Everything over ten percent hits discount review."], nodes)
+    assert chunk.anchor_keys == ("act.discount_review",)
+
+
 def test_a_chunk_mentioning_nothing_is_dark() -> None:
     (chunk,) = match_anchors(["We broke for lunch at one o'clock."], NODES)
     assert chunk.anchor_keys == ()

@@ -58,22 +58,26 @@ TRANSCRIPT_B = "The deal desk analyst owns the exception, not the rep."
 # Drift: the copied task registry against the real one
 # ---------------------------------------------------------------------------
 
-# `importorskip` rather than a plain import, matching
-# `fde-sor/tests/test_gateway_schema.py`: fde-gate does not DEPEND on
-# fde-agents, it only shares a workspace virtualenv with it, and CI's
-# `uv sync --all-packages` is what guarantees this test runs there.
-engagement_agent = pytest.importorskip(
-    "fde_agents.engagement.agent",
-    reason="fde-agents is not installed in this environment (run `uv sync --all-packages`)",
-)
-workflow_agent = pytest.importorskip(
-    "fde_agents.workflow.agent",
-    reason="fde-agents is not installed in this environment (run `uv sync --all-packages`)",
-)
-development_agent = pytest.importorskip(
-    "fde_agents.development.agent",
-    reason="fde-agents is not installed in this environment (run `uv sync --all-packages`)",
-)
+_NO_AGENTS = "fde-agents is not installed in this environment (run `uv sync --all-packages`)"
+
+
+def _agent_module(name: str) -> Any:
+    """One agent module, or a SKIP of the test that asked for it.
+
+    `importorskip` rather than a plain import, matching
+    `fde-sor/tests/test_gateway_schema.py`: fde-gate does not DEPEND on
+    fde-agents, it only shares a workspace virtualenv with it, and CI's
+    `uv sync --all-packages` is what guarantees these tests run there.
+
+    Called from inside the two tests, not at module scope. At module scope
+    the skip took the whole FILE with it -- every launcher test in it, all of
+    which are about this package and none of which import fde_agents. The
+    isolated-venv case in CLAUDE.md's gotchas (`uv sync --package
+    fde-training --extra train` removes sibling packages) makes that a state
+    a developer reaches by following the documented commands, and it quietly
+    turned this file's 40-odd assertions into a green skip.
+    """
+    return pytest.importorskip(name, reason=_NO_AGENTS)
 
 
 def test_task_lists_match_the_agents() -> None:
@@ -84,6 +88,9 @@ def test_task_lists_match_the_agents() -> None:
     dispatch. A task added there and not here is simply unreachable from the
     console, silently.
     """
+    engagement_agent = _agent_module("fde_agents.engagement.agent")
+    workflow_agent = _agent_module("fde_agents.workflow.agent")
+
     assert set(agents.AGENT_TASKS["engagement"]) == set(engagement_agent.VALID_TASKS)
     assert set(agents.AGENT_TASKS["workflow"]) == set(workflow_agent.VALID_TASKS)
 
@@ -93,6 +100,8 @@ def test_the_development_agent_is_deliberately_not_offered() -> None:
     not a product-operations task. Asserted rather than assumed so a fourth
     agent cannot appear in the console without someone deciding it should.
     """
+    development_agent = _agent_module("fde_agents.development.agent")
+
     assert set(agents.AGENT_TASKS) == {"engagement", "workflow"}
     assert not set(agents.AGENT_TASKS) & set(development_agent.VALID_TASKS)
 
@@ -653,6 +662,98 @@ async def test_a_missing_required_field_is_refused_before_any_dispatch(engagemen
         )
     assert caught.value.message == "Short name is required."
     assert client.calls == []
+
+
+@pytest.mark.requires_db
+@pytest.mark.usefixtures("runtime_configured")
+async def test_a_non_reviewer_is_told_that_before_the_form_is_checked(
+    engagement: str, deactivated_reviewer: str
+) -> None:
+    """Authorisation first, validation second.
+
+    A submission from someone who may not launch anything used to be read
+    before the roster was, so an incomplete form answered "Short name is
+    required." -- an instruction to fix something that was never going to be
+    accepted, while the one real problem went unmentioned. Filling the field
+    in and trying again produces the 403 the first attempt should have been.
+    """
+    client = _FakeAgentCore()
+    with pytest.raises(GateError) as caught:
+        await agents.launch(
+            deactivated_reviewer,
+            agent="workflow",
+            task="author_workflow",
+            engagement_id=engagement,
+            # Deliberately incomplete: `slug` is required, and its refusal is
+            # the one that used to win.
+            form={
+                f"{FIELD_PREFIX}root_process_key": "proc.quote_to_cash",
+                f"{FIELD_PREFIX}title": "Untitled",
+            },
+            executor=_fake_executor(client),
+        )
+    assert caught.value.status == HTTPStatus.FORBIDDEN
+    assert "not an active reviewer" in caught.value.message
+    assert "required" not in caught.value.message
+    assert client.calls == []
+
+
+@pytest.mark.requires_db
+@pytest.mark.usefixtures("runtime_configured")
+async def test_an_unknown_task_from_a_non_reviewer_is_still_a_403(
+    engagement: str, deactivated_reviewer: str
+) -> None:
+    """The same ordering against the other pre-check. Which tasks exist is
+    not information a refused caller has to be given first.
+    """
+    with pytest.raises(GateError) as caught:
+        await agents.launch(
+            deactivated_reviewer,
+            agent="engagement",
+            task="author_workflow",  # a workflow-agent task
+            engagement_id=engagement,
+            form={f"{FIELD_PREFIX}material": TRANSCRIPT_A},
+            executor=_fake_executor(_FakeAgentCore()),
+        )
+    assert caught.value.status == HTTPStatus.FORBIDDEN
+
+
+@pytest.mark.requires_db
+@pytest.mark.usefixtures("runtime_configured")
+async def test_a_source_from_another_engagement_is_not_readable(
+    engagement: str, registered_source: int, sql: Any
+) -> None:
+    """`_material_from_source` joins to `kg.source` on the engagement, and
+    that join is the access check.
+
+    `source_id` arrives from a form. The picker it came from lists one
+    engagement, so a number from a different one is a stale page or a typed
+    id -- and reading its text would hand the agent, and the operator
+    watching, a document from an engagement they were not looking at. The
+    refusal is the same sentence an empty source produces: both mean "not
+    something this engagement has".
+    """
+    other = str(uuid.uuid4())
+    client = _FakeAgentCore()
+    with pytest.raises(GateError) as caught:
+        await agents.launch(
+            SME,
+            agent="engagement",
+            task="ingest_interview",
+            engagement_id=other,
+            form={f"{FIELD_PREFIX}source_id": str(registered_source)},
+            executor=_fake_executor(client),
+        )
+    assert caught.value.status == HTTPStatus.BAD_REQUEST
+    assert f"source {registered_source} has no stored passages on this engagement" in (
+        caught.value.message
+    )
+    assert client.calls == [], "nothing was dispatched, so no text left the engagement"
+    # The source really does have text -- on the engagement it belongs to.
+    (row,) = sql(
+        "SELECT count(*) AS n FROM kg.chunk WHERE source_id = %(s)s", {"s": registered_source}
+    )
+    assert row["n"] == 2, "the refusal is about the engagement, not about an empty source"
 
 
 @pytest.mark.requires_db

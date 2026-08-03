@@ -33,7 +33,9 @@ namespace segment stripped and the separators opened out,
 words. Stripping that first segment is load-bearing, not cosmetic: `act`,
 `sys` and `role` are the one part of a key that never appears in a
 transcript, and leaving them in meant no key ever matched (see
-`_readable_key`).
+`_readable_key`). What is left of a key after the strip has to be more than
+one word to anchor at all, because a one-word tail is a category and not a
+name -- `_phrases` has the argument.
 
 It reads the same relation `kg.lexical_search` reads (`kg.node_current`,
 filtered by engagement) and deliberately does NOT reuse its ranking.
@@ -82,6 +84,10 @@ MAX_TRANSCRIPT_CHARS = 1_000_000
 # "AR" would otherwise anchor every chunk containing the word "are" once
 # punctuation is stripped -- an anchor that is always true carries no
 # information and quietly poisons the ranking for that node.
+#
+# It is a floor on LENGTH, and length alone was not enough for the phrases
+# derived from a KEY: see `_phrases`, which additionally requires those to be
+# more than one word.
 MIN_ANCHOR_PHRASE_CHARS = 4
 
 # A paragraph break: a blank line, however much horizontal space is in it.
@@ -298,13 +304,24 @@ def _phrases(node: LiveNode) -> set[str]:
     key is authored as a dotted slug and the words inside it are usually the
     words in the room. Both go through the same normalisation as the chunk, so
     the comparison is between two strings shaped the same way.
+
+    They do NOT clear the same bar. A label is what somebody chose to call
+    this thing, so "Dunning" earns its anchor. A key tail is a slug, and a
+    one-word slug is usually a category rather than a name: `act.review`
+    leaves "review", which appears in an interview about anything, and every
+    chunk of every transcript anchors to it. That is not coverage -- an
+    anchor that is always true tells retrieval nothing and quietly outranks
+    the anchors that mean something. So a key-derived phrase has to be more
+    than one word; the label keeps the length floor and nothing else.
     """
-    candidates = {node.label, _readable_key(node.node_key)}
-    return {
-        normalised
-        for candidate in candidates
-        if len(normalised := _normalise(candidate)) >= MIN_ANCHOR_PHRASE_CHARS
-    }
+    phrases: set[str] = set()
+    label = _normalise(node.label)
+    if len(label) >= MIN_ANCHOR_PHRASE_CHARS:
+        phrases.add(label)
+    tail = _normalise(_readable_key(node.node_key))
+    if len(tail) >= MIN_ANCHOR_PHRASE_CHARS and " " in tail:
+        phrases.add(tail)
+    return phrases
 
 
 def match_anchors(contents: list[str], nodes: list[LiveNode]) -> list[MatchedChunk]:
