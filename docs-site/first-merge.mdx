@@ -207,9 +207,10 @@ WHERE proposal_id = <your proposal id>;
 ```
 
 ```text
- item_status |    edited_by    |       agent_wrote        |            reviewer_wrote
--------------+-----------------+--------------------------+--------------------------------------
- edited      | sme@example.com | Rep sends teh quote.     | Rep sends the quote to the customer.
+ item_status |    edited_by    |                    agent_wrote                     |                                 reviewer_wrote
+-------------+-----------------+----------------------------------------------------+--------------------------------------------------------------------------------
+ edited      | sme@example.com | Deal desk reviews quotes discounted beyond policy. | Deal desk reviews any quote discounted more than 20 percent before it is sent.
+(1 row)
 ```
 
 The graph gets the reviewer's text; `original_payload` keeps the agent's, once
