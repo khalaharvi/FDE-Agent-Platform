@@ -147,6 +147,12 @@ the key, because these servers do not check it. A hosted compatible endpoint
 that does require a key still needs one, via `FDE_MODEL_API_KEY` or
 `fde-providers login openai-compat`.
 
+Embeddings from the same class of server are configured separately and have
+no preset table: `FDE_EMBED_PROVIDER=openai-compat` reads its base URL from
+**`FDE_EMBED_BASE_URL`**, which is required rather than optional — `doctor`
+fails the embeddings check outright when it is unset. The server has to serve
+`/v1/embeddings` with one of the 1024-dim models named above.
+
 ## Before you commit to a provider
 
 <Warning>
