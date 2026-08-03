@@ -98,6 +98,9 @@ class AgentSettings:
         trace_session_id: `FDE_TRACE_SESSION_ID`. When set, every tool
             call appends one row to `trn.trace_step` under this session;
             when unset, tracing is a no-op (see `_base.emit_trace`).
+        model_api_key: `FDE_MODEL_API_KEY`. The API key override for
+            OpenAI-compatible model/embedding endpoints; optional because
+            not every deployment uses OpenAI-compatible providers.
     """
 
     runtime_arn: str
@@ -105,6 +108,7 @@ class AgentSettings:
     model_id: str | None
     principal: str
     trace_session_id: str | None
+    model_api_key: str | None
 
     def __post_init__(self) -> None:
         if self.name not in _VALID_AGENT_NAMES:
@@ -120,6 +124,7 @@ class AgentSettings:
             model_id=_env_opt_str("FDE_MODEL_ID"),
             principal=_env_opt_str("FDE_PRINCIPAL") or runtime_arn,
             trace_session_id=_env_opt_str("FDE_TRACE_SESSION_ID"),
+            model_api_key=_env_opt_str("FDE_MODEL_API_KEY"),
         )
 
 

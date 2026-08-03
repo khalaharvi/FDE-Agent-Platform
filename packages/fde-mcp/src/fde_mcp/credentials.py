@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import os
 
+from fde_mcp.config import get_settings
+
 KEYCHAIN_SERVICE = "fde-platform"
 
 # provider key -> primary env var. `gemini` also honours GOOGLE_API_KEY
@@ -55,7 +57,9 @@ def _keyring_delete(account: str) -> bool:
 
     try:
         keyring.delete_password(KEYCHAIN_SERVICE, account)
-    except keyring.errors.PasswordDeleteError:
+    except keyring.errors.KeyringError:
+        # A locked/absent backend or missing key means "delete failed", not a crash --
+        # the caller falls through to returning False, same contract as _keyring_get.
         return False
     return True
 
@@ -73,11 +77,15 @@ def peek_api_key(provider: str) -> tuple[str | None, str]:
     absence: ("env"|"keychain"|"none"). `fde-providers status` uses this.
     """
     env_var = _require_known(provider)
-    from_env = os.environ.get(env_var)
-    if not from_env:
-        fallback = _FALLBACK_ENV_VARS.get(provider)
-        if fallback:
-            from_env = os.environ.get(fallback)
+    # For openai-compat, read from settings; for vendor vars, read from os.environ.
+    if provider == "openai-compat":
+        from_env = get_settings().agent.model_api_key
+    else:
+        from_env = os.environ.get(env_var)
+        if not from_env:
+            fallback = _FALLBACK_ENV_VARS.get(provider)
+            if fallback:
+                from_env = os.environ.get(fallback)
     if from_env:
         return from_env, "env"
     stored = _keyring_get(provider)

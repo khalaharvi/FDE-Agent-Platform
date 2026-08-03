@@ -10,6 +10,15 @@ from __future__ import annotations
 import pytest
 
 from fde_mcp import credentials
+from fde_mcp.config import get_settings
+
+
+@pytest.fixture
+def _clear_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the settings cache before and after each test that touches FDE_MODEL_API_KEY."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -75,6 +84,7 @@ def test_unknown_provider_raises(fake_keychain: dict[str, str]) -> None:
         credentials.resolve_api_key("netscape")
 
 
+@pytest.mark.usefixtures("_clear_settings")
 def test_store_and_delete_roundtrip(
     monkeypatch: pytest.MonkeyPatch, fake_keychain: dict[str, str]
 ) -> None:
@@ -83,3 +93,17 @@ def test_store_and_delete_roundtrip(
     assert credentials.peek_api_key("openai-compat") == ("local-key", "keychain")
     assert credentials.delete_api_key("openai-compat") is True
     assert credentials.delete_api_key("openai-compat") is False
+
+
+def test_keyring_delete_handles_no_keyring_error(
+    monkeypatch: pytest.MonkeyPatch, fake_keychain: dict[str, str]
+) -> None:
+    """Verify delete_api_key returns False when keyring backend raises NoKeyringError."""
+    import keyring  # noqa: PLC0415
+    import keyring.errors  # noqa: PLC0415
+
+    def _raise_no_keyring(service: str, account: str) -> None:
+        raise keyring.errors.NoKeyringError()
+
+    monkeypatch.setattr(keyring, "delete_password", _raise_no_keyring)
+    assert credentials.delete_api_key("openai") is False
