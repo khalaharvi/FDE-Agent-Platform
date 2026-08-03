@@ -59,7 +59,7 @@ from typing import Any, cast
 from fde_agents.common.config import ModelBackendSettings, resolve_model_id
 from fde_agents.common.providers import resolve_base_url
 from fde_agents.common.runtime import Handler, StreamEvent, TaskPayload
-from fde_mcp.credentials import peek_api_key
+from fde_mcp.credentials import CredentialError, peek_api_key
 from fde_mcp.providers_cli import validate_api_key
 
 _USAGE = __doc__ or ""
@@ -212,11 +212,17 @@ def _check_model_provider() -> tuple[str, str | None]:
             "no AWS credential chain detected (set AWS_ACCESS_KEY_ID / AWS_PROFILE / "
             "AWS_ROLE_ARN, or rely on an instance/task role)",
         )
-    key, source = peek_api_key(provider)
-    if key is None:
-        return ("model provider", f"no key: run fde-providers login {provider}")
-    base_url = resolve_base_url(backend) if provider == "openai-compat" else None
-    error = validate_api_key(provider, key, base_url=base_url)
+    try:
+        key, source = peek_api_key(provider)
+        if key is None:
+            return ("model provider", f"no key: run fde-providers login {provider}")
+        base_url = resolve_base_url(backend) if provider == "openai-compat" else None
+        error = validate_api_key(provider, key, base_url=base_url)
+    except (CredentialError, ValueError) as exc:
+        # Unknown FDE_MODEL_PROVIDER value (peek_api_key) or an openai-compat
+        # backend missing both FDE_MODEL_BASE_URL and FDE_MODEL_COMPAT_PRESET
+        # (resolve_base_url) -- doctor reports it as a failed check, not a crash.
+        return ("model provider", str(exc))
     if error is not None:
         return ("model provider", f"{error} (key from {source})")
     return ("model provider", None)
