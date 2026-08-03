@@ -28,7 +28,13 @@ from fde_gate.http import as_conflict
 from fde_gate.rows import fetchall, fetchone
 from fde_mcp import db
 from fde_mcp.logging import get_logger
-from fde_mcp.playbook import render_playbook, sort_bindings
+from fde_mcp.playbook import (
+    PROCESS_FLOW_SQL,
+    STEPS_SQL,
+    WORKFLOW_SQL,
+    render_playbook,
+    sort_bindings,
+)
 
 log = get_logger(__name__)
 
@@ -36,36 +42,14 @@ __all__ = ["get_playbook", "get_workflow", "list_workflows", "publish"]
 
 _MAX_LIMIT = 500
 
-# Shared by `get_workflow` and `get_playbook`, which must not be allowed to
-# drift: the console page, the JSON API and the Markdown export are three
-# views of one row set, and a column added to one query and forgotten in the
-# other is a field that silently exists on some surfaces and not others.
-_WORKFLOW_SQL = """
-    SELECT workflow_id, workflow_uuid, engagement_id, slug, version, title,
-           description, status::text AS status, root_process_key,
-           pinned_commit_id, pinned_digest, runnable_by, autonomy_level,
-           authored_by, published_by, published_at, deprecated_at, created_at
-      FROM wf.workflow WHERE workflow_id = %(wid)s
-"""
-
-_STEPS_SQL = """
-    SELECT s.step_id, s.step_key, s.ordinal, s.kind::text AS kind, s.title,
-           s.instruction, s.tool_name, s.tool_args, s.human_prompt,
-           s.human_schema, s.branches, s.sor_adapter_key, s.sor_write_op,
-           s.requires_human, s.timeout_seconds, s.on_failure,
-           coalesce(
-             (SELECT jsonb_agg(jsonb_build_object(
-                       'subject_kind', b.subject_kind,
-                       'subject_key',  b.subject_key,
-                       'relation',     b.relation,
-                       'pinned_label', b.pinned_label)
-                     ORDER BY b.binding_id)
-                FROM wf.step_binding b WHERE b.step_id = s.step_id),
-             '[]'::jsonb) AS bindings
-      FROM wf.step s
-     WHERE s.workflow_id = %(wid)s
-     ORDER BY s.ordinal
-"""
+# The workflow/step queries come from `fde_mcp.playbook`, which owns both the
+# document and the rows it is rendered from. `get_workflow` uses them too: the
+# console page, the JSON API and the Markdown export are three views of one row
+# set, and a column that existed on only some of them would be a field that
+# silently appears depending on which surface you asked.
+#
+# The role is this module's decision, not the query's -- these run as
+# `fde_prodops`, the MCP tool runs the same text as `fde_agent`.
 
 
 async def list_workflows(
@@ -125,12 +109,12 @@ async def get_workflow(workflow_id: int) -> dict[str, Any]:
         db.tool_transaction(role=get_gate_settings().gate.prodops_role) as conn,
         conn.cursor() as cur,
     ):
-        await cur.execute(_WORKFLOW_SQL, {"wid": workflow_id})
+        await cur.execute(WORKFLOW_SQL, {"wid": workflow_id})
         workflow = await fetchone(cur)
         if workflow is None:
             return {"error": f"workflow {workflow_id} not found"}
 
-        await cur.execute(_STEPS_SQL, {"wid": workflow_id})
+        await cur.execute(STEPS_SQL, {"wid": workflow_id})
         workflow["steps"] = await fetchall(cur)
 
     return workflow
@@ -152,16 +136,16 @@ async def get_playbook(workflow_id: int) -> dict[str, Any]:
         db.tool_transaction(role=get_gate_settings().gate.prodops_role) as conn,
         conn.cursor() as cur,
     ):
-        await cur.execute(_WORKFLOW_SQL, {"wid": workflow_id})
+        await cur.execute(WORKFLOW_SQL, {"wid": workflow_id})
         workflow = await fetchone(cur)
         if workflow is None:
             return {"error": f"workflow {workflow_id} not found"}
 
-        await cur.execute(_STEPS_SQL, {"wid": workflow_id})
+        await cur.execute(STEPS_SQL, {"wid": workflow_id})
         steps = await fetchall(cur)
 
         await cur.execute(
-            "SELECT * FROM kg.process_flow(%(eng)s::uuid, %(key)s)",
+            PROCESS_FLOW_SQL,
             {"eng": workflow["engagement_id"], "key": workflow["root_process_key"]},
         )
         process_flow = await fetchall(cur)

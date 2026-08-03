@@ -13,9 +13,28 @@ Three surfaces render the same playbook -- the console's workflow page,
 `GET /api/workflows/{id}/playbook.md`, and the `wf_export_playbook` MCP tool
 -- and they have to emit the same bytes, or "export the playbook" means
 something different depending on which one you asked. fde-gate depends on
-fde-mcp and not the other way round, so the shared renderer can only sit on
-this side of that edge. It is pure: standard library only, no database, no
-MCP; it takes rows and returns a string.
+fde-mcp and not the other way round, so the shared code can only sit on this
+side of that edge.
+
+The queries are here too, and that is the point
+------------------------------------------------
+`WORKFLOW_SQL`, `STEPS_SQL` and `PROCESS_FLOW_SQL` are exported beside the
+renderer because the document is only single-sourced if its INPUTS are. They
+started as byte-identical copies in fde-gate's service layer and in
+`tools/workflow.py`, with a comment in each warning the other not to drift --
+which is a hazard written down, not a hazard removed. A column added for a
+`sor_write` step to one copy and forgotten in the other would diverge in
+production while a cross-surface test that only exercised `tool` and `human`
+steps stayed green.
+
+Only the query TEXT lives here. Role selection stays at each call site
+(`db.tool_transaction(role=...)`), because the two surfaces genuinely run as
+different database roles -- `fde_prodops` for the console and the API,
+`fde_agent` for the MCP tool -- and that difference is a privilege decision,
+not a query detail.
+
+This module holds no database code: standard library only, no psycopg, no
+MCP. It takes rows and returns a string, and it says which rows it wants.
 
 Determinism is the contract, not a nicety
 ------------------------------------------
@@ -47,7 +66,51 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-__all__ = ["render_playbook", "sort_bindings"]
+__all__ = [
+    "PROCESS_FLOW_SQL",
+    "STEPS_SQL",
+    "WORKFLOW_SQL",
+    "render_playbook",
+    "sort_bindings",
+]
+
+# ---------------------------------------------------------------------------
+# The rows this module renders. See the module docstring for why they live
+# beside the renderer rather than in each caller.
+#
+# The enum columns are cast to text because the renderer formats what it is
+# handed: a `kind` arriving as an enum on one surface and a string on the
+# other would be a document that differs by caller.
+# ---------------------------------------------------------------------------
+
+WORKFLOW_SQL = """
+    SELECT workflow_id, workflow_uuid, engagement_id, slug, version, title,
+           description, status::text AS status, root_process_key,
+           pinned_commit_id, pinned_digest, runnable_by, autonomy_level,
+           authored_by, published_by, published_at, deprecated_at, created_at
+      FROM wf.workflow WHERE workflow_id = %(wid)s
+"""
+
+STEPS_SQL = """
+    SELECT s.step_id, s.step_key, s.ordinal, s.kind::text AS kind, s.title,
+           s.instruction, s.tool_name, s.tool_args, s.human_prompt,
+           s.human_schema, s.branches, s.sor_adapter_key, s.sor_write_op,
+           s.requires_human, s.timeout_seconds, s.on_failure,
+           coalesce(
+             (SELECT jsonb_agg(jsonb_build_object(
+                       'subject_kind', b.subject_kind,
+                       'subject_key',  b.subject_key,
+                       'relation',     b.relation,
+                       'pinned_label', b.pinned_label)
+                     ORDER BY b.binding_id)
+                FROM wf.step_binding b WHERE b.step_id = s.step_id),
+             '[]'::jsonb) AS bindings
+      FROM wf.step s
+     WHERE s.workflow_id = %(wid)s
+     ORDER BY s.ordinal
+"""
+
+PROCESS_FLOW_SQL = "SELECT * FROM kg.process_flow(%(eng)s::uuid, %(key)s)"
 
 # Bindings are listed in the order db/006's `relation` CHECK declares, which
 # runs from the strongest claim to the weakest: a step's `implements` is what

@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from fde_mcp import db
 from fde_mcp.config import get_settings
-from fde_mcp.playbook import render_playbook
+from fde_mcp.playbook import PROCESS_FLOW_SQL, STEPS_SQL, WORKFLOW_SQL, render_playbook
 from fde_mcp.tools._base import emit_trace, fetchall, fetchone, now_ms, pg_error_boundary
 
 if TYPE_CHECKING:
@@ -28,39 +28,6 @@ __all__ = ["StepBindingSpec", "StepSpec", "register"]
 
 STEP_KINDS = ("agent", "tool", "human", "decision", "sor_write", "notify")
 STEP_BINDING_RELATIONS = ("implements", "enforces", "records_to", "depends_on", "measured_by")
-
-# The rows `render_playbook` reads, in the shape it reads them. The enum
-# columns are cast to text here and in fde_gate's matching queries for the
-# same reason: the renderer formats what it is handed, and a `kind` that
-# arrives as an enum on one surface and a string on the other is a document
-# that differs by caller. `packages/fde-gate/tests/test_playbook_surfaces.py`
-# renders through both paths and diffs the bytes.
-_PLAYBOOK_WORKFLOW_SQL = """
-    SELECT workflow_id, workflow_uuid, engagement_id, slug, version, title,
-           description, status::text AS status, root_process_key,
-           pinned_commit_id, pinned_digest, runnable_by, autonomy_level,
-           authored_by, published_by, published_at, deprecated_at, created_at
-      FROM wf.workflow WHERE workflow_id = %(wid)s
-"""
-
-_PLAYBOOK_STEPS_SQL = """
-    SELECT s.step_id, s.step_key, s.ordinal, s.kind::text AS kind, s.title,
-           s.instruction, s.tool_name, s.tool_args, s.human_prompt,
-           s.human_schema, s.branches, s.sor_adapter_key, s.sor_write_op,
-           s.requires_human, s.timeout_seconds, s.on_failure,
-           coalesce(
-             (SELECT jsonb_agg(jsonb_build_object(
-                       'subject_kind', b.subject_kind,
-                       'subject_key',  b.subject_key,
-                       'relation',     b.relation,
-                       'pinned_label', b.pinned_label)
-                     ORDER BY b.binding_id)
-                FROM wf.step_binding b WHERE b.step_id = s.step_id),
-             '[]'::jsonb) AS bindings
-      FROM wf.step s
-     WHERE s.workflow_id = %(wid)s
-     ORDER BY s.ordinal
-"""
 
 
 class StepBindingSpec(BaseModel):
@@ -222,9 +189,12 @@ async def wf_export_playbook(workflow_id: int) -> dict[str, Any]:
     walk, and cannot draft, edit, or publish anything.
     """
     t0 = now_ms()
+    # The queries come from fde_mcp.playbook, which owns the document and the
+    # rows it renders. Only the role is decided here: this runs as fde_agent,
+    # the gate runs the same text as fde_prodops.
     async with db.tool_transaction() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(_PLAYBOOK_WORKFLOW_SQL, {"wid": workflow_id})
+            await cur.execute(WORKFLOW_SQL, {"wid": workflow_id})
             workflow = await fetchone(cur)
             if workflow is None:
                 missing: dict[str, Any] = {
@@ -234,11 +204,11 @@ async def wf_export_playbook(workflow_id: int) -> dict[str, Any]:
                 await emit_trace(conn, "wf_export_playbook", missing, latency_ms=int(now_ms() - t0))
                 return missing
 
-            await cur.execute(_PLAYBOOK_STEPS_SQL, {"wid": workflow_id})
+            await cur.execute(STEPS_SQL, {"wid": workflow_id})
             steps = await fetchall(cur)
 
             await cur.execute(
-                "SELECT * FROM kg.process_flow(%(eng)s::uuid, %(key)s)",
+                PROCESS_FLOW_SQL,
                 {"eng": workflow["engagement_id"], "key": workflow["root_process_key"]},
             )
             process_flow = await fetchall(cur)

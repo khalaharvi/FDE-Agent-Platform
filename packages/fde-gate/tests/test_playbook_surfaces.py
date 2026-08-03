@@ -29,6 +29,17 @@ pytestmark = pytest.mark.requires_db
 # customer documents, exactly as proposal payloads are (see test_ui.py).
 HOSTILE_INSTRUCTION = '<script>alert("xss")</script>'
 
+# One step of every `wf.step_kind`, so the shared SELECT is exercised on every
+# kind-specific column it carries -- tool_name/tool_args, human_prompt/
+# human_schema, branches, sor_adapter_key/sor_write_op. A fixture of only
+# `tool` and `human` steps let a column added for `sor_write` diverge between
+# the two surfaces while this file stayed green.
+#
+# The `decision` step's branches are the LIST shape `DecisionExecutor`
+# evaluates, which `wf_draft` cannot currently author -- `StepSpec.branches` is
+# typed `dict[str, Any] | None` (a ledgered pre-existing bug). The column is
+# jsonb and this fixture writes it directly, so the surfaces are still tested
+# against the shape the runner actually executes.
 STEPS: list[dict[str, Any]] = [
     {
         "step_key": "pull_quote",
@@ -36,6 +47,15 @@ STEPS: list[dict[str, Any]] = [
         "title": "Pull the quote from CPQ",
         "instruction": "Read the quote record.",
         "tool_name": "cpq_get_quote",
+        "tool_args": {"quote_id": {"$ctx": "$.input.quote_id"}},
+        "timeout_seconds": 120,
+    },
+    {
+        "step_key": "summarise_account",
+        "kind": "agent",
+        "title": "Summarise the account history",
+        "instruction": "Draft a short account summary for the reviewer.",
+        "tool_name": "kg_search",
     },
     {
         "step_key": "deal_desk",
@@ -46,6 +66,30 @@ STEPS: list[dict[str, Any]] = [
         "human_schema": {"type": "object"},
         "requires_human": True,
         "on_failure": "escalate",
+    },
+    {
+        "step_key": "route_outcome",
+        "kind": "decision",
+        "title": "Route on the deal desk's answer",
+        "instruction": "Send approvals onward and rejections back to the rep.",
+        "branches": [
+            {"when": "$.deal_desk.approved == true", "goto": "record_outcome"},
+            {"else": "notify_rep"},
+        ],
+    },
+    {
+        "step_key": "record_outcome",
+        "kind": "sor_write",
+        "title": "Record the decision in CPQ",
+        "instruction": "Write the decision back onto the quote.",
+        "sor_adapter_key": "cpq",
+        "sor_write_op": "update_quote_status",
+    },
+    {
+        "step_key": "notify_rep",
+        "kind": "notify",
+        "title": "Tell the rep the outcome",
+        "instruction": "Notify the quote owner that review has closed.",
     },
 ]
 
@@ -197,12 +241,29 @@ async def test_the_playbook_route_does_not_shadow_the_json_workflow_route(
 # ---------------------------------------------------------------------------
 
 
+def test_the_fixture_covers_every_step_kind() -> None:
+    """A guard on the guard below, which is only as good as what it renders.
+
+    `wf.step_kind` gaining a value has to mean this fixture gains a step, or
+    the identical-bytes test silently stops covering the columns that kind
+    brings with it -- which is exactly how the two surfaces' queries were able
+    to be byte-identical copies without anything noticing.
+    """
+    covered = {step["kind"] for step in STEPS}
+    assert covered == set(mcp_workflow.STEP_KINDS), (
+        "add a step of the missing kind to STEPS so the cross-surface test "
+        "renders the columns that kind uses"
+    )
+
+
 async def test_the_gate_and_the_mcp_tool_render_identical_bytes(make_workflow: Any) -> None:
     """The whole reason the renderer sits in fde-mcp rather than in fde-gate.
 
-    The two packages hold their own copies of the SELECTs that feed it --
-    they run as different database roles -- so this is what catches a column
-    added to one and forgotten in the other.
+    Both surfaces now run the SAME query text (`fde_mcp.playbook`'s
+    `WORKFLOW_SQL`/`STEPS_SQL`/`PROCESS_FLOW_SQL`) under their own roles, so a
+    column can no longer be added to one copy and forgotten in the other. This
+    still earns its place: it is what catches the renderer, the row shapes, or
+    the role difference producing two different documents.
     """
     workflow_id = make_workflow(STEPS)
 
@@ -211,6 +272,21 @@ async def test_the_gate_and_the_mcp_tool_render_identical_bytes(make_workflow: A
 
     assert "error" not in from_mcp, from_mcp
     assert from_gate["markdown"] == from_mcp["markdown"]
+
+    # Every kind-specific column reached the document, so the comparison above
+    # is over a full row rather than over the columns two kinds happen to use.
+    document = str(from_mcp["markdown"])
+    for expected in (
+        "- Tool: `cpq_get_quote`",
+        "- Kind: `agent`",
+        "**Ask the operator:** Approve this discount?",
+        "1. When `$.deal_desk.approved == true`, go to step `record_outcome`",
+        "2. Otherwise, go to step `notify_rep`",
+        "- System of record: `cpq`",
+        "- Write operation: `update_quote_status`",
+        "exempt from the faithfulness check",
+    ):
+        assert expected in document, expected
 
 
 async def test_the_page_and_the_document_cite_bindings_in_one_order(make_workflow: Any) -> None:
@@ -253,7 +329,7 @@ async def test_the_console_page_and_the_export_read_the_same_transaction(
     workflow_id = make_workflow(STEPS)
     playbook = await workflows.get_playbook(workflow_id)
 
-    assert [step["step_key"] for step in playbook["steps"]] == ["pull_quote", "deal_desk"]
+    assert [step["step_key"] for step in playbook["steps"]] == [s["step_key"] for s in STEPS]
     for step in playbook["steps"]:
         assert f"### {step['ordinal']}. {step['title']}" in playbook["markdown"]
     assert playbook["workflow"]["status"] == "published"
