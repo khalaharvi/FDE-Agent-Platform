@@ -48,6 +48,13 @@ a graph node, calling the merge function, publishing a workflow, labeling its
 own training data, and four more. If any of the eight statements succeeds,
 the build fails. The invariant is asserted, not trusted.
 
+<Frame caption="Proposal to sealed commit. Remove any one of the four red checkpoints and the other three still catch it.">
+  <img
+    src="/images/diagram-04-hitl-flow.png"
+    alt="Flowchart from an agent's proposal to a sealed commit. kg_propose drafts proposal items, kg_submit_proposal calls compute_required_gates — pure SQL over the gate policy table — and submit_proposal materializes the gate set so a later policy edit cannot move the bar mid-review. Reviewers then decide by distinct authority, gates_satisfied checks for distinct authorized non-self approvals with no live reject, and only then may the gate service call hitl.merge_proposal, which re-checks gates_satisfied inside its own transaction before sealing a kg.commit. Four fail-closed checkpoints are marked in red: missing evidence, no policy matched, incomplete or unauthorized quorum, and the merge-time re-check that closes the approve-then-merge race. A side panel lists what the agent structurally cannot do."
+  />
+</Frame>
+
 ## The four gate kinds
 
 Different questions, asked of different people. Collapsing them into one
@@ -67,8 +74,12 @@ Gate rules are additive. A proposal adding a new process that touches a
 control and carries weak evidence collects every gate that fires — the
 shipped policy set includes a catch-all ontology review on everything, a
 two-reviewer quorum for new processes, compliance sign-off for anything
-touching a control, and a process-owner gate for any claim that an activity
-is automatable.
+touching a control, a process-owner gate for any claim that an activity is
+automatable, and a factual gate whenever the evidence already in the graph
+for a subject scores below `0.65`. That last rule is why a net-new node
+always collects a factual gate: nothing in the graph corroborates it yet, so
+its evidence strength is exactly zero. You can watch both of these fire in
+[your first merge](/first-merge).
 
 ## The gate set freezes at submit
 
