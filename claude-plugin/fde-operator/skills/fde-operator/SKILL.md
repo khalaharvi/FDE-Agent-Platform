@@ -134,8 +134,11 @@ rejected:
 | `workflow` | `reauthor_stale` | `workflow_id` |
 
 Every `workflow` task also accepts `await_gates` (default false): set it when
-this invocation should wait briefly for the gate its proposal triggers instead
-of returning as soon as it submits.
+this invocation should wait for the gate its proposal triggers instead of
+returning as soon as it submits. It then camps on the gate for up to **20
+minutes** (`FDE_GATE_WAIT_TIMEOUT_S`), so use it only when a reviewer is
+standing by. The key is reachable only through `fde-agents-local --input`; the
+console launcher's forms do not offer it.
 
 `fde-agents-local` also accepts a third agent, `development`. It is out of scope
 here for the same reason the console launcher omits it

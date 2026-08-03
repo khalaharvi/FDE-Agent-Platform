@@ -94,6 +94,10 @@ consequence for a deployed database: `FDE_DB_DSN` **wins over**
 precedence over Secrets Manager or IAM auth. Point `FDE_DB_DSN` at the real
 database, or edit the default out of `.mcp.json`, before using either.
 
+There is no model configuration here: the plugin uses whatever model your Claude
+session runs. `FDE_MODEL_*` configures the platform's own agents, which are a
+different thing (`docs/03-agent-workflow.md`).
+
 ### Verified / not verified
 
 - **Verified:** the launch command starts the server and reports its tool count;
@@ -104,10 +108,6 @@ database, or edit the default out of `.mcp.json`, before using either.
   real Claude Code installation. Nothing here was installed into a user's
   `~/.claude`, so the install flow is written against the documented behaviour
   and the on-disk layout of already-installed plugins, not exercised end to end.
-
-There is no model configuration here: the plugin uses whatever model your Claude
-session runs. `FDE_MODEL_*` configures the platform's own agents, which are a
-different thing (`docs/03-agent-workflow.md`).
 
 ## Install — Claude Desktop
 
