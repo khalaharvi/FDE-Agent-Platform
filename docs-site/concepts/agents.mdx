@@ -1,0 +1,103 @@
+---
+title: "The three agents"
+description: "Engagement, Workflow, and Development: what each agent does, how they form a loop, and the 21 MCP tools they share."
+---
+
+The platform ships three agents, designed to run as Amazon Bedrock AgentCore
+runtimes. They are not a pipeline — they are a loop, and the loop is what
+makes the knowledge graph a living model of the business rather than a
+document that was true once.
+
+## Engagement Agent
+
+The on-site assistant. It interviews subject-matter experts, maps workflows,
+detects bottlenecks, and scores automation opportunities. Its relationship to
+the graph is strict: **everything it produces is a proposal, never a write.**
+It turns what people say into evidenced, structured claims — every asserted
+fact must cite a source — and those claims wait in the review queue until
+humans clear the [gates](/concepts/human-gates).
+
+## Workflow Agent
+
+The remodeler. It reads the graph at a pinned commit and authors workflows
+whose every step must name the graph element it implements. A faithfulness
+check refuses to pass any workflow with an unbound step or a binding to an
+element that was not live at the pin — "faithful to the graph" is checkable,
+not aspirational. It also watches the systems of record for drift: when
+deterministic SQL detectors show reality diverging from the graph, the
+Workflow Agent triages the signal, and its proposed response enters the same
+review queue as everything else.
+
+## Development Agent
+
+The builder. It consumes published workflows and emits deployable agent
+packages — with evals derived from the workflow itself, so a generated agent
+is tested against the process it claims to implement, not against a generic
+benchmark.
+
+## The loop
+
+```text
+Engagement Agent ── proposal ──▶ [human gates] ── merge ──▶ knowledge graph
+                                                                │
+                     pinned commit ◀────────────────────────────┤
+                          │                                     │
+                   Workflow Agent ──▶ published workflow        │
+                          │                    │                │
+                    drift monitor       Development Agent       │
+                          ▲                    │                │
+                 system of record ◀──── deployed agents         │
+                          │                                     │
+                          └── drift signal ── new proposal ─────┘
+```
+
+The loop closes because a drift signal becomes a new proposal back into the
+review queue. Nothing — not an interview claim, not a drift response, not a
+workflow — reaches the graph without a human decision, and every one of those
+decisions becomes a training label.
+
+<Frame caption="The drift half of the loop in detail. The Workflow Agent only enters after a deterministic detector has already fired — it explains and prioritizes drift, it never decides whether drift exists.">
+  <img
+    src="/images/diagram-05-drift-loop.png"
+    alt="Flowchart of drift detection and closure along two axes that share one table, sor.drift_signal. On the reality-drift axis, system-of-record adapters write sor.observation rows that a materialized transition view feeds to four deterministic SQL detectors — sequence drift, control bypass, actor drift and latency drift — each with an explicit minimum sample size. On the pin-drift axis, every merge transactionally raises a stale_pin signal for any published workflow still pinned behind the new head. Signals land in one deduplicated table; the Workflow Agent triages them and drafts a knowledge-graph proposal or re-authors the workflow, but both paths run back through the human gate and hitl.merge_proposal before anything is sealed. Side panels cover the dedup index that keeps the queue from spamming and the severity-to-path mapping."
+  />
+</Frame>
+
+## One tool surface: 21 MCP tools
+
+The agents never touch the database directly. All access goes through an MCP
+server exposing 21 typed tools:
+
+| Group | Tools |
+|---|---|
+| Graph reads (9) | search, lexical search, get node, traverse, dependency closure, impact radius, process flow, head commit, as-of snapshot |
+| Proposals (3) | propose, submit, status |
+| Drift (3) | list, scan, triage |
+| Workflow (3) | draft, get, list |
+| Evidence (3) | register source, ingest chunks, list sources |
+
+Every tool is a thin typed wrapper over the same SQL functions — no
+retrieval, gating, or faithfulness logic is reimplemented in Python. That is
+what keeps production inference, RL rollouts, and a `psql` session
+byte-identical, and a parity test enforces it.
+
+<Warning>
+The agent runtimes are written for Bedrock AgentCore against verified API
+shapes, but nothing in this repository has run on live AWS. The MCP server,
+the database, the gates, and the review console are fully exercised locally;
+the AgentCore control-plane and model-invocation paths are not. See
+[Status and honesty](/status).
+</Warning>
+
+## See it yourself
+
+The MCP server runs locally with only a database DSN — this is the same tool
+surface an agent gets:
+
+```bash
+uv run fde-mcp --help                    # prints the env contract
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp   # serve the 21 tools over stdio
+```
+
+Tools that embed queries (such as `kg_search`) call Bedrock and need AWS
+credentials; everything else works against your local Postgres.

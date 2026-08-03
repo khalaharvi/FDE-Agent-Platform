@@ -1,0 +1,73 @@
+---
+title: "Models and cost"
+description: "Model choice is configuration, not code: presets, the override order, and why cheap models are unusually safe behind human gates."
+---
+
+Model choice is the dominant variable cost of running the platform, so it is
+configuration, not code. You change a preset, not a source file, and the
+resolution order is explicit:
+
+1. `FDE_MODEL_ID` — an explicit model id always wins.
+2. `FDE_MODEL_PRESET` — one of `premium`, `balanced`, `budget`, mapping each
+   agent to a model tier.
+3. The built-in default.
+
+The presets live in one place in the code
+(`packages/fde-agents/src/fde_agents/common/config.py`), and the deploy CLI
+bakes the resolved model into each runtime's environment — so the proposal
+audit trail records exactly which model authored what.
+
+## The presets
+
+| Preset | Engagement / Workflow | Development | Approximate inference cost |
+|---|---|---|---|
+| `premium` (default) | Claude Sonnet 5 | Claude Sonnet 5 | ~$350/month |
+| `balanced` | GLM-5 | Claude Sonnet 5 | ~$150/month |
+| `budget` | GLM-5 | GLM-5 | ~$110/month |
+
+<Note>
+The cost figures are order-of-magnitude estimates for one active engagement
+(roughly 200 sessions at ~500k tokens each) at Bedrock on-demand list prices,
+before prompt caching and batch discounts. They are budgeting anchors, not
+quotes — re-derive against current pricing before committing a real budget.
+</Note>
+
+```bash
+# select at deploy time
+uv run fde-agents-deploy runtimes --agents engagement --role-arn <arn> \
+  --artifact-mode code --model-preset balanced
+
+# or override with an explicit model id
+export FDE_MODEL_ID=zai.glm-5
+```
+
+## Why cheap models are unusually safe here
+
+In most agent systems, downgrading the model trades cost against the risk of
+bad writes. Here that trade mostly disappears: every agent write passes the
+same [human gates](/concepts/human-gates) regardless of which model proposed
+it. A sloppier model lands more work in the review queue — it cannot land
+anything in the graph. And each reviewer correction of a cheap model's output
+becomes a training example through the
+[flywheel](/concepts/training-flywheel), so the cost saving funds its own
+improvement data.
+
+Two rules the presets encode deliberately:
+
+- **Small non-agentic models never drive the 21-tool loop.** The agents run
+  long multi-tool trajectories; a model below that capability class produces
+  review-queue noise faster than it saves money.
+- **A cheaper judge is a separate, measured decision.** The judge that grades
+  agent output for RL is not covered by the gate-safety argument above — a
+  bad judge corrupts rewards silently. Its verdicts are trusted only after
+  calibration against human decisions shows Cohen's kappa of at least 0.78:
+
+```bash
+uv run fde-training rival-grader calibrate
+```
+
+## Next step
+
+The presets only take effect at deploy time — see [Deployment](/deployment)
+for how runtimes are created and what has and has not been validated against
+live AWS.
