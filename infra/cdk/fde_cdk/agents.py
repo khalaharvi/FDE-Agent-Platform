@@ -573,7 +573,7 @@ class Agents(Construct):
         # in a separate, CDK-auto-generated `AWS::IAM::Policy` (not merged
         # into the existing `runtime-permissions` inline policy), same as
         # `gate.py`'s identical fix does for `gate_role`.
-        runtime_role.add_to_principal_policy(
+        login_secret_grant = runtime_role.add_to_principal_policy(
             iam.PolicyStatement(
                 sid="ReadRuntimeLoginSecret",
                 effect=iam.Effect.ALLOW,
@@ -610,7 +610,7 @@ class Agents(Construct):
         # `ReadRuntimeLoginSecret` immediately above: a separate,
         # CDK-auto-generated `AWS::IAM::Policy`, not merged into the
         # existing `runtime-permissions` inline policy.
-        runtime_role.add_to_principal_policy(
+        ecr_pull_grant = runtime_role.add_to_principal_policy(
             iam.PolicyStatement(
                 sid="PullThroughCacheEcrPublicImages",
                 effect=iam.Effect.ALLOW,
@@ -729,5 +729,16 @@ class Agents(Construct):
             # CloudFormation never attempts to create a runtime before the
             # rule its artifact resolves through exists.
             runtime.add_resource_dependency(self.pull_through_cache_rule)
+            # LIVE-VALIDATED CORRECTION (v0.3.0-rc3 launch, 2026-08-04):
+            # CreateAgentRuntime validates the ECR URI synchronously at
+            # create time, and the supplemental grants above land in a
+            # SEPARATE CDK-generated AWS::IAM::Policy resource -- the
+            # runtime referencing only role_arn gave CloudFormation no
+            # reason to wait for that policy, so validation raced the
+            # attachment and failed with "Access denied while validating
+            # ECR URI". Depend on both grants' policy resources explicitly.
+            for grant in (ecr_pull_grant, login_secret_grant):
+                if grant.policy_dependable is not None:
+                    runtime.node.add_dependency(grant.policy_dependable)
             self.runtimes[agent_name] = runtime
             self.runtime_arns[agent_name.upper()] = runtime.attr_agent_runtime_arn

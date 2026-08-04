@@ -430,3 +430,22 @@ def test_cognito_login_url_carries_console_client_id_and_redirect() -> None:
     raw = str(outs["CognitoLoginUrl"]["Value"])
     assert console_client_id in raw
     assert "response_type=code" in raw
+
+
+def test_every_runtime_depends_on_the_runtime_role_default_policy() -> None:
+    """Live-validated (v0.3.0-rc3): CreateAgentRuntime validates the ECR URI
+    synchronously, so each runtime must wait for the CDK-generated
+    DefaultPolicy (carrying the pull-through-cache ECR grants) to attach --
+    referencing role_arn alone races the policy attachment."""
+    t = synth_template()
+    resources = t.to_json()["Resources"]
+    default_policy_ids = [
+        k
+        for k, v in resources.items()
+        if v["Type"] == "AWS::IAM::Policy" and k.startswith("IamRolesRuntimeRoleDefaultPolicy")
+    ]
+    assert len(default_policy_ids) == 1
+    runtimes = {k: v for k, v in resources.items() if v["Type"] == "AWS::BedrockAgentCore::Runtime"}
+    assert len(runtimes) == 3
+    for runtime_id, runtime in runtimes.items():
+        assert default_policy_ids[0] in runtime.get("DependsOn", []), runtime_id
