@@ -96,7 +96,18 @@ jobs:
         # at least loud: the line succeeds and trips INVARIANT BROKEN. The
         # standard they were held to, and that any new line should be held
         # to, is both directions: denied for the role under test, and
-        # SUCCEEDING once the privilege is granted. The twelve after them
+        # SUCCEEDING once the privilege is granted. The denial direction is
+        # now enforced rather than only stated -- see assert_denied, which
+        # requires the refusal to be a privilege refusal. A guard masked the
+        # way those three were can therefore no longer outlive the grant that
+        # breaks the invariant: once the privilege is held, the masking error
+        # is no longer "permission denied" and the step fails on it. The
+        # succeeds-once-granted direction is still proven by hand, because
+        # eight of the statements below are unqualified -- six `UPDATE`/
+        # `DELETE` with no WHERE, plus a literal INSERT and an unqualified
+        # UPDATE that do write rows -- so running them as the migration owner
+        # would write to the very tables they protect. Qualifying those eight
+        # is the prerequisite for automating it. The twelve after them
         # guard the reviewer roster (db/016): the console may administer it,
         # nothing else may touch it, and even the console may only write the
         # columns db/016 names. Five more guard evidence intake
@@ -108,11 +119,25 @@ jobs:
         run: |
           set -u
           fail=0
+          # A denial is only evidence if the statement was refused BY THE
+          # PRIVILEGE. Any nonzero psql exit used to print "ok", so a typo, a
+          # foreign key, a "not found" raised inside a SECURITY DEFINER body,
+          # or a dead connection all read as proof -- which is how the guards
+          # described above sat dead. The refusal must now be postgres's own,
+          # matched on its message and anchored to the start of the line so
+          # that psql's echo of the failing statement cannot itself supply the
+          # words. Every current denial phrases it "permission denied for
+          # <table|function|schema> X", so the shared prefix is the tightest
+          # pattern that covers all twenty-nine. Anything else fails the step
+          # and names the line that proved nothing.
           assert_denied() {
-            if psql -v ON_ERROR_STOP=1 -q -c "SET ROLE $1; $2" >/dev/null 2>&1; then
+            local err
+            if err="$(psql -v ON_ERROR_STOP=1 -q -c "SET ROLE $1; $2" 2>&1 >/dev/null)"; then
               echo "::error::INVARIANT BROKEN -- '$1' was able to: $2"; fail=1
-            else
+            elif grep -Eq '^ERROR: +permission denied for ' <<<"$err"; then
               echo "ok: $1 denied -- ${2:0:60}"
+            else
+              echo "::error::GUARD DEAD -- '$1' was refused, but not by a privilege, so this line proves nothing: $2 -- got: $(head -1 <<<"$err")"; fail=1
             fi
           }
           assert_denied fde_agent "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) SELECT gen_random_uuid(),'x','activity','x',1 WHERE false;"
