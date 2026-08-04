@@ -653,7 +653,9 @@ class Agents(Construct):
         # hand-typed `ec2.Port.tcp(5432)`.
         db_cluster.connections.allow_default_port_from(
             self.runtime_security_group,
-            "AgentCore runtimes -> Aurora (stdio MCP + tracing)",
+            # EC2 SG-rule descriptions forbid '>' (live-validated, rc5):
+            # allowed charset is a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*
+            "AgentCore runtimes to Aurora (stdio MCP + tracing)",
         )
         # `CfnRuntime.VpcConfigProperty` takes raw subnet-id strings, not an
         # `ec2.SubnetSelection` -- resolve it once here (same private-with-
