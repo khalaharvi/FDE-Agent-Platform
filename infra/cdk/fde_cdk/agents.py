@@ -578,6 +578,29 @@ class Agents(Construct):
         # `ReadRuntimeLoginSecret` immediately above: a separate,
         # CDK-auto-generated `AWS::IAM::Policy`, not merged into the
         # existing `runtime-permissions` inline policy.
+        # VPC-mode runtimes almost certainly manage ENIs in our subnets the
+        # way every VPC-attached compute service does (Lambda's
+        # AWSLambdaVPCAccessExecutionRole precedent). Not independently
+        # live-verified whether AgentCore uses the execution role or a
+        # service-linked role for this -- granted preemptively because the
+        # actions are harmless if unused and a missing grant costs a full
+        # launch cycle to discover. ENI actions don't support meaningful
+        # resource-level scoping for the create/describe path.
+        vpc_eni_grant = runtime_role.add_to_principal_policy(
+            iam.PolicyStatement(
+                sid="VpcEniManagementForVpcNetworkMode",
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "ec2:CreateNetworkInterface",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DeleteNetworkInterface",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeVpcs",
+                ],
+                resources=["*"],
+            )
+        )
         ecr_pull_grant = runtime_role.add_to_principal_policy(
             iam.PolicyStatement(
                 sid="PullThroughCacheEcrPublicImages",
@@ -757,7 +780,7 @@ class Agents(Construct):
             # reason to wait for that policy, so validation raced the
             # attachment and failed with "Access denied while validating
             # ECR URI". Depend on both grants' policy resources explicitly.
-            for grant in (ecr_pull_grant, login_secret_grant):
+            for grant in (ecr_pull_grant, login_secret_grant, vpc_eni_grant):
                 if grant.policy_dependable is not None:
                     runtime.node.add_dependency(grant.policy_dependable)
             self.runtimes[agent_name] = runtime
