@@ -26,14 +26,15 @@ plugin hands the model, not about everything the operator's terminal can reach.
 
 ## What you get
 
-Three commands, one skill, 22 MCP tools:
+Four commands, one skill, 23 MCP tools:
 
 | Surface | What it does |
 |---|---|
 | `/ingest-interview` | Register a transcript, chunk it, anchor the chunks to real nodes, report coverage |
 | `/run-agent` | Launch an engagement or workflow agent task, then hand the proposal to the console |
 | `/playbook` | Export a published workflow as Markdown and file it in the vault |
-| `fde-operator` skill | The discipline behind all three — loads automatically when a session touches this platform |
+| `/dashboard` | Export the decision dashboard — how work is flowing through the gates — and file it in the vault |
+| `fde-operator` skill | The discipline behind all four — loads automatically when a session touches this platform |
 
 The skill is the substantive part. It encodes the one thing that is easy to get
 wrong and impossible to notice: **ingestion accepts chunks with no
