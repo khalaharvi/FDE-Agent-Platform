@@ -273,10 +273,25 @@ _RUN_STATUS_ORDER = (
 )
 _LAUNCH_STATUS_ORDER = ("queued", "running", "succeeded", "failed")
 
-# A proposal in one of these is waiting on a human. The queue headline counts
-# these and nothing else -- `merged` and `rejected` are finished work, and
-# including them would make a healthy engagement look like a backlog.
-_OPEN_PROPOSAL_STATUSES = frozenset({"submitted", "in_review", "changes_requested"})
+# An unfinished proposal: somebody still owes it an action. The queue
+# headline, the "waiting on a human" tile and the oldest-waiting figure all
+# count these and nothing else.
+#
+# `approved` belongs here and its absence was a real understatement of the
+# queue. An approved proposal has cleared every gate -- db/013:246 sets the
+# status the moment `gates_satisfied` goes true -- and is then parked until a
+# person clicks Merge, because `hitl.merge_proposal` refuses anything whose
+# status is not `approved` (db/005:84) and nothing calls it automatically.
+# That is the single human write that touches the graph, so a proposal
+# sitting in front of it is the MOST waiting a proposal ever is, not the
+# least. Left out, an engagement whose whole queue was approved-and-unmerged
+# reported zero waiting and an oldest-waiting of "never".
+#
+# `changes_requested` stays for the same reason one step earlier: the author
+# owes it a revision. `draft` does not -- it is unsubmitted agent work that
+# has not been handed to anyone, and counting it would put agent scratch
+# space in a human backlog. `merged`, `rejected` and `expired` are finished.
+_OPEN_PROPOSAL_STATUSES = frozenset({"submitted", "in_review", "changes_requested", "approved"})
 
 # Drift in one of these is still somebody's problem. `resolved`/`dismissed`
 # are closed; `accepted` means the graph was changed to match reality.

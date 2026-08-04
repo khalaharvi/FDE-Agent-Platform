@@ -152,6 +152,58 @@ def test_the_oldest_waiting_ignores_finished_work() -> None:
     assert data["queue"]["oldest_waiting_age"] == "2.0d"
 
 
+def test_an_approved_proposal_is_still_waiting_on_a_human() -> None:
+    """`approved` means every gate cleared and nobody has merged it yet.
+
+    `hitl.merge_proposal` refuses any status but `approved` (db/005:84) and
+    nothing calls it automatically, so the proposal is parked in front of the
+    one human write that touches the graph. Excluding it reported an
+    all-approved queue as empty -- the most misleading possible reading, on
+    the panel whose entire job is "how much is waiting".
+
+    Asserts all three places the status reaches: the open count, the
+    oldest-waiting timestamp, and the age string the KPI tile renders.
+    """
+    data = _assemble(
+        queue=[
+            {
+                "status": "approved",
+                "n": 2,
+                "oldest_submitted_at": NOW - timedelta(days=4),
+            },
+            {"status": "merged", "n": 5, "oldest_submitted_at": NOW - timedelta(days=1)},
+        ]
+    )
+
+    assert data["queue"]["open"] == 2, "an approved, unmerged proposal is still waiting"
+    assert data["queue"]["oldest_waiting_at"] == (NOW - timedelta(days=4)).isoformat()
+    assert data["queue"]["oldest_waiting_age"] == "4.0d"
+
+    # And it reaches the reader, in both documents.
+    markdown = render_dashboard_markdown(data)
+    html_text = _HTML_TAG.sub(" ", render_dashboard_html(data))
+    assert "**2** proposals waiting on a human" in markdown
+    assert "4.0d" in markdown
+    assert "4.0d" in html_text
+
+
+def test_a_queue_of_only_approved_work_does_not_read_as_empty() -> None:
+    """The regression in its starkest form: before `approved` was counted,
+    this rendered "0 proposals waiting" and "Oldest still waiting: never"."""
+    data = _assemble(
+        queue=[
+            {
+                "status": "approved",
+                "n": 3,
+                "oldest_submitted_at": NOW - timedelta(hours=30),
+            }
+        ]
+    )
+    assert data["queue"]["open"] == 3
+    assert data["queue"]["oldest_waiting_age"] != "never"
+    assert "**0** proposals waiting on a human" not in render_dashboard_markdown(data)
+
+
 def test_statuses_render_in_lifecycle_order_not_alphabetical() -> None:
     data = _assemble()
     assert [row["status"] for row in data["queue"]["by_status"]] == [
@@ -279,29 +331,58 @@ def _numbers(text: str) -> list[str]:
     return re.findall(r"\b\d+\b", text)
 
 
-def test_the_two_renderers_report_the_same_numbers() -> None:
-    """Every headline figure appears, identically, in both documents.
+_MD_WAITING = re.compile(r"- \*\*(\d+)\*\* proposals waiting on a human \(of (\d+) on record\)")
+_MD_GATES = re.compile(r"- \*\*(\d+)\*\* gates overdue, (\d+) pending, (\d+) cleared")
+_MD_MERGES = re.compile(r"- \*\*(\d+)\*\* merges in the window \((\d+) sealed commits in total\)")
+_MD_DRIFT = re.compile(r"- \*\*(\d+)\*\* drift signals still open")
+_HTML_TILE = re.compile(r'<span class="k">(.*?)</span><span class="v">(.*?)</span>')
 
-    Not a byte comparison -- they are different formats -- but every count
-    the reader acts on has to be the same in each.
+
+def test_the_two_renderers_report_the_same_numbers() -> None:
+    """Every headline figure, read out of both documents BY ITS LABEL.
+
+    Not a byte comparison -- they are different formats -- and deliberately
+    not "does this integer appear anywhere in the text" either. In a document
+    that is nothing but counts, asking whether a `2` occurs somewhere is
+    satisfied by almost any bug: two figures could swap and both assertions
+    would still pass. So each number is extracted from the position that
+    claims to hold it, and the fixture in `_rows` keeps every headline figure
+    distinct (6, 13, 2, 3, 11, 5, 12, 3) so a swap has somewhere to show up.
     """
     data = _assemble()
     markdown = render_dashboard_markdown(data)
-    html_text = _HTML_TAG.sub(" ", render_dashboard_html(data))
+    html = render_dashboard_html(data)
 
-    for label, value in (
-        ("proposals waiting", data["queue"]["open"]),
-        ("gates overdue", data["gates"]["overdue"]),
-        ("gates pending", data["gates"]["pending"]),
-        ("gates cleared", data["gates"]["cleared"]),
-        ("merges in window", data["merges"]["in_window"]),
-        ("sealed total", data["merges"]["sealed_total"]),
-        ("drift open", data["drift"]["open"]),
-    ):
-        assert str(value) in _numbers(markdown), f"{label} missing from the Markdown"
-        assert str(value) in _numbers(html_text), f"{label} missing from the HTML"
+    waiting = _MD_WAITING.search(markdown)
+    gates = _MD_GATES.search(markdown)
+    merges = _MD_MERGES.search(markdown)
+    drift = _MD_DRIFT.search(markdown)
+    assert waiting is not None, "the Markdown headline lost its waiting figure"
+    assert gates is not None, "the Markdown headline lost its gate figures"
+    assert merges is not None, "the Markdown headline lost its merge figures"
+    assert drift is not None, "the Markdown headline lost its drift figure"
+
+    assert int(waiting.group(1)) == data["queue"]["open"]
+    assert int(waiting.group(2)) == data["queue"]["total"]
+    assert int(gates.group(1)) == data["gates"]["overdue"]
+    assert int(gates.group(2)) == data["gates"]["pending"]
+    assert int(gates.group(3)) == data["gates"]["cleared"]
+    assert int(merges.group(1)) == data["merges"]["in_window"]
+    assert int(merges.group(2)) == data["merges"]["sealed_total"]
+    assert int(drift.group(1)) == data["drift"]["open"]
+
+    # The HTML says the same things through its stat tiles, which are the
+    # figures a console reader actually looks at.
+    tiles = dict(_HTML_TILE.findall(html))
+    assert tiles["Waiting on a human"] == str(data["queue"]["open"])
+    assert tiles["Gates overdue"] == str(data["gates"]["overdue"])
+    assert tiles["Merges in window"] == str(data["merges"]["in_window"])
+    assert tiles["Drift open"] == str(data["drift"]["open"])
+    assert tiles["Median to clear"] == "2.5h", "9000s, formatted once and shown here"
+    assert tiles["Oldest waiting"] == data["queue"]["oldest_waiting_age"]
 
     # And the derived strings, which are computed once and formatted twice.
+    html_text = _HTML_TAG.sub(" ", html)
     for shared in (data["queue"]["oldest_waiting_age"], "2.5h", "abc123def456"):
         assert shared in markdown
         assert shared in html_text
