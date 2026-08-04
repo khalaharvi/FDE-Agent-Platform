@@ -121,7 +121,7 @@ jobs:
           # makes this job check out the tagged commit instead of
           # whatever the default branch currently is.
           ref: ${{ env.RELEASE_TAG }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
