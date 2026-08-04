@@ -37,6 +37,45 @@ jobs:
         run: uv lock --check
 
   # -------------------------------------------------------------------
+  # The CDK launch stack: its own uv project (infra/cdk/pyproject.toml +
+  # uv.lock), deliberately NOT a workspace member -- `uv sync --frozen`
+  # here must never touch the packages/* venv. Synth uses no AWS
+  # credentials and no CDK bootstrap; cfn-lint validates the emitted
+  # template. Not yet in the branch-protection required list -- add it
+  # when this PR merges.
+  # -------------------------------------------------------------------
+  cdk-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: synth and lint the launch stack (no AWS credentials)
+        working-directory: infra/cdk
+        run: |
+          uv sync --frozen
+          uv run pytest tests
+          uv run python app.py
+          # -i W3005 only, as of task 6: task 2's Parameters/Conditions
+          # were consumed incrementally as tasks 3-6 landed (task 3 wired
+          # deploy_tier/is_production into the database construct; task 5
+          # retired W7001 entirely by giving AssetsRegionMap/ReleaseTag/
+          # AssetsBucket their first consumer; task 6 retired W2001 and
+          # W8001 entirely by giving every remaining parameter/condition a
+          # consumer in the gate Lambda/Fargate services' envs) -- see
+          # infra/cdk/README.md's cfn-lint ledger, which tracks exactly
+          # which occurrences of each rule remain. W3005 (redundant
+          # DependsOn on an explicit Lambda role/ECS target-group wiring --
+          # CDK adds it on purpose, for eventual-consistency reasons) is
+          # expected to stay in this list permanently, not just until some
+          # later task lands. This rule ID MUST come after the template
+          # path: cfn-lint's -i takes an unbounded arg list and would
+          # otherwise swallow the path itself.
+          uv run cfn-lint cdk.out/FdePlatform.template.json -i W3005
+      - name: lockfile is current
+        working-directory: infra/cdk
+        run: uv lock --check
+
+  # -------------------------------------------------------------------
   # The database contract: migrations must apply IN ORDER on an EMPTY
   # database and all smoke tests must pass. This is the gate that protects
   # the platform's core invariant.
@@ -331,6 +370,15 @@ jobs:
     needs: [static, database, tests, train-tests, images]
     runs-on: ubuntu-latest
     environment: production
+    # id-token: write is REQUIRED for aws-actions/configure-aws-credentials'
+    # OIDC role-assumption below -- GITHUB_TOKEN's id-token scope defaults
+    # to `none` regardless of the repo's default token-permission setting,
+    # so it must be requested explicitly. Unlisted scopes default to
+    # `none` too once any `permissions:` key is present, hence `contents:
+    # read` alongside it (actions/checkout needs it).
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: check AWS secrets present
@@ -357,11 +405,38 @@ jobs:
       - name: stage + upload codezip artifacts
         if: steps.creds.outputs.have == 'true'
         run: uv run fde-agents-deploy codezip --agents engagement workflow development --code-bucket ${{ vars.FDE_CODE_BUCKET }}
-      - name: update agent runtimes
+      # `runtimes.py --update` takes the AGENT_RUNTIME_ID to update as its
+      # value (not a bare flag) and its `update_requires_single_agent`
+      # guard rejects any `--agents` list longer than one -- see
+      # `runtimes.py:161` (`update_runtime`) and `_parse_args`/`main`. The
+      # previous single-step, three-agent, bare-flag `--update` invocation
+      # here was rejected by that guard on every run; the secrets gate
+      # (`steps.creds`) simply meant it never fired outside a real deploy,
+      # so the break was latent. Three per-agent steps, each passing the
+      # runtime's own AgentCore runtime ID via a repo variable (see
+      # infra/cdk/RELEASING.md for how these are obtained and set).
+      - name: update engagement agent runtime
         if: steps.creds.outputs.have == 'true'
         run: >
-          uv run fde-agents-deploy runtimes --update
-          --agents engagement workflow development
+          uv run fde-agents-deploy runtimes
+          --agents engagement
+          --update ${{ vars.FDE_RUNTIME_ID_ENGAGEMENT }}
+          --role-arn ${{ secrets.FDE_RUNTIME_ROLE_ARN }}
+          --artifact-mode code --code-bucket ${{ vars.FDE_CODE_BUCKET }}
+      - name: update workflow agent runtime
+        if: steps.creds.outputs.have == 'true'
+        run: >
+          uv run fde-agents-deploy runtimes
+          --agents workflow
+          --update ${{ vars.FDE_RUNTIME_ID_WORKFLOW }}
+          --role-arn ${{ secrets.FDE_RUNTIME_ROLE_ARN }}
+          --artifact-mode code --code-bucket ${{ vars.FDE_CODE_BUCKET }}
+      - name: update development agent runtime
+        if: steps.creds.outputs.have == 'true'
+        run: >
+          uv run fde-agents-deploy runtimes
+          --agents development
+          --update ${{ vars.FDE_RUNTIME_ID_DEVELOPMENT }}
           --role-arn ${{ secrets.FDE_RUNTIME_ROLE_ARN }}
           --artifact-mode code --code-bucket ${{ vars.FDE_CODE_BUCKET }}
       - name: update RFT grader lambda

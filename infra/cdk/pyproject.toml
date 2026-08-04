@@ -1,0 +1,51 @@
+[project]
+name = "fde-cdk"
+version = "0.1.0"
+description = "CDK launch stack for the FDE Agent Platform (bootstrap-free, one-click deploy)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aws-cdk-lib>=2.220",
+    "constructs>=10.0",
+]
+
+[dependency-groups]
+dev = [
+    "cfn-lint>=1.53.3",
+    "pytest>=9.1.1",
+    "ruff>=0.16.1",
+]
+
+# This is an app (synthesized by app.py at deploy/CI time), not an
+# importable library -- nothing outside this directory ever depends on it.
+[tool.uv]
+package = false
+
+# Anchors pytest's rootdir here so it never climbs to the repo-root
+# pyproject.toml (which sets asyncio_mode via a plugin this isolated venv
+# does not install) -- infra/cdk is its own uv project, tests included.
+# `pythonpath` puts infra/cdk itself on sys.path: this project sets
+# `package = false` (it is an app, not an installed library), so `fde_cdk`
+# is only importable if the directory containing it is on the path.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E", "W",      # pycodestyle
+  "F",           # pyflakes
+  "I",           # isort
+  "UP",          # pyupgrade -- PEP 604 `X | None`
+  "B",           # bugbear
+  "SIM",         # simplify
+  "RUF",         # ruff-specific
+]
+# `from __future__ import annotations` in every module, matching docs/11 for
+# the rest of the repo even though this project is intentionally isolated.
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]

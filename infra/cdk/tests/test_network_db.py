@@ -1,0 +1,41 @@
+from __future__ import annotations
+
+from tests.test_synth import synth_template
+
+
+def test_vpc_two_azs_one_nat() -> None:
+    t = synth_template()
+    t.resource_count_is("AWS::EC2::NatGateway", 1)
+    assert (
+        len(
+            [
+                k
+                for k in t.to_json()["Resources"]
+                if "PublicSubnet" in k and t.to_json()["Resources"][k]["Type"] == "AWS::EC2::Subnet"
+            ]
+        )
+        == 2
+    )
+
+
+def test_aurora_engine_and_snapshot_policy() -> None:
+    t = synth_template()
+    clusters = t.find_resources("AWS::RDS::DBCluster")
+    assert len(clusters) == 1
+    cluster = next(iter(clusters.values()))
+    assert cluster["Properties"]["Engine"] == "aurora-postgresql"
+    assert cluster["Properties"]["EngineVersion"].startswith("16.")
+    assert cluster["DeletionPolicy"] == "Snapshot"
+    assert cluster["Properties"]["DatabaseName"] == "fde"
+
+
+def test_db_secret_is_rds_managed_shape() -> None:
+    t = synth_template()
+    # Task 6 added the second: GateService/Services' shared ProviderApiKey
+    # mirror (see gate.py's provider_api_key_secret and
+    # tests/test_services.py::test_provider_api_key_secret_is_conditioned_on_has_provider_key,
+    # which pins the RDS-managed one apart from the conditional one).
+    # I4(c) (final-fix-report.md) added the third: `Agents`'
+    # GatewayM2mClientSecretMirror, mirroring Identity.m2m_client's
+    # Cognito-generated secret for the fde-gateway-m2m credential provider.
+    t.resource_count_is("AWS::SecretsManager::Secret", 3)
