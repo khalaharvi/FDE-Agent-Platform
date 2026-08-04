@@ -38,7 +38,7 @@ jobs:
     name: validate plugin
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # From .python-version rather than a literal, so the plugin check cannot
       # drift onto a different interpreter than the rest of the repo.

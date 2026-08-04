@@ -72,7 +72,7 @@ jobs:
           - { name: fde-development, dockerfile: packages/fde-agents/Dockerfile, agent: development }
           - { name: fde-sor,         dockerfile: packages/fde-sor/Dockerfile,    agent: "" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Minor 8: on a tag push this is already `env.RELEASE_TAG`'s own
           # ref (`github.ref_name` resolves it from `github.ref`), a no-op
@@ -113,7 +113,7 @@ jobs:
     needs: [images]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Minor 8: on a tag push this is already `env.RELEASE_TAG`'s own
           # ref (`github.ref_name` resolves it from `github.ref`), a no-op
