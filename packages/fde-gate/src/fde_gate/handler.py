@@ -321,11 +321,15 @@ async def get_dashboard_md(request: Request) -> Response:
     is stale as soon as anything merges. The filename carries the date for
     the same reason -- two of these in one folder are two different days, not
     two versions of one document.
+
+    The window goes through the same `dashboard.normalize_window` the console
+    page uses. It did not always: this route honoured any value in 1-365
+    while the page snapped to its dropdown, so one shared link showed two
+    different windows depending on which surface opened it.
     """
-    window = request.query.get("window_days")
     built = await dashboard.build(
         engagement_id=request.query.get("engagement_id") or None,
-        window_days=int(window) if window and window.isdigit() else 30,
+        window_days=dashboard.normalize_window(request.query.get("window_days")),
     )
     day = str(built["generated_at"])[:10]
     return Response(

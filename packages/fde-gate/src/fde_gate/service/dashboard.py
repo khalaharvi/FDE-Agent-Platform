@@ -53,7 +53,7 @@ from fde_mcp.dashboard import (
     render_dashboard_markdown,
 )
 
-__all__ = ["MAX_WINDOW_DAYS", "WINDOW_CHOICES", "build"]
+__all__ = ["MAX_WINDOW_DAYS", "WINDOW_CHOICES", "build", "normalize_window"]
 
 #: The windows the console offers. A select rather than a free number field:
 #: the value only ever bounds a few COUNT(*)s, but an operator typing 100000
@@ -70,6 +70,41 @@ _ENGAGEMENTS_SQL = """
       UNION SELECT engagement_id FROM hitl.proposal
     ) e ORDER BY engagement_id
 """
+
+
+DEFAULT_WINDOW_DAYS = 30
+
+
+def normalize_window(raw: str | None) -> int:
+    """`?window_days=` -> one of `WINDOW_CHOICES`. The policy for BOTH HTTP surfaces.
+
+    It exists because there were two. The page snapped an unoffered value
+    back to 30 so its `<select>` could not display a window the page was not
+    actually showing; the `.md` route clamped to 1-365 and honoured anything
+    in range. Same query parameter, two answers: `/ui/dashboard?window_days=45`
+    showed 30 days while `/api/dashboard.md?window_days=45` showed 45, and
+    the link the page offers for the download carries that parameter
+    through -- so "the same numbers as a file" quietly was not.
+
+    Snapping won, for two reasons. The dropdown is the only thing in the
+    product that produces these URLs, so a value it cannot represent is one
+    a reader cannot have arrived at honestly; and the `.md` route's whole
+    contract is that it is the page's download, which makes the page's
+    policy the one it has to share. An unparseable, negative or unoffered
+    value is not refused -- this is a read-only view reached from a link, and
+    a stale bookmark should show a dashboard rather than an error page.
+
+    `hitl_export_dashboard` deliberately keeps its own 1-365 clamp: it takes
+    a typed integer argument rather than a query string, has no dropdown to
+    contradict, and a model asking for 45 days should get 45 days.
+    """
+    if raw is None:
+        return DEFAULT_WINDOW_DAYS
+    try:
+        window = int(raw)
+    except ValueError:
+        return DEFAULT_WINDOW_DAYS
+    return window if window in WINDOW_CHOICES else DEFAULT_WINDOW_DAYS
 
 
 def _prodops_role() -> str:

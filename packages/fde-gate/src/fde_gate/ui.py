@@ -637,21 +637,16 @@ async def triage_post(request: Request) -> Response:
 def _dashboard_scope(request: Request) -> tuple[str | None, int]:
     """`?engagement_id=` and `?window_days=`, both optional.
 
-    An unparseable or unoffered `window_days` falls back to 30 rather than
-    refusing: this is a read-only view reached from a link, and a stale
-    bookmark carrying `window_days=45` should show a dashboard, not an error
-    page. The engagement is passed to Postgres as a uuid and a malformed one
-    is its problem to reject, the way every other filter on this console
-    works.
+    The window goes through `dashboard.normalize_window`, which is shared
+    with `/api/dashboard.md` so the page and its own download cannot read the
+    same URL differently -- see that function for which policy won. The
+    engagement is passed to Postgres as a uuid and a malformed one is its
+    problem to reject, the way every other filter on this console works.
     """
-    raw = request.query.get("window_days")
-    try:
-        window = int(raw) if raw else 30
-    except ValueError:
-        window = 30
-    if window not in dashboard.WINDOW_CHOICES:
-        window = 30
-    return (request.query.get("engagement_id") or None, window)
+    return (
+        request.query.get("engagement_id") or None,
+        dashboard.normalize_window(request.query.get("window_days")),
+    )
 
 
 async def dashboard_page(request: Request) -> Response:
