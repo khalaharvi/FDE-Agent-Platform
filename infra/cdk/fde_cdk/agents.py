@@ -13,9 +13,9 @@ Property names were cross-checked two ways, per this task's own instructions
 -- never guessed:
   1. Local introspection of the INSTALLED library (`aws-cdk-lib==2.263.0`,
      the version `infra/cdk/README.md` pins): `inspect.signature(...)` on
-     `CfnRuntime`/`CfnGateway`/`CfnGatewayTarget`/`CfnMemory` and every
-     `*Property` type this module constructs. This is authoritative --
-     it is literally the code that will run.
+     `CfnRuntime`/`CfnGateway`/`CfnMemory`/`CfnOAuth2CredentialProvider` and
+     every `*Property` type this module constructs. This is authoritative
+     -- it is literally the code that will run.
   2. Context7 (`aws_cdk.aws_bedrockagentcore`, AWS CDK Python Reference)
      as a second, independent source. Agreed exactly with (1) on every
      field name used below (`agentRuntimeArtifact`/`networkConfiguration`/
@@ -25,97 +25,95 @@ Property names were cross-checked two ways, per this task's own instructions
      `packages/fde-agents/src/fde_agents/deploy/runtimes.py`'s
      `create_runtime` (:131), `_build_artifact` (:59), `_environment_
      variables` (:117), `_authorizer_configuration` (:85); `gateway.py`'s
-     `create_gateway` (:83), `create_mcp_server_target` (:119); `memory.py`'s
-     `create_memory` (:148) plus its three `_*_strategy` builders (:76-117)
-     -- the CFN property names are the same words as the boto3 kwargs,
-     just re-cased (`containerUri` -> `container_uri`, etc.), confirming
-     the CFN resource types are a direct mirror of the control-plane API
-     these scripts already call by hand.
+     `create_gateway` (:83); `memory.py`'s `create_memory` (:148) plus its
+     three `_*_strategy` builders (:76-117) -- the CFN property names are
+     the same words as the boto3 kwargs, just re-cased (`containerUri` ->
+     `container_uri`, etc.), confirming the CFN resource types are a
+     direct mirror of the control-plane API these scripts already call by
+     hand.
+  4. For the v0.3.0-rc4 network-mode pivot specifically (see "As-built
+     network architecture (v1)" below), the installed library's
+     introspected shape was additionally checked against the LIVE
+     CloudFormation registry schema itself (`aws cloudformation
+     describe-type --type RESOURCE --type-name
+     AWS::BedrockAgentCore::Runtime`) rather than trusting cfn-lint's
+     bundled copy, which had already been shown wrong once this same rc
+     (the `GatewayTarget` endpoint pattern below).
 
 Construction order inside this construct: pull-through cache rule -> Gateway
--> GatewayTarget -> Memory -> Runtimes. Gateway before Runtimes specifically
-resolves a circular-dependency risk the brief calls out: the three runtimes'
-`FDE_GATEWAY_URL` env needs the Gateway's URL, while the Gateway's own
-target points at the MCP ALB (`services.mcp_url`), never at a runtime -- so
-there is no cycle, only an ordering constraint, and building Gateway first
-satisfies it both in Python construction order and in the CloudFormation
-dependency graph (`self.gateway_url` is a `Fn::GetAtt` token threaded into
-each runtime's `environment_variables`, so CDK adds the real `DependsOn`
-automatically; the same is not true of the container URI passed to each
-runtime -- see `EcrPublicPullThroughCache` note below).
+-> credential provider -> Memory -> Runtimes. There is no longer any
+Gateway-before-Runtimes ordering *constraint* (an earlier revision of this
+module threaded `self.gateway_url` into every runtime's `FDE_GATEWAY_URL`
+env and needed the Gateway built first to satisfy that CloudFormation
+dependency) -- the pivot described below disconnects the Gateway from the
+Runtimes entirely. Gateway is still built first only because it reads more
+naturally next to the pull-through cache rule; nothing depends on the order.
 
-`FDE_GATEWAY_URL` mechanism
-----------------------------
+`self.gateway_url`
+-------------------
 `CfnGateway.attr_gateway_url` IS exposed as a CloudFormation attribute in
 this lib version (confirmed via introspection: `'attr_gateway_url' in
-dir(CfnGateway)`), so the brief's documented fallback (`Fn::Sub` over the
-gateway id per `mcp_tools.py`'s documented URL shape,
-`https://{gateway-id}.gateway.bedrock-agentcore.{region}.amazonaws.com/mcp`)
-is NOT needed -- `self.gateway.attr_gateway_url` is used directly. Whatever
-string AgentCore's control plane returns as `GatewayUrl` is definitionally
-the same value `mcp_tools.py`'s `_mint_gateway_bearer_token`-adjacent client
-code expects in `FDE_GATEWAY_URL` (`GatewaySettings.url`,
-`fde_agents/common/config.py`), since both read the same control-plane
-response shape.
+dir(CfnGateway)`) and is still captured on `self.gateway_url` below. As of
+the v0.3.0-rc4 pivot it is no longer threaded into any runtime's
+environment (see below) -- it is kept as a construct attribute only so a
+future v2 wire-up (an HTTPS-fronted Gateway target) has the value on hand
+without re-deriving it.
 
-Known launch-readiness gap -- ONE named Task-10 live-test risk, three
-surfaces
+As-built network architecture (v1) -- supersedes the old "Known
+launch-readiness gap" note
 ---------------------------------------------------------------------------
-Both the Gateway and all three Runtimes are, by this task's own design,
-OUTSIDE the VPC: `CfnGateway` has no VPC/network property at all in this
-lib version (confirmed: no such field in its constructor signature) -- an
-AgentCore Gateway is always a fully-managed, non-VPC-attached service -- and
-every `CfnRuntime` here is built with `network_mode="PUBLIC"` (the brief's
-own required shape). That single fact creates a reachability question on
-THREE distinct network paths into this stack's VPC-internal resources, not
-one:
+The v0.3.0-rc4 live-launch attempt hit a real CloudFormation validation
+failure, not a hypothetical one flagged for a future live test:
+`AWS::BedrockAgentCore::GatewayTarget`'s LIVE registry schema (`aws
+cloudformation describe-type --type RESOURCE --type-name
+AWS::BedrockAgentCore::GatewayTarget`) requires
+`McpServerTargetConfiguration.Endpoint` to match `^https://.*`, and this
+stack's only MCP endpoint was `services.mcp_url` -- `services.py`'s
+INTERNAL ALB, plain HTTP, no TLS listener, `internet_facing=False`. The
+repo owner's decision, given that finding: **no publicly exposed MCP
+gateway, period** -- standing up an HTTPS front for an internal ALB just to
+satisfy a Gateway target's regex was rejected outright, not attempted.
 
-  1. **Gateway -> internal ALB.** The Gateway's `mcpServer` target
-     (`self.gateway_target`) points at `services.mcp_url`, which is
-     `services.py`'s INTERNAL ALB (no public IP, no IGW route). Whether a
-     non-VPC Gateway can reach it at all is unresolved here, the same way
-     `gateway.py`'s own boto3 script does not resolve it either (it just
-     takes `--mcp-server-endpoint` as an opaque URL with no network wiring
-     of its own).
-  2. **Runtime -> Aurora, for tracing.** Every deployed runtime's
-     `FDE_DB_SECRET_ARN` env (added below) points `tracing.py`'s direct
-     `fde_mcp.db`/`raw_sql` writes (`mcp_tools.py`'s own docstring: "the
-     one sanctioned exception... writes those two tables directly") at the
-     Aurora cluster -- but that cluster lives in `network.py`'s VPC private
-     subnets with no public endpoint, and a PUBLIC-network-mode runtime has
-     no private route to it.
-  3. **Runtime -> Aurora, for the local-stdio MCP fallback.**
-     `GatewaySettings.url` (`fde_agents/common/config.py`) selects
-     Gateway-vs-stdio transport by presence; every runtime here always gets
-     `FDE_GATEWAY_URL` set (below), so this path should never trigger in
-     this deployment -- but the code path exists (`mcp_tools.build_mcp_
-     client`'s dev-mode branch spawns `python -m fde_mcp` as a local
-     subprocess, and THAT process needs its own DB connection), and it
-     would share the identical PUBLIC-network-mode reachability gap the
-     moment it ever did trigger (e.g. a future change that leaves
-     `FDE_GATEWAY_URL` unset).
+What changed here, replacing the old three-surface "unresolved, needs a
+live test" gap with an as-built resolution:
 
-All three share one root cause (PUBLIC network mode = no VPC attachment =
-no private route to anything in `network.py`'s VPC) and are recorded here
-as a single follow-up rather than three separate ones. This is the same
-class of "written against verified API shapes, not validated against live
-AWS" gap the repo's honesty rule already names for other AWS-touching code.
+  1. **The Gateway target is gone.** No `CfnGatewayTarget` is built by this
+     construct any more. `CfnGateway` and `CfnOAuth2CredentialProvider`
+     both stay -- each provisions cleanly on its own, with no dependency on
+     an MCP endpoint -- but the Gateway is now provisioned-but-UNWIRED: no
+     target points at `services.mcp_url` through it, and no runtime is
+     configured to call it (point 3, below). Wiring a real target is v2
+     scope, gated on the owner's no-public-MCP-gateway decision changing.
+  2. **Runtimes join the VPC.** Every `CfnRuntime.NetworkConfiguration`
+     below is `network_mode="VPC"` -- the live registry schema's
+     `NetworkMode` enum is `["PUBLIC", "VPC"]` (confirmed via the same
+     `describe-type` query as above, not cfn-lint's bundled copy, which is
+     exactly what mis-described the GatewayTarget pattern in the first
+     place) -- attached to `vpc`'s private-with-egress subnets through one
+     dedicated `runtime_security_group` (egress-all; DB ingress opened
+     one-directionally via `db_cluster.connections.
+     allow_default_port_from(runtime_security_group, ...)`, the same idiom
+     `Migrations`/`GateService`/`Services` already use). This resolves the
+     old surfaces 2 and 3 directly: both `FDE_DB_SECRET_ARN` (tracing
+     writes) and the in-container stdio MCP subprocess (point 3) now have
+     a private route to Aurora.
+  3. **In-container stdio MCP, not Gateway, for every runtime.**
+     `FDE_GATEWAY_URL`/`FDE_GATEWAY_SCOPES` are no longer set on any
+     runtime's environment. `GatewaySettings.url`'s absence is exactly
+     what selects `mcp_tools.build_mcp_client`'s stdio transport
+     (`fde_agents/common/config.py`): each runtime now spawns its own
+     in-container `python -m fde_mcp` subprocess and talks to it over
+     stdio -- the same dev-mode code path an earlier revision of this
+     docstring flagged as "should never trigger in this deployment." It is
+     now the ONLY MCP path every deployed runtime takes, by design, not by
+     accident.
 
-**The documented fix path, if a live test confirms the failure:**
-`CfnRuntime.NetworkConfigurationProperty` has an optional
-`network_mode_config` field accepting a `VpcConfigProperty(security_groups:
-Sequence[str], subnets: Sequence[str])` (confirmed via introspection: both
-types exist on this installed `aws-cdk-lib==2.263.0`) -- i.e. this lib
-version's schema DOES structurally support attaching a runtime to a VPC,
-mirroring the `subnets`/`security_groups` shape `ec2.SubnetSelection`
-already produces for every other VPC-attached compute in this stack
-(`Migrations`/`GateService`/`Services`). This would fix surfaces 2 and 3
-directly (a VPC-attached runtime reaching Aurora the same way the gate
-Lambda already does) and, if AgentCore Gateway ever gains an equivalent
-VPC-attachment property in a later lib version, surface 1 the same way.
-NOT changed here (out of scope for this task, and `network_mode`'s exact
-non-"PUBLIC" enum string was not itself verified -- only that the
-`network_mode_config` property exists and accepts a VPC shape).
+The old surface 1 (Gateway -> internal ALB reachability) is moot now, not
+resolved -- there is no Gateway target left for that question to apply to.
+If a v2 change ever stands up an HTTPS-fronted MCP endpoint and wires a
+`CfnGatewayTarget` back in, surface 1's original question (can a
+non-VPC-attached Gateway reach a VPC-internal HTTPS listener) becomes live
+again and needs its own verification then.
 
 The ECR pull-through cache rule
 --------------------------------
@@ -130,8 +128,10 @@ in a *private* ECR registry, which is the whole reason this rule exists).
 Each runtime's `container_uri` string is built from plain Python string
 interpolation over CDK tokens (`cdk.Aws.ACCOUNT_ID`/`cdk.Aws.REGION`), which
 carries no reference to the `CfnPullThroughCacheRule` construct itself -- so
-CDK's automatic same-token dependency inference does not apply here (unlike
-the Gateway-URL case above). Each runtime instead gets an explicit
+CDK's automatic same-token dependency inference does not apply here (unlike,
+e.g., the `network_mode_config`/`db_cluster.connections` case above, where a
+real construct reference DOES let CDK infer the dependency automatically).
+Each runtime instead gets an explicit
 `add_resource_dependency(self.pull_through_cache_rule)` (the current,
 non-deprecated form -- `CfnResource.add_dependency` still exists in this
 lib version but logs a deprecation warning pointing at this replacement):
@@ -144,12 +144,13 @@ from __future__ import annotations
 
 import aws_cdk as cdk
 import aws_cdk.aws_bedrockagentcore as bedrockagentcore
+import aws_cdk.aws_ec2 as ec2
 import aws_cdk.aws_ecr as ecr
 import aws_cdk.aws_iam as iam
+import aws_cdk.aws_rds as rds
 import aws_cdk.aws_secretsmanager as secretsmanager
 from constructs import Construct
 
-from fde_cdk.identity import GATEWAY_INVOKE_SCOPE_NAME, GATEWAY_RESOURCE_SERVER_ID
 from fde_cdk.params import (
     ECR_PUBLIC_ALIAS,
     LaunchParams,
@@ -198,13 +199,6 @@ _GATEWAY_INSTRUCTIONS = (
 )
 _GATEWAY_SUPPORTED_MCP_VERSIONS = ["2025-06-18"]
 
-# Verbatim from `fde_agents.deploy.gateway.create_mcp_server_target`
-# (:119-144).
-_GATEWAY_TARGET_NAME = "fde-kg-mcp-server"
-_GATEWAY_TARGET_DESCRIPTION = (
-    "FDE knowledge-graph MCP server (fde_mcp.server, FDE_MCP_TRANSPORT=http)"
-)
-
 # NOT verbatim from memory.py -- a deliberate, documented divergence.
 # `memory.py`'s own literals (`fde-agent-memory`, `fde-semantic`,
 # `fde-summary`, `fde-user-pref`, and the `{strategyId}` namespace-template
@@ -229,18 +223,6 @@ _GATEWAY_TARGET_DESCRIPTION = (
 _MEMORY_NAME = "fde_agent_memory"
 _NAMESPACE_TEMPLATE = "/strategy/{memoryStrategyId}/actor/{actorId}/session/{sessionId}"
 
-# I4(b) fix (final-fix-report.md): built from `identity.py`'s own two
-# constants (never a second hand-copied literal) so this can never drift
-# from the resource-server/scope pair `m2m_client`'s own OAuth scope is
-# minted against. Cognito's own convention joins `ResourceServerIdentifier`
-# and `ScopeName` with "/" -- "gateway/invoke" -- which is NOT
-# `fde_agents.common.config.GatewaySettings.scopes`' own unset-env-var
-# default ("gateway:invoke", colon-separated: see that module's docstring,
-# `config.py:227-229`), so every deployed runtime needs FDE_GATEWAY_SCOPES
-# set explicitly to the real, slash-separated value or every M2M token
-# request would ask Cognito for a scope that does not exist.
-FDE_GATEWAY_SCOPE = f"{GATEWAY_RESOURCE_SERVER_ID}/{GATEWAY_INVOKE_SCOPE_NAME}"
-
 # I4(c) fix: the AgentCore Identity OAuth2 credential provider name
 # `fde_agents.common.config.GatewaySettings.identity_provider_name`
 # defaults to when `FDE_IDENTITY_PROVIDER_NAME` is unset -- this construct
@@ -253,21 +235,26 @@ _GATEWAY_M2M_CREDENTIAL_PROVIDER_NAME = "fde-gateway-m2m"
 
 class Agents(Construct):
     """`pull_through_cache_rule`: the ECR-Public pull-through cache rule
-    every runtime's container artifact resolves through. `gateway` +
-    `gateway_target`: the AgentCore Gateway fronting `services.mcp_url`,
-    CUSTOM_JWT-authorized against Cognito. `memory`: the always-on semantic/
-    summary/user-preference AgentCore Memory resource. `runtimes`: the three
-    AgentCore Runtimes, keyed by lowercase agent name. `runtime_arns`:
-    the same three runtimes' ARNs, keyed by the UPPERCASE name `gate.py`'s
-    `FDE_RUNTIME_ARN_{AGENT}` envs expect."""
+    every runtime's container artifact resolves through. `gateway`:
+    the AgentCore Gateway, CUSTOM_JWT-authorized against Cognito --
+    provisioned but UNWIRED in v1 (see module docstring's "As-built network
+    architecture (v1)": no `CfnGatewayTarget` is built here, by owner
+    decision, and no runtime calls it). `memory`: the always-on semantic/
+    summary/user-preference AgentCore Memory resource. `runtime_security_
+    group`: the one shared security group every runtime's VPC network
+    configuration uses (egress-all; DB ingress opened from it in this
+    constructor). `runtimes`: the three AgentCore Runtimes, keyed by
+    lowercase agent name. `runtime_arns`: the same three runtimes' ARNs,
+    keyed by the UPPERCASE name `gate.py`'s `FDE_RUNTIME_ARN_{AGENT}` envs
+    expect."""
 
     pull_through_cache_rule: ecr.CfnPullThroughCacheRule
     gateway: bedrockagentcore.CfnGateway
-    gateway_target: bedrockagentcore.CfnGatewayTarget
     gateway_url: str
     memory: bedrockagentcore.CfnMemory
     memory_id: str
     memory_arn: str
+    runtime_security_group: ec2.SecurityGroup
     runtimes: dict[str, bedrockagentcore.CfnRuntime]
     runtime_arns: dict[str, str]
     # I4(c): the `fde-gateway-m2m` AgentCore Identity OAuth2 credential
@@ -280,13 +267,14 @@ class Agents(Construct):
         construct_id: str,
         *,
         params: LaunchParams,
+        vpc: ec2.IVpc,
+        db_cluster: rds.DatabaseCluster,
         runtime_role: iam.Role,
         gateway_service_role: iam.Role,
         memory_role: iam.Role,
         jwt_discovery_url: str,
         jwt_allowed_audience: str,
         m2m_client_secret: cdk.SecretValue,
-        mcp_url: str,
         provider_api_key_secret: secretsmanager.ISecret,
     ) -> None:
         super().__init__(scope, construct_id)
@@ -438,37 +426,17 @@ class Agents(Construct):
             ),
         )
 
-        # --- Gateway target: the MCP ALB, not the runtimes (see module
-        # docstring's circular-dependency note) ---
-        # Pinned: `CfnGatewayTarget`/`TargetConfigurationProperty`/
-        # `McpTargetConfigurationProperty`/`McpServerTargetConfiguration
-        # Property`/`CredentialProviderConfigurationProperty` (local
-        # introspection + context7). Cross-checked against `gateway.py`'s
-        # `create_mcp_server_target` (:119-144): `targetConfiguration.mcp.
-        # mcpServer.endpoint`/`.listingMode="DEFAULT"`,
-        # `credentialProviderConfigurations=[{"credentialProviderType":
-        # "GATEWAY_IAM_ROLE"}]`. `mcp_url` already carries the `/mcp` suffix
-        # (`services.py`'s own `self.mcp_url = f"http://{alb.dns}/mcp"`).
-        self.gateway_target = bedrockagentcore.CfnGatewayTarget(
-            self,
-            "GatewayMcpServerTarget",
-            gateway_identifier=self.gateway.attr_gateway_identifier,
-            name=_GATEWAY_TARGET_NAME,
-            description=_GATEWAY_TARGET_DESCRIPTION,
-            target_configuration=bedrockagentcore.CfnGatewayTarget.TargetConfigurationProperty(
-                mcp=bedrockagentcore.CfnGatewayTarget.McpTargetConfigurationProperty(
-                    mcp_server=bedrockagentcore.CfnGatewayTarget.McpServerTargetConfigurationProperty(
-                        endpoint=mcp_url,
-                        listing_mode="DEFAULT",
-                    )
-                )
-            ),
-            credential_provider_configurations=[
-                bedrockagentcore.CfnGatewayTarget.CredentialProviderConfigurationProperty(
-                    credential_provider_type="GATEWAY_IAM_ROLE",
-                )
-            ],
-        )
+        # --- No Gateway target in v1 -- provisioned but UNWIRED ---
+        # A `CfnGatewayTarget` used to be built here, pointing at
+        # `services.mcp_url` (the internal ALB). Removed by the v0.3.0-rc4
+        # pivot: `McpServerTargetConfiguration.Endpoint`'s LIVE registry
+        # schema pattern is `^https://.*`, and this stack deliberately has
+        # no HTTPS-fronted MCP endpoint (owner decision: no publicly
+        # exposed MCP gateway, period -- see module docstring's "As-built
+        # network architecture (v1)"). `self.gateway` and
+        # `self.gateway_m2m_credential_provider` above are left in place --
+        # both provision cleanly with no MCP-endpoint dependency -- for a
+        # v2 target to be wired against if that decision ever changes.
 
         # --- Memory: three always-on strategies, mirroring memory.py's
         # `_semantic_strategy`/`_summary_strategy`/`_user_preference_
@@ -636,6 +604,41 @@ class Agents(Construct):
             )
         )
 
+        # --- v0.3.0-rc4 pivot: VPC networking for every runtime ---
+        # One shared security group (egress-all -- the runtimes reach
+        # Bedrock/CloudWatch/X-Ray over the internet through `vpc`'s NAT
+        # gateway, and Aurora over the private route opened below; nothing
+        # here needs a narrower egress rule the way `Database.security_
+        # group`'s ingress-only posture does). `CfnRuntime` is an L1 with no
+        # `connections`/auto-created-SG convenience the way `lambda_.
+        # Function(vpc=...)` has, so this is built explicitly, the same way
+        # `Database.security_group` is.
+        self.runtime_security_group = ec2.SecurityGroup(
+            self,
+            "RuntimeSecurityGroup",
+            vpc=vpc,
+            description=(
+                "AgentCore runtimes (Engagement/Workflow/Development) -- "
+                "in-container stdio MCP, no Gateway transport (see agents.py "
+                "module docstring)."
+            ),
+            allow_all_outbound=True,
+        )
+        # Same `Database.security_group`'s own docstring / `Migrations`'/
+        # `GateService`'s idiom: open 5432 FROM the runtime security group,
+        # using the cluster's own default-port helper rather than a
+        # hand-typed `ec2.Port.tcp(5432)`.
+        db_cluster.connections.allow_default_port_from(
+            self.runtime_security_group,
+            "AgentCore runtimes -> Aurora (stdio MCP + tracing)",
+        )
+        # `CfnRuntime.VpcConfigProperty` takes raw subnet-id strings, not an
+        # `ec2.SubnetSelection` -- resolve it once here (same private-with-
+        # egress tier `Migrations`/`GateService`/`Services` already use).
+        runtime_subnet_ids = vpc.select_subnets(
+            subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
+        ).subnet_ids
+
         self.runtimes = {}
         self.runtime_arns = {}
         for agent_name in AGENT_NAMES:
@@ -661,8 +664,21 @@ class Agents(Construct):
                     )
                 ),
                 role_arn=runtime_role.role_arn,
+                # LIVE-VALIDATED (v0.3.0-rc4 pivot): `NetworkMode`'s live
+                # registry schema enum is `["PUBLIC", "VPC"]` (`aws
+                # cloudformation describe-type --type RESOURCE --type-name
+                # AWS::BedrockAgentCore::Runtime`, definitions.NetworkMode)
+                # -- "VPC" is the exact, case-sensitive control-plane value,
+                # not cfn-lint's bundled copy (which had already been shown
+                # stale once this rc, on the GatewayTarget endpoint
+                # pattern -- see module docstring). `VpcConfigProperty`
+                # requires both `security_groups`/`subnets` non-empty.
                 network_configuration=bedrockagentcore.CfnRuntime.NetworkConfigurationProperty(
-                    network_mode="PUBLIC",
+                    network_mode="VPC",
+                    network_mode_config=bedrockagentcore.CfnRuntime.VpcConfigProperty(
+                        security_groups=[self.runtime_security_group.security_group_id],
+                        subnets=runtime_subnet_ids,
+                    ),
                 ),
                 lifecycle_configuration=bedrockagentcore.CfnRuntime.LifecycleConfigurationProperty(
                     idle_runtime_session_timeout=_IDLE_TIMEOUT_S,
@@ -673,22 +689,30 @@ class Agents(Construct):
                     # `runtimes.py`'s own `_environment_variables()` sets
                     # this whenever `--region`/`AWS_REGION` is available,
                     # for exactly the reason it must be set here
-                    # unconditionally: `mcp_tools._mint_gateway_bearer_
-                    # token` (the only MCP-connection path a deployed
-                    # runtime takes, since `FDE_GATEWAY_URL` is always set
-                    # below) resolves the region through `fde_mcp.config.
-                    # DatabaseSettings`, which reads `AWS_REGION`/
-                    # `AWS_DEFAULT_REGION` and raises `RuntimeError` if
-                    # neither is set -- unlike ECS/Lambda, an AgentCore
-                    # Runtime container does not get this injected for
-                    # free, so it must be an explicit env var here.
+                    # unconditionally: `mcp_tools.build_mcp_client`'s
+                    # stdio-transport branch (the ONLY MCP-connection path a
+                    # deployed runtime takes now -- see module docstring's
+                    # "As-built network architecture (v1)") spawns
+                    # `python -m fde_mcp`, which resolves the region through
+                    # `fde_mcp.config.DatabaseSettings`, reading
+                    # `AWS_REGION`/`AWS_DEFAULT_REGION` and raising
+                    # `RuntimeError` if neither is set -- unlike ECS/Lambda,
+                    # an AgentCore Runtime container does not get this
+                    # injected for free, so it must be an explicit env var
+                    # here.
                     "AWS_REGION": cdk.Aws.REGION,
                     # `fde/db/agent`'s ARN -- see `_RUNTIME_DB_SECRET_NAME`
                     # and the supplemental `ReadRuntimeLoginSecret` grant
-                    # above. Needed for `tracing.py`'s direct `raw_sql`
-                    # writes (`mcp_tools.py`'s own docstring); without it
-                    # every trace write has no DSN source and silently
-                    # no-ops rather than recording the turn.
+                    # above. Needed both for `tracing.py`'s direct `raw_sql`
+                    # writes AND for the in-container stdio `fde_mcp`
+                    # subprocess's own DB connection (`mcp_tools.py`'s own
+                    # docstring) -- without it, neither has a DSN source.
+                    # This secret is now genuinely reachable: the runtime is
+                    # VPC-attached (`self.runtime_security_group`, above)
+                    # with a private route to the Aurora cluster the
+                    # secret's DSN points at -- not the PUBLIC-network-mode
+                    # dead end an earlier revision of this module recorded
+                    # as an open risk.
                     "FDE_DB_SECRET_ARN": runtime_db_secret.secret_arn,
                     # Baked for audit parity (brief's own phrase, matching
                     # `runtimes.py`'s `_resolved_model_id` docstring: "every
@@ -707,21 +731,17 @@ class Agents(Construct):
                     "FDE_MODEL_PROVIDER": params.model_provider.value_as_string,
                     "FDE_MODEL_BASE_URL": params.compat_base_url.value_as_string,
                     "FDE_MODEL_API_KEY": provider_api_key,
-                    # Presence (not truthiness) selects Gateway transport
-                    # over local stdio (`GatewaySettings.url`,
-                    # `fde_agents/common/config.py`) -- deployed runtimes
-                    # always get a real URL here, never blank.
-                    "FDE_GATEWAY_URL": self.gateway_url,
-                    # I4(b) fix (final-fix-report.md): without this,
-                    # `GatewaySettings.scopes` falls back to its own
-                    # unset-env-var default ("gateway:invoke", COLON --
-                    # `fde_agents/common/config.py:227-229`), which is not
-                    # a scope `m2m_client` was ever minted against
-                    # (Cognito's own separator is "/" -- `identity.py`).
-                    # Every M2M token request would then ask for a scope
-                    # that doesn't exist and fail. See module-level
-                    # `FDE_GATEWAY_SCOPE`.
-                    "FDE_GATEWAY_SCOPES": FDE_GATEWAY_SCOPE,
+                    # `FDE_GATEWAY_URL`/`FDE_GATEWAY_SCOPES` are
+                    # DELIBERATELY absent (v0.3.0-rc4 pivot): their absence
+                    # is exactly what makes `GatewaySettings.url` falsy and
+                    # selects `mcp_tools.build_mcp_client`'s in-container
+                    # stdio transport over a Gateway connection -- see
+                    # module docstring's "As-built network architecture
+                    # (v1)". Do not re-add either without also wiring a
+                    # real `CfnGatewayTarget` (currently absent, by owner
+                    # decision) -- setting `FDE_GATEWAY_URL` alone would
+                    # point every runtime at a Gateway with no MCP target
+                    # behind it.
                 },
             )
             # No CDK-inferred dependency exists between a runtime and the

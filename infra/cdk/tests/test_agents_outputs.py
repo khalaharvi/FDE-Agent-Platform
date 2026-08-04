@@ -38,7 +38,11 @@ def test_pull_through_cache_rule_shape() -> None:
     assert rule["Properties"]["UpstreamRegistryUrl"] == "public.ecr.aws"
 
 
-def test_runtimes_are_public_network_mode_with_runtime_role() -> None:
+def test_runtimes_are_vpc_network_mode_with_runtime_role() -> None:
+    """v0.3.0-rc4 pivot: the live registry schema's NetworkMode enum is
+    ["PUBLIC", "VPC"] (verified via `describe-type`, not cfn-lint's bundled
+    copy -- see agents.py's module docstring). Every runtime now carries a
+    VPC network config with non-empty Subnets/SecurityGroups, not PUBLIC."""
     t = synth_template()
     template = t.to_json()
     roles = {k: v for k, v in template["Resources"].items() if v["Type"] == "AWS::IAM::Role"}
@@ -52,8 +56,41 @@ def test_runtimes_are_public_network_mode_with_runtime_role() -> None:
     assert len(runtimes) == 3
     for r in runtimes.values():
         props = r["Properties"]
-        assert props["NetworkConfiguration"]["NetworkMode"] == "PUBLIC"
+        net = props["NetworkConfiguration"]
+        assert net["NetworkMode"] == "VPC"
+        vpc_config = net["NetworkModeConfig"]
+        assert len(vpc_config["Subnets"]) > 0
+        assert len(vpc_config["SecurityGroups"]) > 0
         assert props["RoleArn"] == {"Fn::GetAtt": [runtime_role_id, "Arn"]}
+
+
+def test_runtimes_share_one_security_group_with_db_ingress_rule() -> None:
+    """All three runtimes reference the SAME security group (one shared SG,
+    per agents.py's own construct docstring), and that SG has a real
+    ingress path opened on the Aurora cluster's security group -- the
+    `db_cluster.connections.allow_default_port_from` call this pivot adds."""
+    t = synth_template()
+    template = t.to_json()
+    runtimes = t.find_resources("AWS::BedrockAgentCore::Runtime")
+    assert len(runtimes) == 3
+    sg_refs = {
+        r["Properties"]["NetworkConfiguration"]["NetworkModeConfig"]["SecurityGroups"][0][
+            "Fn::GetAtt"
+        ][0]
+        for r in runtimes.values()
+    }
+    assert len(sg_refs) == 1
+    runtime_sg_id = next(iter(sg_refs))
+
+    ingress_rules = [
+        v
+        for v in template["Resources"].values()
+        if v["Type"] == "AWS::EC2::SecurityGroupIngress"
+        and v["Properties"].get("SourceSecurityGroupId", {}).get("Fn::GetAtt", [None])[0]
+        == runtime_sg_id
+    ]
+    assert len(ingress_rules) == 1
+    assert ingress_rules[0]["Properties"]["IpProtocol"] == "tcp"
 
 
 def test_runtime_container_uri_goes_through_ecr_public_pull_through_cache() -> None:
@@ -76,7 +113,11 @@ def test_runtime_agent_names_are_the_three_distinct_agents() -> None:
     assert names == ["development", "engagement", "workflow"]
 
 
-def test_runtime_env_has_gateway_url_and_provider_envs() -> None:
+def test_runtime_env_has_provider_envs_and_no_gateway_wiring() -> None:
+    """v0.3.0-rc4 pivot: FDE_GATEWAY_URL/FDE_GATEWAY_SCOPES must be ABSENT
+    from every runtime's env -- their absence is what selects the
+    in-container stdio MCP transport (agents.py's module docstring, "As-built
+    network architecture (v1)")."""
     t = synth_template()
     runtimes = t.find_resources("AWS::BedrockAgentCore::Runtime")
     assert len(runtimes) == 3
@@ -84,12 +125,11 @@ def test_runtime_env_has_gateway_url_and_provider_envs() -> None:
         env = r["Properties"]["EnvironmentVariables"]
         assert "FDE_AGENT_NAME" in env
         assert "FDE_MODEL_ID" in env
-        assert "FDE_GATEWAY_URL" in env
         assert env["FDE_MODEL_PROVIDER"] == {"Ref": "ModelProvider"}
         assert env["FDE_MODEL_BASE_URL"] == {"Ref": "CompatBaseUrl"}
         assert "FDE_MODEL_API_KEY" in env
-        # FDE_GATEWAY_URL is a real Gateway attribute token, not a literal.
-        assert isinstance(env["FDE_GATEWAY_URL"], dict)
+        assert "FDE_GATEWAY_URL" not in env
+        assert "FDE_GATEWAY_SCOPES" not in env
 
 
 def test_runtime_model_id_env_is_fn_if_on_is_bedrock_model() -> None:
@@ -198,7 +238,7 @@ def test_runtimes_depend_on_pull_through_cache_rule() -> None:
 
 
 # ---------------------------------------------------------------------
-# Agents: Gateway + GatewayTarget
+# Agents: Gateway (provisioned but unwired -- no GatewayTarget in v1)
 # ---------------------------------------------------------------------
 
 
@@ -255,18 +295,6 @@ def test_gateway_jwt_authorizer_also_has_allowed_clients() -> None:
     assert jwt["AllowedClients"] == [{"Ref": m2m_client_id}]
 
 
-def test_every_runtime_has_fde_gateway_scopes_env() -> None:
-    """I4(b) fix (final-fix-report.md): the code default
-    (`fde_agents/common/config.py`'s `GatewaySettings.scopes`) is
-    "gateway:invoke" (colon) when unset -- Cognito's own scope separator
-    is "/", so every runtime needs FDE_GATEWAY_SCOPES set explicitly."""
-    t = synth_template()
-    runtimes = t.find_resources("AWS::BedrockAgentCore::Runtime")
-    assert len(runtimes) == 3
-    for r in runtimes.values():
-        assert r["Properties"]["EnvironmentVariables"]["FDE_GATEWAY_SCOPES"] == "gateway/invoke"
-
-
 def test_gateway_m2m_credential_provider_exists_with_cognito_oauth2_config() -> None:
     """I4(c) fix (final-fix-report.md): the `fde-gateway-m2m` AgentCore
     Identity OAuth2 credential provider `IdentityClient.get_token(
@@ -291,15 +319,16 @@ def test_gateway_m2m_credential_provider_exists_with_cognito_oauth2_config() -> 
     assert isinstance(custom["ClientId"], dict)  # a real Ref, not a literal
 
 
-def test_gateway_target_points_at_mcp_alb_with_iam_role_credentials() -> None:
+def test_no_gateway_target_provisioned() -> None:
+    """v0.3.0-rc4 pivot: the LIVE registry schema for
+    `AWS::BedrockAgentCore::GatewayTarget` requires
+    `McpServerTargetConfiguration.Endpoint` to match `^https://.*`, and this
+    stack deliberately has no HTTPS-fronted MCP endpoint (owner decision:
+    no publicly exposed MCP gateway, period). No `CfnGatewayTarget` is
+    provisioned; the Gateway itself stays (provisioned but unwired)."""
     t = synth_template()
-    t.resource_count_is("AWS::BedrockAgentCore::GatewayTarget", 1)
-    targets = t.find_resources("AWS::BedrockAgentCore::GatewayTarget")
-    target = next(iter(targets.values()))
-    endpoint = target["Properties"]["TargetConfiguration"]["Mcp"]["McpServer"]["Endpoint"]
-    assert "/mcp" in str(endpoint)
-    creds = target["Properties"]["CredentialProviderConfigurations"]
-    assert creds[0]["CredentialProviderType"] == "GATEWAY_IAM_ROLE"
+    t.resource_count_is("AWS::BedrockAgentCore::GatewayTarget", 0)
+    t.resource_count_is("AWS::BedrockAgentCore::Gateway", 1)
 
 
 # ---------------------------------------------------------------------

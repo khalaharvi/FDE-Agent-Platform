@@ -41,10 +41,11 @@ the break-glass query path, §5).
 app clients: `console_client` (hosted-UI, authorization-code grant, for the
 review console), `api_client` (no OAuth flows of its own — exists to give
 the gate API's JWT authorizer a stable audience), `m2m_client`
-(client-credentials, scoped to `gateway/invoke` — how a deployed agent
-authenticates to the AgentCore Gateway). One user is seeded from
-`AdminEmail` at launch. The user pool's removal policy is `RETAIN`: deleting
-the stack does not delete your accounts.
+(client-credentials, scoped to `gateway/invoke` — backs the `fde-gateway-m2m`
+AgentCore Identity credential provider `agents.py` provisions for a future
+Gateway wire-up; no deployed runtime calls it in v1 — see §6). One user is
+seeded from `AdminEmail` at launch. The user pool's removal policy is
+`RETAIN`: deleting the stack does not delete your accounts.
 
 **IamRoles** (`iam_roles.py`) — five execution roles. `runtime_role` (shared
 by all three AgentCore runtimes — see the hardening note in §7) and
@@ -75,15 +76,17 @@ docstring for why, and §7's `/healthz` hardening note); `fde-embedder`
 **Agents** (`agents.py`) — an ECR-Public pull-through cache rule (AgentCore
 Runtime requires a *private*-registry image, unlike Fargate); one AgentCore
 Gateway (MCP protocol, `SEMANTIC` search, `CUSTOM_JWT` against the Cognito
-pool) fronting the internal MCP ALB; one AgentCore Memory resource (three
-always-on strategies: semantic, summary, user-preference; 90-day event
-expiry); three AgentCore Runtimes (Engagement, Workflow, Development —
-`PUBLIC` network mode, container image resolved through the pull-through
-cache); one AgentCore Identity OAuth2 credential provider (`fde-gateway-m2m`,
-wired against `m2m_client`'s Cognito discovery URL/id/secret) so every
-runtime's `IdentityClient.get_token(provider_name="fde-gateway-m2m", ...)`
-call succeeds with no manual, out-of-band provisioning step. See §6 for the
-one named reachability risk `PUBLIC` network mode creates.
+pool) — **provisioned but unwired**: no `GatewayTarget` points it at the MCP
+ALB (see §6); one AgentCore Memory resource (three always-on strategies:
+semantic, summary, user-preference; 90-day event expiry); three AgentCore
+Runtimes (Engagement, Workflow, Development — `VPC` network mode, one shared
+security group with a private route to Aurora, container image resolved
+through the pull-through cache); one AgentCore Identity OAuth2 credential
+provider (`fde-gateway-m2m`, wired against `m2m_client`'s Cognito discovery
+URL/id/secret) — provisioned for a future v2 Gateway wire-up, not currently
+called by any runtime. Every runtime talks to the FDE knowledge-graph MCP
+server over its own in-container stdio subprocess, not the Gateway — see §6
+for why, and for the no-public-MCP-gateway decision behind it.
 
 **GateService** (`gate.py`) — the `fde-gate-service` Lambda (VPC-attached,
 python3.12/arm64), an `apigatewayv2.HttpApi` (JWT-authorized `ANY
@@ -217,9 +220,12 @@ API directly.
    rejected — not because anything is broken, but because the platform's own
    fail-closed design (docs/07) requires an authorized reviewer identity to
    match exactly.
-5. Run one agent task through the Gateway (e.g. the engagement flow described
-   in docs/12 §3, pointed at the deployed `ApiEndpoint`/Gateway rather than a
-   local stdio MCP server) so a real proposal lands in the queue.
+5. Run one agent task against a deployed runtime (e.g. the engagement flow
+   described in docs/12 §3, invoking the `ApiEndpoint`-mediated
+   `InvokeAgentRuntime` call rather than a local dev checkout) so a real
+   proposal lands in the queue. Every deployed runtime talks to the FDE
+   knowledge-graph MCP server over its own in-container stdio subprocess,
+   not the Gateway — see §6 for why.
 6. Approve it (via the bearer-token `curl` path above). Confirm the merged
    commit is visible.
 7. Confirm `kg_search`/the console's search surface returns fused results —
@@ -376,35 +382,56 @@ exposed by this console client's OAuth configuration.
 This section names what has **not** been checked against live AWS, following
 the same rule the rest of this repo already holds itself to.
 
-**The one named reachability risk — three surfaces, one root cause.** Both
-the AgentCore Gateway and all three AgentCore Runtimes are, by this stack's
-own design, **outside the VPC**: `CfnGateway` has no VPC-attachment property
-in the pinned `aws-cdk-lib` version, and every `CfnRuntime` here is built
-with `network_mode="PUBLIC"`. That creates a reachability question on three
-distinct paths, not one:
+**The no-public-MCP-gateway pivot (v0.3.0-rc4 live-launch finding).** An
+earlier revision of this stack tried to wire an `AWS::BedrockAgentCore::
+GatewayTarget` at the internal MCP ALB (`services.mcp_url`) and hit a real
+CloudFormation validation failure, not a hypothetical one: the LIVE registry
+schema (`aws cloudformation describe-type --type RESOURCE --type-name
+AWS::BedrockAgentCore::GatewayTarget`) requires
+`McpServerTargetConfiguration.Endpoint` to match `^https://.*`, and this
+stack's only MCP endpoint is `services.py`'s internal ALB — plain HTTP,
+`internet_facing=False`, no TLS listener. The repo owner's decision, given
+that finding: **no publicly exposed MCP gateway, period.** Standing up an
+HTTPS front for an internal ALB just to satisfy a Gateway target's regex was
+rejected outright.
 
-1. **Gateway → internal ALB.** The Gateway's `mcpServer` target points at
-   `services.py`'s internal ALB (no public IP, no IGW route). Whether a
-   non-VPC-attached Gateway can reach it at all has not been exercised.
-2. **Runtime → Aurora, for tracing.** Every runtime's `FDE_DB_SECRET_ARN`
-   env points `tracing.py`'s direct writes at the Aurora cluster — which
-   lives in private subnets with no public endpoint. A `PUBLIC`-mode
-   runtime has no private route to it.
-3. **Runtime → Aurora, for the local-stdio MCP fallback.** Every deployed
-   runtime always gets `FDE_GATEWAY_URL` set, so this path should never
-   trigger — but the code path exists, and would hit the identical gap the
-   moment it did (e.g. a future change that leaves `FDE_GATEWAY_URL`
-   unset).
+**As-built, this stack now looks like:**
 
-All three share one root cause (`PUBLIC` network mode = no VPC attachment =
-no private route into `network.py`'s VPC). **The documented fix, if Task
-10's live test confirms the failure:** `CfnRuntime.NetworkConfigurationProperty`
-has a `network_mode_config` field accepting a VPC shape
-(`security_groups`/`subnets`) on the pinned CDK version — the schema already
-supports attaching a runtime to this stack's VPC the same way the gate
-Lambda and the Fargate services already are. Not applied here: it is a
-real code change, not something to guess into `agents.py` without a live
-failure to confirm it against.
+1. **No `GatewayTarget` is provisioned.** `agents.py`'s `CfnGateway` and its
+   `fde-gateway-m2m` `CfnOAuth2CredentialProvider` both still exist — each
+   provisions cleanly with no MCP-endpoint dependency — but the Gateway is
+   **provisioned but unwired**: nothing points at `services.mcp_url`
+   through it, and no runtime calls it. Wiring a real target is v2 scope,
+   gated on an HTTPS-fronted MCP endpoint existing, which in turn is gated
+   on the owner's no-public-MCP-gateway decision changing.
+2. **All three AgentCore Runtimes join the VPC.** `network_mode="VPC"`
+   (the live registry schema's `NetworkMode` enum is `["PUBLIC", "VPC"]` —
+   confirmed the same `describe-type` way, not cfn-lint's bundled copy,
+   which is exactly what mis-described the GatewayTarget pattern above),
+   attached to `network.py`'s private-with-egress subnets through one
+   shared security group with a private route opened to Aurora
+   (`database.cluster.connections.allow_default_port_from`, the same
+   idiom the gate Lambda and migration runner already use). This gives
+   `FDE_DB_SECRET_ARN` (tracing writes) a genuine private route it did not
+   have before.
+3. **Every runtime uses in-container stdio MCP, not the Gateway.**
+   `FDE_GATEWAY_URL`/`FDE_GATEWAY_SCOPES` are no longer set on any
+   runtime's environment; their absence is exactly what selects
+   `mcp_tools.build_mcp_client`'s stdio transport (`fde_agents/common/
+   config.py`) — each runtime spawns its own `python -m fde_mcp`
+   subprocess and talks to it locally. That subprocess needs its own
+   Aurora route, which point 2 supplies.
+
+This resolves the reachability question an earlier revision of this
+document left open for surfaces "runtime → Aurora" (both the tracing writes
+and the local-MCP-subprocess path) by construction, not by a live test still
+pending. The old "Gateway → internal ALB" surface is moot, not resolved —
+there is no Gateway target left for that question to apply to. **The v2
+precondition**, if the owner ever revisits the no-public-MCP-gateway
+decision: stand up an HTTPS-fronted MCP endpoint (e.g. TLS on the internal
+ALB plus a reachability story for a non-VPC-attached Gateway, or a different
+front entirely), then wire a `CfnGatewayTarget` back into `agents.py` against
+it — the schema's `^https://.*` requirement is a hard floor either way.
 
 **Nothing in this stack has run against live AWS.** Every CloudFormation
 property name was cross-checked against the installed CDK library, Context7,
