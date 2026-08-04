@@ -1141,7 +1141,7 @@ async def reviewer_admin_post(request: Request) -> Response:
 
 
 def register(router: Router) -> None:
-    """Attach the console's 28 routes to the shared router."""
+    """Attach the console's 29 routes to the shared router."""
     router.get("/ui", queue_page)
     router.get("/ui/proposals/{proposal_id}", proposal_page)
     router.post("/ui/proposals/{proposal_id}/decision", decision_post)

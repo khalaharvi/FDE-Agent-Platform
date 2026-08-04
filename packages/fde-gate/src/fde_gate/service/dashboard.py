@@ -93,6 +93,18 @@ async def build(*, engagement_id: str | None = None, window_days: int = 30) -> d
     shows both sections, and a page whose contents depend on whether an
     earlier query happened to return rows is harder to reason about than one
     extra read-only statement.
+
+    NOTE the bare `cur.fetchall()` below, where the rest of this package uses
+    `fde_gate.rows.fetchall`. That helper exists to make rows JSON-safe, and
+    part of being JSON-safe is turning every `datetime` into an ISO string --
+    which is exactly wrong here. `assemble_dashboard` wants native datetimes:
+    it formats them itself and does arithmetic on them (how long the oldest
+    proposal has been waiting, measured against `now`). Routed through the
+    helper it raises `AttributeError: 'str' object has no attribute
+    'isoformat'` on the first queue row -- checked, not assumed. The MCP tool
+    passes native rows for the same reason. Nothing un-normalised escapes:
+    what `build` returns is the assembled dict, whose timestamps are already
+    ISO strings.
     """
     window = max(_MIN_WINDOW_DAYS, min(int(window_days), MAX_WINDOW_DAYS))
     # One instant for both transactions. Two calls to now() would put the
