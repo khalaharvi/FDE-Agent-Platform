@@ -238,6 +238,112 @@ def test_runtimes_depend_on_pull_through_cache_rule() -> None:
 
 
 # ---------------------------------------------------------------------
+# v0.3.0-rc6 live-launch finding: AgentCore VPC mode rejects subnets
+# outside its supported AZ-IDs (use1-az4/use1-az1/use1-az2 in us-east-1) --
+# `network.py`'s AZ-NAME-selected VPC subnets are not portable across
+# accounts, so agents.py now pins two dedicated subnets by AZ-ID.
+# ---------------------------------------------------------------------
+
+
+def _runtime_pinned_subnets(template: dict) -> dict:
+    return {
+        k: v
+        for k, v in template["Resources"].items()
+        if v["Type"] == "AWS::EC2::Subnet" and v["Properties"].get("AvailabilityZoneId") is not None
+    }
+
+
+def test_two_az_id_pinned_runtime_subnets_exist() -> None:
+    """`CreateAgentRuntime` only accepts use1-az4/use1-az1/use1-az2 in
+    us-east-1 -- the runtimes' subnets must be pinned by AZ-ID (physical,
+    account-stable), not selected by AZ-NAME (randomized per account)."""
+    t = synth_template()
+    template = t.to_json()
+    pinned = _runtime_pinned_subnets(template)
+    assert len(pinned) == 2
+    az_ids = sorted(v["Properties"]["AvailabilityZoneId"] for v in pinned.values())
+    assert az_ids == ["use1-az1", "use1-az2"]
+    for v in pinned.values():
+        assert v["Properties"]["MapPublicIpOnLaunch"] is False
+
+
+def test_runtime_subnets_are_routed_to_the_existing_private_route_table() -> None:
+    """Single-NAT stack (network.py's nat_gateways=1): both AZ-ID-pinned
+    subnets associate with the SAME pre-existing private route table
+    (vpc.private_subnets[0]'s), rather than provisioning a new NAT gateway
+    or route table just for them."""
+    t = synth_template()
+    template = t.to_json()
+    resources = template["Resources"]
+    pinned_ids = set(_runtime_pinned_subnets(template))
+    assert len(pinned_ids) == 2
+
+    assocs = [v for v in resources.values() if v["Type"] == "AWS::EC2::SubnetRouteTableAssociation"]
+    pinned_assocs = [
+        a for a in assocs if a["Properties"]["SubnetId"].get("Fn::GetAtt", [None])[0] in pinned_ids
+    ]
+    assert len(pinned_assocs) == 2
+    route_table_refs = {a["Properties"]["RouteTableId"]["Ref"] for a in pinned_assocs}
+    assert len(route_table_refs) == 1
+
+    private_route_tables = [
+        k
+        for k, v in resources.items()
+        if v["Type"] == "AWS::EC2::RouteTable"
+        and any(
+            tag.get("Key") == "Name" and "PrivateSubnet" in tag.get("Value", "")
+            for tag in v["Properties"].get("Tags", [])
+        )
+    ]
+    assert next(iter(route_table_refs)) in private_route_tables
+
+
+def test_runtime_vpc_config_subnets_are_exactly_the_two_az_id_pinned_subnets() -> None:
+    """The runtimes must reference ONLY the two dedicated AZ-ID-pinned
+    subnets -- not network.py's general private-with-egress tier, which is
+    exactly what CreateAgentRuntime rejected live."""
+    t = synth_template()
+    template = t.to_json()
+    pinned_ids = set(_runtime_pinned_subnets(template))
+    assert len(pinned_ids) == 2
+
+    runtimes = t.find_resources("AWS::BedrockAgentCore::Runtime")
+    assert len(runtimes) == 3
+    for r in runtimes.values():
+        subnet_refs = r["Properties"]["NetworkConfiguration"]["NetworkModeConfig"]["Subnets"]
+        subnet_ids = {s["Fn::GetAtt"][0] for s in subnet_refs}
+        assert subnet_ids == pinned_ids
+
+
+def test_every_runtime_depends_on_both_subnet_route_table_associations() -> None:
+    """CDK infers a runtime's dependency on the CfnSubnets themselves
+    (their attr_subnet_id tokens are referenced directly), but NOT on the
+    separate CfnSubnetRouteTableAssociation resources -- a runtime starting
+    before its subnets' NAT routes exist would fail egress. Each runtime's
+    DependsOn must include both associations explicitly."""
+    t = synth_template()
+    template = t.to_json()
+    resources = template["Resources"]
+    assoc_ids = [
+        k for k, v in resources.items() if v["Type"] == "AWS::EC2::SubnetRouteTableAssociation"
+    ]
+    pinned_ids = set(_runtime_pinned_subnets(template))
+    pinned_assoc_ids = [
+        k
+        for k in assoc_ids
+        if resources[k]["Properties"]["SubnetId"].get("Fn::GetAtt", [None])[0] in pinned_ids
+    ]
+    assert len(pinned_assoc_ids) == 2
+
+    runtime_ids = [k for k, v in resources.items() if v["Type"] == "AWS::BedrockAgentCore::Runtime"]
+    assert len(runtime_ids) == 3
+    for rid in runtime_ids:
+        depends = resources[rid].get("DependsOn", [])
+        for assoc_id in pinned_assoc_ids:
+            assert assoc_id in depends, (rid, assoc_id, depends)
+
+
+# ---------------------------------------------------------------------
 # Agents: Gateway (provisioned but unwired -- no GatewayTarget in v1)
 # ---------------------------------------------------------------------
 
