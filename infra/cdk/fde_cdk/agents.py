@@ -414,7 +414,15 @@ class Agents(Construct):
             self,
             "GatewayM2mCredentialProvider",
             name=_GATEWAY_M2M_CREDENTIAL_PROVIDER_NAME,
-            credential_provider_vendor=bedrockagentcore.OAuth2CredentialProviderVendor.COGNITO.value,
+            # LIVE-VALIDATED CORRECTION (v0.3.0-rc1 launch, 2026-08-04): the
+            # control plane rejects vendor "CognitoOauth2" paired with
+            # `customOauth2ProviderConfig` ("Provided configuration does not
+            # match selected type", ValidationException). Vendor and config
+            # member must match: the generic custom config pairs with
+            # CUSTOM_OAUTH2. Cognito remains the actual issuer -- it is
+            # expressed entirely through the discovery URL inside the custom
+            # config, exactly as the comment above describes.
+            credential_provider_vendor=bedrockagentcore.OAuth2CredentialProviderVendor.CUSTOM.value,
             oauth2_provider_config_input=bedrockagentcore.CfnOAuth2CredentialProvider.Oauth2ProviderConfigInputProperty(
                 custom_oauth2_provider_config=bedrockagentcore.CfnOAuth2CredentialProvider.CustomOauth2ProviderConfigInputProperty(
                     oauth_discovery=bedrockagentcore.CfnOAuth2CredentialProvider.Oauth2DiscoveryProperty(
