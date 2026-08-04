@@ -374,7 +374,7 @@ def test_gate_lambda_runtime_arns_reference_the_matching_runtime() -> None:
         runtime_id = next(
             k
             for k, v in runtimes.items()
-            if v["Properties"]["AgentRuntimeName"] == f"fde-{agent_lower}-agent"
+            if v["Properties"]["AgentRuntimeName"] == f"fde_{agent_lower}_agent"
         )
         assert env[f"FDE_RUNTIME_ARN_{agent_upper}"] == {
             "Fn::GetAtt": [runtime_id, "AgentRuntimeArn"]
