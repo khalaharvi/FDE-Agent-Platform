@@ -449,6 +449,25 @@ created against a live account — if a live test finds the vendor/config
 pairing (`CognitoOauth2` + the generic `customOauth2ProviderConfig` shape)
 rejected, that is the first place to look.
 
+**AgentCore VPC-mode runtime subnets are pinned by AZ-ID, and that is
+us-east-1-only (v0.3.0-rc6 live-launch finding).** `CreateAgentRuntime`
+(VPC mode) rejected this stack's original private subnets outright:
+"The following subnets are in unsupported availability zones in region
+us-east-1: subnet-... in us-east-1b (ID: use1-az6). Supported availability
+zones are: use1-az4, use1-az1, use1-az2." AgentCore VPC mode only accepts
+that fixed set of AZ-IDs per region, and `network.py`'s VPC selects
+subnets by AZ NAME — the AZ-NAME-to-AZ-ID mapping is randomized per AWS
+account, so no name-based subnet selection is ever portably correct for
+this control plane. The fix (`agents.py`): two dedicated private subnets,
+`RuntimeSubnetAz1`/`RuntimeSubnetAz2`, pinned directly to `use1-az1`/
+`use1-az2` (as of 2026-08-04) and routed to the stack's single NAT gateway
+through the VPC's existing private route table, with every runtime's
+`VpcConfig.Subnets` pointed at only those two — not `network.py`'s general
+private-with-egress tier. Hardcoding those AZ-IDs makes this template
+us-east-1-only, which is already this stack's documented v1 posture (see
+`params.py`'s `AssetsRegionMap`, RELEASING.md) — revisit AZ-ID selection
+here when this platform ever expands to a second region.
+
 **Costs are estimated, not observed.** Aurora Serverless v2 at the 2-ACU
 floor and a single NAT gateway dominate a `demo`-tier month; see docs/09 §9
 for the platform's general cost shape (model inference dominates at real

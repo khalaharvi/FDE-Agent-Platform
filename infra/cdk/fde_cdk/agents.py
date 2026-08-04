@@ -89,8 +89,11 @@ live test" gap with an as-built resolution:
      `NetworkMode` enum is `["PUBLIC", "VPC"]` (confirmed via the same
      `describe-type` query as above, not cfn-lint's bundled copy, which is
      exactly what mis-described the GatewayTarget pattern in the first
-     place) -- attached to `vpc`'s private-with-egress subnets through one
-     dedicated `runtime_security_group` (egress-all; DB ingress opened
+     place) -- attached to two dedicated, AZ-ID-pinned private subnets
+     (`RuntimeSubnetAz1`/`RuntimeSubnetAz2`, `use1-az1`/`use1-az2` -- see
+     the "AgentCore VPC-mode AZ pinning (v0.3.0-rc6)" note below and the
+     inline comment at their construction site) through one dedicated
+     `runtime_security_group` (egress-all; DB ingress opened
      one-directionally via `db_cluster.connections.
      allow_default_port_from(runtime_security_group, ...)`, the same idiom
      `Migrations`/`GateService`/`Services` already use). This resolves the
@@ -114,6 +117,34 @@ If a v2 change ever stands up an HTTPS-fronted MCP endpoint and wires a
 `CfnGatewayTarget` back in, surface 1's original question (can a
 non-VPC-attached Gateway reach a VPC-internal HTTPS listener) becomes live
 again and needs its own verification then.
+
+AgentCore VPC-mode AZ pinning (v0.3.0-rc6 live-launch finding)
+----------------------------------------------------------------------------
+Point 2 above (VPC-mode runtimes) reached a live account and
+`CreateAgentRuntime` rejected the subnets outright: "The following subnets
+are in unsupported availability zones in region us-east-1: subnet-... in
+us-east-1b (ID: use1-az6). Supported availability zones are: use1-az4,
+use1-az1, use1-az2" -- quoted verbatim from the CloudFormation failure.
+AgentCore VPC mode only supports that fixed set of AZ-IDs per region.
+`network.py`'s `ec2.Vpc(max_azs=2)` picks subnets by AZ NAME
+(`Fn::GetAZs`/`Fn::Select`), and the AZ-NAME -> AZ-ID mapping is
+RANDOMIZED PER AWS ACCOUNT, so name-based subnet selection can never be
+portably correct for this control plane -- the identical template can
+deploy cleanly in one account and hit this exact rejection in the next.
+AZ-IDs are physical and account-stable, so the runtimes' subnets are now
+pinned by AZ-ID directly: two dedicated `ec2.CfnSubnet`s
+(`RuntimeSubnetAz1`/`RuntimeSubnetAz2`, `use1-az1`/`use1-az2`,
+`10.0.100.0/24`/`10.0.101.0/24`), each routed to the stack's single NAT
+gateway via an explicit `ec2.CfnSubnetRouteTableAssociation` against
+`vpc.private_subnets[0]`'s existing route table. See the inline comments
+at their construction site (below, in the Runtimes section) for the CIDR
+and route-table reasoning in full, and each runtime's explicit
+`add_resource_dependency` on both associations (CDK cannot infer that
+dependency the way it infers the subnet-token one). This hardcodes the
+template to us-east-1 -- already this stack's documented v1 posture (see
+`params.py`'s `AssetsRegionMap`, RELEASING.md), not a new constraint;
+revisit AZ-ID selection here when this platform ever supports a second
+region.
 
 The ECR pull-through cache rule
 --------------------------------
@@ -657,12 +688,106 @@ class Agents(Construct):
             # allowed charset is a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*
             "AgentCore runtimes to Aurora (stdio MCP + tracing)",
         )
-        # `CfnRuntime.VpcConfigProperty` takes raw subnet-id strings, not an
-        # `ec2.SubnetSelection` -- resolve it once here (same private-with-
-        # egress tier `Migrations`/`GateService`/`Services` already use).
-        runtime_subnet_ids = vpc.select_subnets(
-            subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
-        ).subnet_ids
+        # --- v0.3.0-rc6 live-launch finding: AgentCore VPC mode needs
+        # AZ-ID-pinned subnets, not `network.py`'s general private-with-
+        # egress tier ---
+        # `CreateAgentRuntime` (VPC mode) rejected this stack's ordinary
+        # private subnets outright, quoting the live rejection verbatim:
+        # "The following subnets are in unsupported availability zones in
+        # region us-east-1: subnet-... in us-east-1b (ID: use1-az6).
+        # Supported availability zones are: use1-az4, use1-az1, use1-az2".
+        # AgentCore VPC mode only accepts that fixed set of AZ-IDs per
+        # region. `network.py`'s `ec2.Vpc(max_azs=2)` selects its subnets by
+        # AZ NAME (`Fn::GetAZs`/`Fn::Select` -- confirmed in this stack's own
+        # synthesized template), and the AZ-NAME -> AZ-ID mapping (e.g.
+        # whether `us-east-1a` lands on `use1-az1` or `use1-az6`) is
+        # RANDOMIZED PER AWS ACCOUNT -- not fixed across accounts. That means
+        # no AZ-NAME-based subnet selection can ever be portably correct
+        # here: the identical template can deploy cleanly in one account and
+        # hit exactly this rejection in the next. AZ-IDs, unlike AZ-NAMEs,
+        # are physical and account-stable, so the fix is to pin the
+        # runtimes' subnets by AZ-ID directly rather than trust
+        # `vpc.select_subnets(...)`'s name-based resolution.
+        #
+        # This hardcodes `use1-az1`/`use1-az2` (and, transitively, this
+        # whole template) to us-east-1 -- already the documented v1 posture
+        # for this stack (see `params.py`'s `AssetsRegionMap` and
+        # RELEASING.md), so this is not a NEW regional constraint, just
+        # another place that constraint now shows up. Revisit when this
+        # platform expands past a single region (docs/13-launch-stack.md
+        # §6 carries the matching note).
+        #
+        # Two dedicated private subnets, built as L1 `ec2.CfnSubnet`: the L2
+        # `ec2.Subnet` construct only exposes `availability_zone` (a NAME),
+        # not `availability_zone_id` -- pinning by ID is simply not
+        # expressible through the L2, so this drops to L1 for the same
+        # reason every `aws_bedrockagentcore` resource in this module does
+        # (module docstring's opening paragraph: "not a 'prefer L2' choice").
+        #
+        # CIDRs: `network.py`'s VPC is 10.0.0.0/16, and this stack's existing
+        # four subnets already occupy 10.0.0.0/24-10.0.3.0/24 (2 public + 2
+        # private -- verified against this stack's own synthesized
+        # template's `CidrBlock`s, not assumed). `10.0.100.0/24` and
+        # `10.0.101.0/24` are unused /24s well clear of that range and of
+        # any plausible near-term growth in subnet count for the same VPC.
+        # Only two of AgentCore's three supported AZ-IDs are used (not
+        # `use1-az4` too) -- two AZs is enough to satisfy
+        # `VpcConfigProperty`'s non-empty-subnets requirement while matching
+        # the `max_azs=2` shape the rest of this stack already commits to.
+        runtime_subnet_1 = ec2.CfnSubnet(
+            self,
+            "RuntimeSubnetAz1",
+            vpc_id=vpc.vpc_id,
+            availability_zone_id="use1-az1",
+            cidr_block="10.0.100.0/24",
+            map_public_ip_on_launch=False,
+            tags=[cdk.CfnTag(key="Name", value="FdePlatform/Agents/RuntimeSubnetAz1")],
+        )
+        runtime_subnet_2 = ec2.CfnSubnet(
+            self,
+            "RuntimeSubnetAz2",
+            vpc_id=vpc.vpc_id,
+            availability_zone_id="use1-az2",
+            cidr_block="10.0.101.0/24",
+            map_public_ip_on_launch=False,
+            tags=[cdk.CfnTag(key="Name", value="FdePlatform/Agents/RuntimeSubnetAz2")],
+        )
+
+        # Route both new subnets to the NAT gateway through an EXISTING
+        # private route table rather than provisioning a new NAT gateway (or
+        # route table) just for them. `network.py` is a single-NAT stack
+        # (`nat_gateways=1`); its own `PrivateSubnet2` (in the VPC's second
+        # AZ-NAME) already routes through the ONE NAT gateway that physically
+        # sits in `PrivateSubnet1`'s AZ (confirmed in the synthesized
+        # template: both private route tables' default routes reference the
+        # same `NatGatewayId`) -- this stack has already accepted cross-AZ
+        # NAT traffic for its second AZ, so reusing
+        # `vpc.private_subnets[0].route_table` for both AZ-ID-pinned
+        # subnets here extends that SAME already-accepted tradeoff rather
+        # than introducing a new one. Acceptable for this platform's
+        # demo/launch-button tier -- the identical cost-vs-resilience call
+        # `network.py`'s own docstring already makes for one NAT gateway
+        # instead of one per AZ.
+        shared_private_route_table_id = vpc.private_subnets[0].route_table.route_table_id
+        runtime_subnet_1_rt_assoc = ec2.CfnSubnetRouteTableAssociation(
+            self,
+            "RuntimeSubnetAz1RouteTableAssociation",
+            subnet_id=runtime_subnet_1.attr_subnet_id,
+            route_table_id=shared_private_route_table_id,
+        )
+        runtime_subnet_2_rt_assoc = ec2.CfnSubnetRouteTableAssociation(
+            self,
+            "RuntimeSubnetAz2RouteTableAssociation",
+            subnet_id=runtime_subnet_2.attr_subnet_id,
+            route_table_id=shared_private_route_table_id,
+        )
+
+        # `CfnRuntime.VpcConfigProperty` takes raw subnet-id strings -- point
+        # it at ONLY the two AZ-ID-pinned subnets above, not
+        # `network.py`'s general private-with-egress tier (which is exactly
+        # what CreateAgentRuntime rejected live -- see this block's opening
+        # comment).
+        runtime_subnet_ids = [runtime_subnet_1.attr_subnet_id, runtime_subnet_2.attr_subnet_id]
 
         self.runtimes = {}
         self.runtime_arns = {}
@@ -774,6 +899,22 @@ class Agents(Construct):
             # CloudFormation never attempts to create a runtime before the
             # rule its artifact resolves through exists.
             runtime.add_resource_dependency(self.pull_through_cache_rule)
+            # v0.3.0-rc6 fix: CDK's automatic same-token dependency
+            # inference already makes each runtime depend on the two
+            # `RuntimeSubnetAz*` CfnSubnets themselves (their
+            # `attr_subnet_id` tokens are referenced directly in
+            # `network_mode_config.subnets` above), but it canNOT infer a
+            # dependency on the SEPARATE `CfnSubnetRouteTableAssociation`
+            # resources -- nothing in a runtime's own properties references
+            # them. Without this, CloudFormation could create a runtime
+            # (and AgentCore could start provisioning its VPC ENIs) before
+            # either subnet's route to the NAT gateway exists, and the
+            # runtime's own egress (image pull retries aside, its Bedrock/
+            # CloudWatch/X-Ray calls) would fail. Explicit
+            # `add_resource_dependency`, the same non-deprecated form used
+            # for the cache rule immediately above.
+            runtime.add_resource_dependency(runtime_subnet_1_rt_assoc)
+            runtime.add_resource_dependency(runtime_subnet_2_rt_assoc)
             # LIVE-VALIDATED CORRECTION (v0.3.0-rc3 launch, 2026-08-04):
             # CreateAgentRuntime validates the ECR URI synchronously at
             # create time, and the supplemental grants above land in a
