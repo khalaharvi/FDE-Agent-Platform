@@ -212,7 +212,7 @@ the build instead of the first invocation.
 
 ## 9. Tests
 
-867 tests. `pytest` with `asyncio_mode = "auto"`, `--strict-markers`,
+914 tests. `pytest` with `asyncio_mode = "auto"`, `--strict-markers`,
 `--strict-config`, and `filterwarnings = ["error"]` — a new
 `DeprecationWarning` fails the build rather than scrolling past.
 

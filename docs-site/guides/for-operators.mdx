@@ -163,11 +163,19 @@ never need an account on this platform.
 ## The same loop from Claude
 
 If you work in Claude Code or Claude Desktop, the `fde-operator` plugin puts
-the first half of this loop where you already are. It ships three commands —
-`/ingest-interview`, `/run-agent`, and `/playbook` — and a skill that
-encodes the anchoring discipline described above, so an ingest done through
-Claude checks its own coverage instead of silently producing evidence
-retrieval will never surface.
+the first half of this loop where you already are. It ships four commands —
+`/ingest-interview`, `/run-agent`, `/playbook`, and `/dashboard` — and a
+skill that encodes the anchoring discipline described above, so an ingest
+done through Claude checks its own coverage instead of silently producing
+evidence retrieval will never surface.
+
+`/dashboard` is the one to reach for when the question is about the whole
+queue rather than one item — how much is waiting on a human, which gates are
+overdue, who has been deciding, what merged this month. It writes the answer
+into your notes as Markdown. The same figures are on the console's
+**Dashboard** page, which is the version to keep open: unlike a playbook,
+this document is a reading of a moment rather than a pinned artefact, so a
+saved copy is out of date as soon as anything moves.
 
 The plugin connects as the agent role. It can search, register evidence, and
 propose; it structurally cannot approve, merge, or publish, so those stay in
