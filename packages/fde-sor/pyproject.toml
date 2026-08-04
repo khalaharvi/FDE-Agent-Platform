@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
   "fde-mcp",
-  "psycopg[binary,pool]>=3.2",
+  "psycopg[binary,pool]>=3.3.4",
   "boto3>=1.35",
   "structlog>=24.4",
   # The AWS Lambda Runtime Interface Client. A normal runtime dependency, not
