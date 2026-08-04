@@ -75,10 +75,13 @@ class FdePlatformStack(cdk.Stack):
         # either construct).
         self.provider_api_key_secret = provider_api_key_secret(self, self.params)
 
-        # Services before Agents/GateService: both need services.mcp_url
-        # (the internal ALB's URL) -- Agents' Gateway target points at it
-        # directly, GateService's FDE_MCP_URL env carries it too -- and
-        # neither exists until Services is built.
+        # Services before GateService: GateService's FDE_MCP_URL env carries
+        # `services.mcp_url` (the internal ALB's URL), which does not exist
+        # until Services is built. Agents no longer needs it (v0.3.0-rc4
+        # pivot: the Gateway's MCP target that used to point at this ALB is
+        # gone -- provisioned-but-unwired Gateway, see agents.py's module
+        # docstring) -- Services still precedes Agents below only to match
+        # the brief's fixed construct order.
         self.services = Services(
             self,
             "Services",
@@ -97,23 +100,27 @@ class FdePlatformStack(cdk.Stack):
         # need the three real runtime ARNs Agents creates (see gate.py's
         # module docstring -- before this task, GateService took
         # `runtime_arns=None` and emitted "" placeholders; now it always
-        # gets `agents.runtime_arns`). Agents itself is built with the
-        # Gateway before the Runtimes internally (see agents.py's module
-        # docstring for the ordering this resolves) -- that internal order
-        # is independent of where `Agents(...)` sits in THIS constructor,
-        # which only needs to be after `Services` (Gateway target =
-        # `services.mcp_url`) and before `GateService` (runtime ARNs).
+        # gets `agents.runtime_arns`). `Agents(...)` only needs to sit after
+        # `Network`/`Database` (VPC + cluster handles, below -- the
+        # v0.3.0-rc4 pivot: runtimes join the VPC, see agents.py's module
+        # docstring) and before `GateService` (runtime ARNs); it no longer
+        # needs to be after `Services` at all -- the pre-pivot Gateway
+        # target pointed at `services.mcp_url`, but that target no longer
+        # exists (provisioned-but-unwired Gateway, owner decision: no
+        # public MCP gateway). Left positioned here anyway, matching the
+        # brief's fixed construct order this stack documents itself by.
         self.agents = Agents(
             self,
             "Agents",
             params=self.params,
+            vpc=self.network.vpc,
+            db_cluster=self.database.cluster,
             runtime_role=self.iam_roles.runtime_role,
             gateway_service_role=self.iam_roles.gateway_service_role,
             memory_role=self.iam_roles.memory_role,
             jwt_discovery_url=self.identity.discovery_url,
             jwt_allowed_audience=self.identity.m2m_client.user_pool_client_id,
             m2m_client_secret=self.identity.m2m_client_secret,
-            mcp_url=self.services.mcp_url,
             provider_api_key_secret=self.provider_api_key_secret,
         )
 
