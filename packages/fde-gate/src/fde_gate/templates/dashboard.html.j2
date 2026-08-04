@@ -36,13 +36,10 @@
   </fieldset>
 </form>
 
-{# `|safe` on markup this process generated a moment ago, not on anything a
-   request or an agent supplied. `fde_mcp.dashboard` escapes every
-   data-derived value it interpolates -- reviewer principals, gate kinds,
-   digests, the engagement id -- with `html.escape(..., quote=True)` before
-   it reaches this line, which is why the one place autoescaping is turned
-   off is also the one place nothing untrusted is interpolated. Rendered
-   inline rather than in an iframe so it inherits the page width and the
-   console's own chrome. #}
-{{ dashboard_html|safe }}
+{# Already-safe markup: `dashboard_page` wraps it in `markupsafe.Markup`, so
+   this renders as the plain variable it looks like and no `|safe` appears in
+   any template in this console. The trust argument lives at the wrapping
+   site in ui.py, where it can be audited once. Rendered inline rather than
+   in an iframe so it inherits the page width and the console's chrome. #}
+{{ dashboard_html }}
 {% endblock %}

@@ -11,7 +11,9 @@ looking page -- with the reviewer table quietly replaced by a grant notice.
 
 from __future__ import annotations
 
+import re
 from http import HTTPStatus
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -71,6 +73,30 @@ async def test_the_page_reads_the_panels_prodops_cannot(make_proposal: Any) -> N
 
     assert "cannot see hitl.reviewer" not in page.body
     assert "cannot see wf.agent_launch" not in page.body
+
+
+def test_no_template_in_this_console_uses_safe() -> None:
+    """The dashboard's pre-rendered HTML is marked safe in Python, once.
+
+    `ui.dashboard_page` wraps it in `markupsafe.Markup` at the construction
+    site, where the trust argument sits beside the value and a reviewer can
+    audit it. `|safe` in a template would be the same bypass expressed as
+    syntax the next page can copy without the argument -- which is how a
+    console that escapes everything acquires a page that does not. This test
+    is the difference between that being a decision and a convention.
+    """
+    templates = Path(ui.__file__).parent / "templates"
+    # `{# ... #}` blocks are stripped first: dashboard.html.j2's comment says
+    # the words "no `|safe` appears in any template", and a test that counted
+    # its own explanation as a violation would be unfixable without deleting
+    # the explanation.
+    comments = re.compile(r"\{#.*?#\}", re.S)
+    offenders = [
+        path.name
+        for path in sorted(templates.glob("*.html.j2"))
+        if re.search(r"\|\s*safe\b", comments.sub("", path.read_text()))
+    ]
+    assert offenders == [], f"templates using |safe: {offenders}"
 
 
 async def test_the_page_carries_the_live_state_disclosure() -> None:
