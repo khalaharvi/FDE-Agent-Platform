@@ -572,7 +572,7 @@ def test_output_ends_in_exactly_one_newline() -> None:
 # Pinned because the in-package count strings went stale silently the moment
 # wf_export_playbook made the surface 22 -- the registry and `fde-mcp --help`
 # now fail together, so the next tool has to update them on purpose.
-EXPECTED_TOOL_COUNT = 22
+EXPECTED_TOOL_COUNT = 23
 
 
 async def test_the_registry_and_the_help_text_agree_on_the_tool_count() -> None:

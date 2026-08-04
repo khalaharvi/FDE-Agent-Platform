@@ -1,6 +1,6 @@
 ---
 title: "The three agents"
-description: "Engagement, Workflow, and Development: what each agent does, how they form a loop, and the 22 MCP tools they share."
+description: "Engagement, Workflow, and Development: what each agent does, how they form a loop, and the 23 MCP tools they share."
 ---
 
 The platform ships three agents, designed to run as Amazon Bedrock AgentCore
@@ -63,10 +63,10 @@ decisions becomes a training label.
   />
 </Frame>
 
-## One tool surface: 22 MCP tools
+## One tool surface: 23 MCP tools
 
 The agents never touch the database directly. All access goes through an MCP
-server exposing 22 typed tools:
+server exposing 23 typed tools:
 
 | Group | Tools |
 |---|---|
@@ -75,6 +75,7 @@ server exposing 22 typed tools:
 | Drift (3) | list, scan, triage |
 | Workflow (4) | draft, get, list, export playbook |
 | Evidence (3) | register source, ingest chunks, list sources |
+| Dashboard (1) | export decision dashboard |
 
 Every tool is a thin typed wrapper over the same SQL functions — no
 retrieval, gating, or faithfulness logic is reimplemented in Python. That is
@@ -96,7 +97,7 @@ surface an agent gets:
 
 ```bash
 uv run fde-mcp --help                    # prints the env contract
-FDE_MCP_TRANSPORT=stdio uv run fde-mcp   # serve the 22 tools over stdio
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp   # serve the 23 tools over stdio
 ```
 
 Tools that embed queries (such as `kg_search`) call an embedding provider —

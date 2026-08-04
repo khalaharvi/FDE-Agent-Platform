@@ -95,7 +95,7 @@ MODEL_PRESETS: dict[str, dict[str, str]] = {
         "development": DEFAULT_MODEL_ID,
     },
     # Tiered-aggressive: open-weight everywhere. Cheapest defensible mix --
-    # small models stay OUT of the 22-tool loop entirely; this dial selects
+    # small models stay OUT of the 23-tool loop entirely; this dial selects
     # among capable agentic models, it never degrades below them.
     "budget": {
         "engagement": "zai.glm-5",

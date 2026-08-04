@@ -84,7 +84,7 @@ Already running Postgres with pgvector ≥ 0.8? Skip compose:
 <summary><b>Beyond hello world: MCP server, pipelines, deploy</b></summary>
 
 ```bash
-FDE_MCP_TRANSPORT=stdio uv run fde-mcp     # the MCP server, 22 tools
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp     # the MCP server, 23 tools
 uv run fde-training export-sft --stats     # training data from gate outcomes
 uv run fde-sor replay --help               # drift ingestion from a JSONL export
 
@@ -132,7 +132,7 @@ Cheap models are unusually safe here: every agent write passes the same human
 gates regardless of which model proposed it — sloppiness lands in a review
 queue, not in the graph, and each reviewer correction becomes SFT training
 data. Two rules the presets encode: small non-agentic models never drive the
-22-tool loop, and a cheaper *judge* is a separate, measured decision —
+23-tool loop, and a cheaper *judge* is a separate, measured decision —
 `fde-training rival-grader calibrate` must show Cohen's kappa ≥ 0.78 before
 any judge's verdicts are trusted as an RL reward.
 
@@ -184,7 +184,7 @@ fde-platform/
 ├── docs/                14 documents — the blueprints
 ├── db/                  18 migrations + a 25-test smoke suite
 ├── packages/
-│   ├── fde-mcp/         MCP server: 22 tools (graph, proposals, drift, workflow, evidence), embedder worker
+│   ├── fde-mcp/         MCP server: 23 tools (graph, proposals, drift, workflow, evidence, dashboard), embedder worker
 │   ├── fde-agents/      3 AgentCore runtimes over one shared common/runtime.py, + deploy CLI
 │   ├── fde-training/    SFT export + trainers, rewards/ package, rollout env, rival graders, RFT path
 │   ├── fde-gate/        gate service Lambda: review console, evidence intake, merge, workflow publish + runner

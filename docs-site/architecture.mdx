@@ -13,7 +13,7 @@ is a fact about grants before it is a fact about code.
 
 | Package | Role in the system | Database role it runs as |
 |---|---|---|
-| `fde-mcp` | MCP server (22 tools) and the embedder worker | `fde_agent` / `fde_ingest` |
+| `fde-mcp` | MCP server (23 tools) and the embedder worker | `fde_agent` / `fde_ingest` |
 | `fde-agents` | The three AgentCore runtimes and the deploy CLI | none — tools arrive over MCP |
 | `fde-training` | Offline training pipeline: SFT export, trainers, rollout env, judge calibration | `fde_training` / `fde_rl_rollout` |
 | `fde-gate` | Gate service: review console, merge, workflow publish and run | `fde_gate_service` / `fde_prodops` |
