@@ -359,7 +359,8 @@ async def post_triage(request: Request) -> Response:
 
 
 def build_router() -> Router:
-    """The whole HTTP surface: 20 API routes (18 JSON, 2 Markdown) plus the console."""
+    """The whole HTTP surface: 20 routes here (19 under `/api` plus `/healthz`
+    -- 18 answering JSON and 2 Markdown), then the console's own on top."""
     router = Router()
 
     router.get("/healthz", healthz)

@@ -177,6 +177,13 @@ into your notes as Markdown. The same figures are on the console's
 this document is a reading of a moment rather than a pinned artefact, so a
 saved copy is out of date as soon as anything moves.
 
+<Frame caption="The console's Dashboard page on the quickstart's demo data — the whole review queue as one screen, with no terminal in sight.">
+  <img
+    src="/images/console-dashboard.png"
+    alt="The FDE prod-ops console showing the Decision dashboard page. A scope bar offers an engagement filter set to all engagements and a window filter set to the last 30 days. Six stat tiles read: 3 waiting on a human of 4 proposals, 0 gates overdue with 6 pending, oldest waiting 5 minutes, median time to clear 0 seconds, 2 merges in window of 2 total, and 0 drift open of 0 signals. A note states the page is live state rather than a pinned artefact and cites no individual proposal as evidence. A review-queue section shows a four-segment proportion bar and a table with one proposal each in submitted, in review, changes requested, and merged. A gates section shows a two-segment bar with 6 cleared and 6 pending, 0 overdue, and a per-gate-kind table for automation, control, factual and ontology. A decisions-by-reviewer table lists three example.com reviewers with their approval and changes-requested counts. Merges names the latest sealed commit by digest. The drift, workflow-runs and agent-launches sections each say they have nothing to report for this scope."
+  />
+</Frame>
+
 The plugin connects as the agent role. It can search, register evidence, and
 propose; it structurally cannot approve, merge, or publish, so those stay in
 the console under your own identity. That is a property of the database

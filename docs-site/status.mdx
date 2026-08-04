@@ -12,7 +12,7 @@ labeled unverified.** This page is the split.
 |---|---|
 | 18 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate, run on every commit |
 | 25 end-to-end smoke tests pass | including fail-closed submit, unauthorized approval, review → edit → merge → label, workflow publish/run, observation dedup, and as-of traversal |
-| 904 of 914 Python tests pass in one run against live Postgres | across all five packages, in CI with the same pgvector image the quickstart uses. The other 10 skip cleanly rather than silently: 9 need the optional `train` extra and run in CI's separate `train-tests` job, and 1 needs `wal_level=logical`, which a CI service container cannot be started with — so that one never runs in CI, and this page says so rather than counting it |
+| 905 of 915 Python tests pass in one run against live Postgres | across all five packages, in CI with the same pgvector image the quickstart uses. The other 10 skip cleanly rather than silently: 9 need the optional `train` extra and run in CI's separate `train-tests` job, and 1 needs `wal_level=logical`, which a CI service container cannot be started with — so that one never runs in CI, and this page says so rather than counting it |
 | 29 privilege-denial invariants hold | asserted in CI — twenty-nine statements that must all fail, or the build does. The first eight are the original four-layer invariant; twelve more guard the reviewer roster (`db/016`), five guard evidence intake (`db/017`), and four guard the agent-launch record (`db/018`) |
 | Docs match code | a CI test parses the training doc's reward-weight table and kappa thresholds and asserts they equal the code's constants |
 

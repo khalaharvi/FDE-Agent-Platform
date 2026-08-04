@@ -4,7 +4,7 @@ description: "Clone to green tests and a running review console in about ten min
 ---
 
 This walkthrough takes you from a fresh clone to a fully verified local
-installation: schema built, 904 of 914 tests green with the rest skipped by
+installation: schema built, 905 of 915 tests green with the rest skipped by
 design, and the human review console running in your browser. Nothing here
 requires an AWS account.
 
@@ -106,10 +106,10 @@ you bring your own Postgres.
     uv run pytest packages
     ```
 
-    914 tests collect. The tail you should see is:
+    915 tests collect. The tail you should see is:
 
     ```text
-    904 passed, 10 skipped
+    905 passed, 10 skipped
     ```
 
     Those 10 are skipped by design: nine need the optional `train` extra, which
@@ -132,6 +132,13 @@ you bring your own Postgres.
     Open `http://127.0.0.1:8787/ui`. This is the same code path the deployed
     Lambda runs — the dev server synthesizes your principal from
     `FDE_GATE_DEV_PRINCIPAL` and refuses to start anonymous.
+
+    Then open [`/ui/dashboard`](http://127.0.0.1:8787/ui/dashboard): the same
+    seeded engagement as one page of numbers — what is waiting on a human,
+    which gates are overdue, who has been deciding, what has merged. It needs
+    no terminal and no SQL, which makes it the first thing worth showing a
+    colleague who will never clone this repo. `GET /api/dashboard.md` returns
+    the same figures as a Markdown file.
   </Step>
 </Steps>
 

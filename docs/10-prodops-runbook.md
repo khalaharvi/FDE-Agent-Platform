@@ -132,6 +132,27 @@ Fast reviewers on obviously-simple proposals are fine; fast reviewers on
 everything are a leading indicator that the whole review process has stopped
 doing its job.
 
+**Seeing the queue as a whole.** Everything above is about one proposal at a
+time. The **Dashboard** page (`/ui/dashboard`) is the same work counted up:
+how many proposals are waiting on a human and how long the oldest has been
+there, how many gates are cleared, pending, or past their due date, the
+median time a proposal waits before a gate clears, who has been deciding and
+how they decided, what merged this month, and how much drift is still open.
+Filter it by engagement, or leave it on every engagement for a portfolio
+view.
+
+Two things to know about it. It needs no terminal and no SQL, so it is the
+page to open with somebody who does not use the rest of this system — a
+manager asking whether review is keeping up, or a client asking what changed
+this month. And it is a reading of the moment rather than a record: refresh
+it after a merge and the numbers move. If you need something you can file or
+compare later, `GET /api/dashboard.md` returns the same figures as a
+Markdown file dated for the day you pulled it.
+
+If the dashboard says a gate is overdue, that is the same overdue the review
+queue shows — the dashboard tells you *that* something is stuck, and the
+queue is where you unstick it.
+
 ---
 
 ## 4. The drift queue

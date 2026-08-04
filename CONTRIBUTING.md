@@ -14,7 +14,7 @@ docker compose up -d db                            # pgvector 0.8, port 55432
 export PGHOST=localhost PGPORT=55432 PGUSER=postgres PGPASSWORD=postgres
 ./db/rebuild.sh fde                                # 18 migrations + 25 smoke tests
 export FDE_DB_DSN="postgresql://postgres:postgres@localhost:55432/fde"
-uv run pytest packages                             # 914 tests
+uv run pytest packages                             # 915 tests
 ```
 
 Already run Postgres locally with pgvector ≥ 0.8? Skip compose:

@@ -384,11 +384,12 @@ before ingesting it again.
 
 #### `hitl_export_dashboard(engagement_id: str | None = None, window_days: int = 30) -> dict`
 
-Aggregates the whole decision flow into one document: the review queue by
-status with the oldest still waiting, gates cleared/pending/overdue against
-their `due_at` with the median time from submission to clearance, decisions
-per reviewer and per gate kind, merges in the window with the latest sealed
-commit's digest, drift by state, and workflow runs by status. Returns
+Aggregates the decision flow into one document — six panels, plus a seventh
+this role is not permitted to fill (below): the review queue by status with
+the oldest still waiting, gates cleared/pending/overdue against their
+`due_at` with the median time from submission to clearance, gate counts per
+gate kind, decisions per reviewer, merges in the window with the latest
+sealed commit's digest, drift by state, and workflow runs by status. Returns
 `{markdown, html, generated_at, window_days, engagement_id}`. Omit
 `engagement_id` for a rollup across every engagement. `window_days` is
 clamped to 1–365 and bounds only the panels that are about a period; the
@@ -403,17 +404,28 @@ edge — so it is not citable as evidence. Reach for `kg_as_of` or
 `wf_export_playbook` when the answer has to be reproducible.
 
 *One panel is absent by design.* Agent launches live in `wf.agent_launch`,
-which db/018 grants to `fde_gate_service` alone — an agent that could write
-there could attribute its own work to a human who never asked for it, and CI
-asserts the denial. The MCP server runs as `fde_agent`, so the launches
-section says it could not be read rather than rendering an empty table that
-would read as "no agents ran". The console's `/ui/dashboard` assembles the
-same document across both console roles and does show it.
+which db/018 grants to `fde_gate_service` and no other role — a role that
+could write there could attribute its own work to a human who never asked
+for it, and CI asserts four denials on that table: `fde_agent` cannot insert
+or update it, and even the gate service cannot rewrite `principal` or delete
+a row. The MCP server runs as `fde_agent`, so the tool passes
+`launches=None` and both renderers print, in words, that the role could not
+read the table — a different result from `launches=[]`, which is what "it
+looked, and there were none" renders as. A dashboard that silently dropped
+the panel would leave an operator concluding no agents ran when the truth is
+nobody with permission asked. The console's `/ui/dashboard` assembles the
+same document across both console roles and does fill it.
 
 Both renderers and every query live in `fde_mcp.dashboard`, beside
 `fde_mcp.playbook` and for the same reason: the console page, the
 `GET /api/dashboard.md` route and this tool must not be able to disagree
-about a number.
+about a number. The `html` is self-contained — one scoped `<style>` block,
+no external stylesheet, script or image — so it pastes into an email or a
+wiki intact.
+
+*Failure mode:* none of its own. An out-of-range `window_days` is clamped
+rather than rejected, and the returned `window_days` says which window was
+actually used. Everything else falls to the generic boundary in Section 7.
 
 ---
 
