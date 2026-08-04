@@ -1,0 +1,48 @@
+{% extends "base.html.j2" %}
+{% block title %}Decision dashboard{% endblock %}
+{% block content %}
+<h1>Decision dashboard</h1>
+<p class="muted">
+  How work is flowing through the human gates. Counts only &mdash; open the
+  <a href="/ui">review queue</a> to act on anything here.
+  &middot; <a href="{{ md_href }}">download as Markdown</a>
+</p>
+
+{# GET, because a filter is a bookmarkable view rather than a mutation: the
+   URL this produces is the thing an operator pastes to a colleague. Both
+   controls submit together, so changing the window keeps the engagement and
+   the other way round. #}
+<form method="get" action="/ui/dashboard">
+  <fieldset>
+    <legend>Scope</legend>
+    <div class="field">
+      <label for="pick_engagement">Engagement</label>
+      <select id="pick_engagement" name="engagement_id">
+        <option value="">All engagements</option>
+        {% for e in engagements %}
+          <option value="{{ e }}"{% if e == engagement_id %} selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="pick_window">Window</label>
+      <select id="pick_window" name="window_days">
+        {% for w in window_choices %}
+          <option value="{{ w }}"{% if w == window_days %} selected{% endif %}>Last {{ w }} days</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+  </fieldset>
+</form>
+
+{# `|safe` on markup this process generated a moment ago, not on anything a
+   request or an agent supplied. `fde_mcp.dashboard` escapes every
+   data-derived value it interpolates -- reviewer principals, gate kinds,
+   digests, the engagement id -- with `html.escape(..., quote=True)` before
+   it reaches this line, which is why the one place autoescaping is turned
+   off is also the one place nothing untrusted is interpolated. Rendered
+   inline rather than in an iframe so it inherits the page width and the
+   console's own chrome. #}
+{{ dashboard_html|safe }}
+{% endblock %}

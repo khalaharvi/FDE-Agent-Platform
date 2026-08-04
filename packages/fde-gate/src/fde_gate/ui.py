@@ -38,7 +38,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
@@ -47,6 +47,7 @@ from fde_gate.http import GateError, Request, Response, pg_message
 from fde_gate.runner import advance, default_invoker
 from fde_gate.service import (
     agents,
+    dashboard,
     drift,
     is_missing,
     proposals,
@@ -628,6 +629,60 @@ async def triage_post(request: Request) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# The decision dashboard
+# ---------------------------------------------------------------------------
+
+
+def _dashboard_scope(request: Request) -> tuple[str | None, int]:
+    """`?engagement_id=` and `?window_days=`, both optional.
+
+    An unparseable or unoffered `window_days` falls back to 30 rather than
+    refusing: this is a read-only view reached from a link, and a stale
+    bookmark carrying `window_days=45` should show a dashboard, not an error
+    page. The engagement is passed to Postgres as a uuid and a malformed one
+    is its problem to reject, the way every other filter on this console
+    works.
+    """
+    raw = request.query.get("window_days")
+    try:
+        window = int(raw) if raw else 30
+    except ValueError:
+        window = 30
+    if window not in dashboard.WINDOW_CHOICES:
+        window = 30
+    return (request.query.get("engagement_id") or None, window)
+
+
+async def dashboard_page(request: Request) -> Response:
+    """The aggregate view: how decisions are flowing, for a whole engagement.
+
+    Every other console page answers "what is this one thing"; this one
+    answers "how are we doing", which is the question an operator opens the
+    console with and previously had to reconstruct by counting rows on five
+    other pages.
+
+    The HTML comes from `fde_mcp.dashboard` pre-rendered and is dropped into
+    the template with `|safe`. See the template for why that is sound here
+    and nowhere else.
+    """
+    engagement_id, window_days = _dashboard_scope(request)
+    built = await dashboard.build(engagement_id=engagement_id, window_days=window_days)
+    query = urlencode(
+        {k: v for k, v in (("engagement_id", engagement_id), ("window_days", window_days)) if v}
+    )
+    return await _page(
+        request,
+        "dashboard.html.j2",
+        dashboard_html=built["html"],
+        engagements=built["engagements"],
+        engagement_id=engagement_id,
+        window_days=window_days,
+        window_choices=dashboard.WINDOW_CHOICES,
+        md_href=f"/api/dashboard.md?{query}" if query else "/api/dashboard.md",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Evidence intake
 #
 # The one part of the console where losing the form contents is unacceptable:
@@ -1115,6 +1170,8 @@ def register(router: Router) -> None:
     router.get("/ui/runs/{run_id}", run_page)
     router.post("/ui/runs/{run_id}/cancel", cancel_post)
     router.post("/ui/run-steps/{run_step_id}/respond", respond_post)
+
+    router.get("/ui/dashboard", dashboard_page)
 
     router.get("/ui/drift", drift_page)
     router.post("/ui/drift/{signal_id}/triage", triage_post)
