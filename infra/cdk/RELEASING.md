@@ -245,9 +245,9 @@ runtime's ID. These three repo variables supply them:
 
 | Name | Value |
 |---|---|
-| `FDE_RUNTIME_ID_ENGAGEMENT` | the `agentRuntimeId` of the already-created `fde-engagement-agent` runtime |
-| `FDE_RUNTIME_ID_WORKFLOW` | the `agentRuntimeId` of the already-created `fde-workflow-agent` runtime |
-| `FDE_RUNTIME_ID_DEVELOPMENT` | the `agentRuntimeId` of the already-created `fde-development-agent` runtime |
+| `FDE_RUNTIME_ID_ENGAGEMENT` | the `agentRuntimeId` of the already-created `fde_engagement_agent` runtime |
+| `FDE_RUNTIME_ID_WORKFLOW` | the `agentRuntimeId` of the already-created `fde_workflow_agent` runtime |
+| `FDE_RUNTIME_ID_DEVELOPMENT` | the `agentRuntimeId` of the already-created `fde_development_agent` runtime |
 
 Find them once the runtimes exist (via the CDK stack's `CfnRuntime`
 resources, or via the initial non-CDK
@@ -263,9 +263,9 @@ aws bedrock-agentcore-control list-agent-runtimes --region us-east-1 \
 Then set them:
 
 ```bash
-gh variable set FDE_RUNTIME_ID_ENGAGEMENT  --body "<id for fde-engagement-agent>"
-gh variable set FDE_RUNTIME_ID_WORKFLOW    --body "<id for fde-workflow-agent>"
-gh variable set FDE_RUNTIME_ID_DEVELOPMENT --body "<id for fde-development-agent>"
+gh variable set FDE_RUNTIME_ID_ENGAGEMENT  --body "<id for fde_engagement_agent>"
+gh variable set FDE_RUNTIME_ID_WORKFLOW    --body "<id for fde_workflow_agent>"
+gh variable set FDE_RUNTIME_ID_DEVELOPMENT --body "<id for fde_development_agent>"
 ```
 
 Until these three variables are set, `ci.yml`'s three "update ... agent

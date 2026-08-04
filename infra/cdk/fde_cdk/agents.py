@@ -646,7 +646,14 @@ class Agents(Construct):
             runtime = bedrockagentcore.CfnRuntime(
                 self,
                 f"Runtime{agent_name.capitalize()}",
-                agent_runtime_name=f"fde-{agent_name}-agent",
+                # LIVE-VALIDATED CORRECTION (v0.3.0-rc2 launch, 2026-08-04):
+                # AgentRuntimeName's control-plane pattern is
+                # [a-zA-Z][a-zA-Z0-9_]{0,47} -- hyphens rejected outright
+                # (same charset family as memory.py's strategy-name bug).
+                # The repo's own deploy CLI (`runtimes.py`) uses the
+                # hyphenated form and shares this latent bug -- ledgered as
+                # a follow-up; underscores here.
+                agent_runtime_name=f"fde_{agent_name}_agent",
                 description=f"FDE Platform {agent_name} agent",
                 agent_runtime_artifact=bedrockagentcore.CfnRuntime.AgentRuntimeArtifactProperty(
                     container_configuration=bedrockagentcore.CfnRuntime.ContainerConfigurationProperty(
