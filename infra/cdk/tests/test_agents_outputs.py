@@ -280,7 +280,10 @@ def test_gateway_m2m_credential_provider_exists_with_cognito_oauth2_config() -> 
     provider = next(iter(providers.values()))
     props = provider["Properties"]
     assert props["Name"] == "fde-gateway-m2m"
-    assert props["CredentialProviderVendor"] == "CognitoOauth2"
+    # Live-validated pairing (v0.3.0-rc1): custom config member requires the
+    # CustomOauth2 vendor; "CognitoOauth2" + custom config is rejected by the
+    # control plane with a ValidationException.
+    assert props["CredentialProviderVendor"] == "CustomOauth2"
     custom = props["Oauth2ProviderConfigInput"]["CustomOauth2ProviderConfig"]
     assert ".well-known/openid-configuration" in str(custom["OauthDiscovery"]["DiscoveryUrl"])
     assert custom["ClientSecretSource"] == "EXTERNAL"

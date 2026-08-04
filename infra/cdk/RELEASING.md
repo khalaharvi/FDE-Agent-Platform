@@ -165,13 +165,25 @@ able to push production images and a public template:
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:khalaharvi/FDE-Agent-Platform:ref:refs/tags/v*"
+          "token.actions.githubusercontent.com:sub": [
+            "repo:khalaharvi/FDE-Agent-Platform:ref:refs/tags/v*",
+            "repo:khalaharvi@1395393/FDE-Agent-Platform@1319877429:ref:refs/tags/v*"
+          ]
         }
       }
     }
   ]
 }
 ```
+
+**Why two subject patterns (live-validated, v0.3.0-rc1):** GitHub now
+annotates OIDC subject claims with immutable account/repo IDs — this
+repo's tokens carry `repo:khalaharvi@1395393/FDE-Agent-Platform@1319877429:...`,
+not the classic unannotated form, and a trust policy matching only the
+classic shape fails with `Not authorized to perform
+sts:AssumeRoleWithWebIdentity`. Read your repo's actual prefix with
+`gh api repos/<owner>/<repo>/actions/oidc/customization/sub`
+(`sub_claim_prefix`) and keep both patterns so either token shape works.
 
 Save the JSON above as `release-trust-policy.json`, then:
 
