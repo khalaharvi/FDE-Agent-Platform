@@ -17,7 +17,7 @@ import sys
 _USAGE = """\
 usage: fde-mcp
 
-The FDE Platform MCP server (22 tools over the knowledge graph).
+The FDE Platform MCP server (23 tools over the knowledge graph).
 Configured via environment variables, not flags:
 
   FDE_MCP_TRANSPORT   "http" (default; serves on FDE_MCP_HOST/FDE_MCP_PORT)
@@ -48,7 +48,7 @@ def main() -> None:
         raise SystemExit(2)
 
     # Imported after argv handling on purpose: fde_mcp.server pulls in FastMCP
-    # and registers all 22 tools at import time, and `--help` should answer
+    # and registers all 23 tools at import time, and `--help` should answer
     # instantly with zero side effects. That deferral is also why the count in
     # _USAGE is a literal -- deriving it would need the import this avoids.
     from fde_mcp.server import main as server_main  # noqa: PLC0415

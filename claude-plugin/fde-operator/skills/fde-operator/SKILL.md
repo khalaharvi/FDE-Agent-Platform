@@ -5,7 +5,7 @@ description: Operate the FDE Agent Platform knowledge graph — ingest an interv
 
 # Operating the FDE Agent Platform
 
-You hold the `fde` MCP server's 22 tools. They run as the Postgres role
+You hold the `fde` MCP server's 23 tools. They run as the Postgres role
 `fde_agent`, which can read the graph, register evidence, and write proposals.
 It holds no privilege to write `kg.*` or to decide a gate. **You propose;
 a human disposes in the review console.** Do not offer to approve or merge —
@@ -233,7 +233,7 @@ something.
 - If a tool returns `error` with a `hint`, act on the hint rather than retrying
   the same call.
 
-## Tool roster (22)
+## Tool roster (23)
 
 | Group | Tools |
 |---|---|
@@ -242,6 +242,7 @@ something.
 | Drift (3) | `drift_list`, `drift_scan`, `drift_triage` |
 | Workflow (4) | `wf_list`, `wf_get`, `wf_draft`, `wf_export_playbook` |
 | Evidence (3) | `kg_register_source`, `kg_ingest_chunks`, `kg_list_sources` |
+| Dashboard (1) | `hitl_export_dashboard` |
 
 Tool-by-tool contracts: `docs/05-mcp-surface.md` and
 `packages/fde-mcp/README.md` in the platform repo.

@@ -11,7 +11,7 @@ check it before "fixing" something that was already reconciled.
 ```bash
 uv sync --all-packages --frozen          # never plain `uv lock` casually; lock is CI-checked
 createdb fde && ./db/rebuild.sh fde      # 18 migrations + 25 smoke tests, rebuilds from scratch
-FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 867 tests; without DSN the db-marked ones skip
+FDE_DB_DSN=postgresql:///fde uv run pytest packages   # 921 tests; without DSN the db-marked ones skip
 uv run ruff check packages && uv run ruff format --check packages
 uv run mypy                              # strict; covers fde-mcp, fde-agents, fde-gate, fde-sor
 uv run fde-providers login <provider>    # then: fde-agents-local <agent> --task ... (docs/12)
@@ -30,7 +30,7 @@ PUBLIC EXECUTE). New tables in a new migration get NO grants automatically.
 
 | Package | Role | DB role it runs as |
 |---|---|---|
-| fde-mcp | MCP server (22 tools) + embedder worker | `fde_agent` / `fde_ingest` |
+| fde-mcp | MCP server (23 tools) + embedder worker | `fde_agent` / `fde_ingest` |
 | fde-agents | 3 AgentCore runtimes + deploy CLI | (tools arrive over MCP) |
 | fde-training | offline training pipeline (NOT mypy-strict, by policy) | `fde_training` / `fde_rl_rollout` |
 | fde-gate | Lambda gate service: review console, evidence intake, merge, wf publish/run | `fde_gate_service` / `fde_prodops` |

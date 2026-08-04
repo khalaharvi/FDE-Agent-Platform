@@ -84,7 +84,7 @@ Already running Postgres with pgvector ≥ 0.8? Skip compose:
 <summary><b>Beyond hello world: MCP server, pipelines, deploy</b></summary>
 
 ```bash
-FDE_MCP_TRANSPORT=stdio uv run fde-mcp     # the MCP server, 22 tools
+FDE_MCP_TRANSPORT=stdio uv run fde-mcp     # the MCP server, 23 tools
 uv run fde-training export-sft --stats     # training data from gate outcomes
 uv run fde-sor replay --help               # drift ingestion from a JSONL export
 
@@ -132,7 +132,7 @@ Cheap models are unusually safe here: every agent write passes the same human
 gates regardless of which model proposed it — sloppiness lands in a review
 queue, not in the graph, and each reviewer correction becomes SFT training
 data. Two rules the presets encode: small non-agentic models never drive the
-22-tool loop, and a cheaper *judge* is a separate, measured decision —
+23-tool loop, and a cheaper *judge* is a separate, measured decision —
 `fde-training rival-grader calibrate` must show Cohen's kappa ≥ 0.78 before
 any judge's verdicts are trusted as an RL reward.
 
@@ -184,7 +184,7 @@ fde-platform/
 ├── docs/                14 documents — the blueprints
 ├── db/                  18 migrations + a 25-test smoke suite
 ├── packages/
-│   ├── fde-mcp/         MCP server: 22 tools (graph, proposals, drift, workflow, evidence), embedder worker
+│   ├── fde-mcp/         MCP server: 23 tools (graph, proposals, drift, workflow, evidence, dashboard), embedder worker
 │   ├── fde-agents/      3 AgentCore runtimes over one shared common/runtime.py, + deploy CLI
 │   ├── fde-training/    SFT export + trainers, rewards/ package, rollout env, rival graders, RFT path
 │   ├── fde-gate/        gate service Lambda: review console, evidence intake, merge, workflow publish + runner
@@ -196,7 +196,7 @@ fde-platform/
 
 **Gates, all green:** `ruff check` (183 files) + `ruff format --check` (181) ·
 `mypy --strict` on the four production packages (90 files, 0 issues) ·
-`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 867 Python tests
+`uv lock --check` · 25 SQL smoke tests on a clean rebuild · 921 Python tests
 against live Postgres · twenty-nine privilege-denial invariants, all correctly denied.
 
 </details>
@@ -316,7 +316,7 @@ model — the one to read if you read only one**), and
 |---|---|
 | 18 migrations apply cleanly on an empty database | `./db/rebuild.sh` — the CI gate |
 | 25 end-to-end smoke tests pass | incl. fail-closed submit, unauthorised approval, review→edit→merge→label, workflow publish/run/human-response, observation dedup, as-of traversal |
-| 867 Python tests, 857 of them in one run against live Postgres | fde-mcp 110 · fde-agents 117 · fde-training 183 · fde-gate 287 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
+| 921 Python tests, 911 of them in one run against live Postgres | fde-mcp 144 · fde-agents 117 · fde-training 183 · fde-gate 307 · fde-sor 170. The 10 that skip need the `train` extra's heavy deps (9) or `wal_level=logical` (1); CI installs the extra and re-runs 39 of the fde-training tests in a job of its own |
 | 29 privilege-denial invariants hold | asserted in CI, not trusted |
 | 6 diagrams screenshot-verified | both colour schemes |
 

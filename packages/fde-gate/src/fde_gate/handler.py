@@ -50,7 +50,7 @@ from fde_gate.http import (
     to_apigw_response,
 )
 from fde_gate.rows import fetchone
-from fde_gate.service import drift, is_missing, proposals, runs, workflows
+from fde_gate.service import dashboard, drift, is_missing, proposals, runs, workflows
 from fde_mcp import db
 from fde_mcp.logging import configure_logging, get_logger
 
@@ -313,6 +313,32 @@ async def review_queue(request: Request) -> Response:
     )
 
 
+async def get_dashboard_md(request: Request) -> Response:
+    """The decision dashboard as Markdown -- the file that goes into a vault.
+
+    Served inline rather than as an attachment, unlike the playbook: a
+    playbook is a document you keep, and this is a reading of a moment that
+    is stale as soon as anything merges. The filename carries the date for
+    the same reason -- two of these in one folder are two different days, not
+    two versions of one document.
+
+    The window goes through the same `dashboard.normalize_window` the console
+    page uses. It did not always: this route honoured any value in 1-365
+    while the page snapped to its dropdown, so one shared link showed two
+    different windows depending on which surface opened it.
+    """
+    built = await dashboard.build(
+        engagement_id=request.query.get("engagement_id") or None,
+        window_days=dashboard.normalize_window(request.query.get("window_days")),
+    )
+    day = str(built["generated_at"])[:10]
+    return Response(
+        body=str(built["markdown"]),
+        content_type="text/markdown; charset=utf-8",
+        headers={"content-disposition": f'inline; filename="fde-dashboard-{day}.md"'},
+    )
+
+
 async def list_drift(request: Request) -> Response:
     return Response.json(
         await drift.list_signals(
@@ -337,11 +363,13 @@ async def post_triage(request: Request) -> Response:
 
 
 def build_router() -> Router:
-    """The whole HTTP surface: 19 API routes (18 JSON, 1 Markdown) plus the console."""
+    """The whole HTTP surface: 20 routes here (19 under `/api` plus `/healthz`
+    -- 18 answering JSON and 2 Markdown), then the console's own on top."""
     router = Router()
 
     router.get("/healthz", healthz)
     router.get("/api/review-queue", review_queue)
+    router.get("/api/dashboard.md", get_dashboard_md)
 
     router.get("/api/proposals", list_proposals)
     router.get("/api/proposals/{proposal_id}", get_proposal)

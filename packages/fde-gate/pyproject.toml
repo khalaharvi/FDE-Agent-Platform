@@ -26,6 +26,10 @@ dependencies = [
   # The only genuinely new runtime dependency in this package: the console
   # is server-rendered, so there is no build toolchain and no SPA.
   "jinja2>=3.1",
+  # Jinja2 already pulls this in, but ui.py imports `Markup` directly (the
+  # dashboard page's one deliberate autoescape exception), and a module we
+  # import by name is a dependency we declare by name.
+  "markupsafe>=2.1",
   "boto3>=1.35",
   "psycopg[binary,pool]>=3.2",
   "pydantic>=2.9",

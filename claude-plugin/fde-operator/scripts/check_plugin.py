@@ -26,7 +26,7 @@ PLUGIN = Path(__file__).resolve().parent.parent
 REPO = PLUGIN.parent.parent
 
 JSON_FILES = (".claude-plugin/plugin.json", ".mcp.json", "mcpb/manifest.json")
-COMMANDS = ("ingest-interview", "run-agent", "playbook")
+COMMANDS = ("ingest-interview", "run-agent", "playbook", "dashboard")
 EXPECTED = (
     ".claude-plugin/plugin.json",
     ".mcp.json",
@@ -43,8 +43,8 @@ EXPECTED = (
 # for a path. Extend the alternation when the plugin starts citing a new one.
 CITED_PATH = re.compile(r"`((?:packages|docs|docs-site|db|infra|tests|\.github)/[\w./-]+)`")
 
-# Every place the plugin states how many MCP tools there are: "22 MCP tools",
-# "the `fde` MCP server's 22 tools", "## Tool roster (22)". The count is a
+# Every place the plugin states how many MCP tools there are: "23 MCP tools",
+# "the `fde` MCP server's 23 tools", "## Tool roster (23)". The count is a
 # promise about another package, so it is derived from that package's tool
 # registrations rather than trusted.
 CLAIMED_TOOLS = re.compile(r"(\d+)\s+(?:MCP\s+)?tools\b|Tool roster \((\d+)\)")

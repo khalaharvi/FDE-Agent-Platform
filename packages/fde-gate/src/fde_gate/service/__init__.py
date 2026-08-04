@@ -1,11 +1,20 @@
 """service/ -- one module per request domain, split by the DB ROLE it uses.
 
-`proposals`, `reviewers`, `sources` and `workflows.publish` run as
+`proposals`, `reviewers`, `sources`, `agents` and `workflows.publish` run as
 `fde_gate_service`; `workflows` listing, `runs` and `drift` run as
-`fde_prodops`. That is the whole reason these are six modules and not one
-file of functions: the split makes the privilege boundary visible in the
+`fde_prodops`. That is the whole reason these are separate modules and not
+one file of functions: the split makes the privilege boundary visible in the
 import graph, so adding a run endpoint to `proposals.py` looks as wrong as
 it is.
+
+`dashboard` is the one module that uses BOTH, and it is the exception that
+shows the rule is real rather than tidy. It aggregates across `hitl`, `kg`,
+`sor` and `wf` at once, and no role can read all of that: `fde_prodops`
+holds no SELECT on `hitl.reviewer` (so it cannot name who decided anything)
+or on `wf.agent_launch` (db/018), while `fde_gate_service` holds none on
+`wf.run` or `sor.drift_signal`. It therefore opens two read-only
+transactions, exactly as `/ui/runs` already does, rather than a role being
+widened to make one page easier to write. Its header carries the table.
 
 `reviewers` and `sources` are the two modules that authorise before they act
 -- they write tables no plpgsql function guards, so the check is Python's

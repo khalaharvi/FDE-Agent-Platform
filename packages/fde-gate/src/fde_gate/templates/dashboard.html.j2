@@ -1,0 +1,45 @@
+{% extends "base.html.j2" %}
+{% block title %}Decision dashboard{% endblock %}
+{% block content %}
+<h1>Decision dashboard</h1>
+<p class="muted">
+  How work is flowing through the human gates. Counts only &mdash; open the
+  <a href="/ui">review queue</a> to act on anything here.
+  &middot; <a href="{{ md_href }}">download as Markdown</a>
+</p>
+
+{# GET, because a filter is a bookmarkable view rather than a mutation: the
+   URL this produces is the thing an operator pastes to a colleague. Both
+   controls submit together, so changing the window keeps the engagement and
+   the other way round. #}
+<form method="get" action="/ui/dashboard">
+  <fieldset>
+    <legend>Scope</legend>
+    <div class="field">
+      <label for="pick_engagement">Engagement</label>
+      <select id="pick_engagement" name="engagement_id">
+        <option value="">All engagements</option>
+        {% for e in engagements %}
+          <option value="{{ e }}"{% if e == engagement_id %} selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="pick_window">Window</label>
+      <select id="pick_window" name="window_days">
+        {% for w in window_choices %}
+          <option value="{{ w }}"{% if w == window_days %} selected{% endif %}>Last {{ w }} days</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Apply</button>
+  </fieldset>
+</form>
+
+{# Already-safe markup: `dashboard_page` wraps it in `markupsafe.Markup`, so
+   this renders as the plain variable it looks like and no `|safe` appears in
+   any template in this console. The trust argument lives at the wrapping
+   site in ui.py, where it can be audited once. Rendered inline rather than
+   in an iframe so it inherits the page width and the console's chrome. #}
+{{ dashboard_html }}
+{% endblock %}
