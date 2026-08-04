@@ -21,11 +21,15 @@ merge flow with zero AWS credentials.
 Chat and embeddings are selected independently (`FDE_MODEL_PROVIDER` vs.
 `FDE_EMBED_PROVIDER`) — necessarily, since Anthropic has no embeddings API
 and OpenCode Zen (an `openai-compat` preset, see §4) is chat-only. Pick a
-pairing: Anthropic chat + OpenAI embeddings, or Gemini for both, or Bedrock
-for both (the only single-provider option today). The 1024-dim figure is
-not a preference — `kg.embedding` is a fixed `vector(1024)` domain
-(`db/001`, `db/003`), and every embedding path hard-validates the returned
-vector length against it with no silent truncation, padding, or fallback.
+pairing: Anthropic chat + OpenAI embeddings, or one provider for both —
+Bedrock, OpenAI and Gemini each cover chat and embeddings unaided, and an
+`openai-compat` server does too once it serves `/v1/embeddings` with one of
+the 1024-dim models above. What sets Bedrock apart is reach rather than
+pairing: it is the only provider the offline training pipeline can use at
+all (§5). The 1024-dim figure is not a preference — `kg.embedding` is a
+fixed `vector(1024)` domain (`db/001`, `db/003`), and every embedding path
+hard-validates the returned vector length against it with no silent
+truncation, padding, or fallback.
 
 ---
 
@@ -111,9 +115,14 @@ rather than silently falling back to anything.
 ## 4. Compat presets
 
 `FDE_MODEL_PROVIDER=openai-compat` talks to any server that speaks the
-OpenAI chat-completions wire shape at `{base_url}/v1`. Three named presets
-cover the common cases (`FDE_MODEL_COMPAT_PRESET`); an explicit
-`FDE_MODEL_BASE_URL` always overrides the preset:
+OpenAI chat-completions wire shape. A base URL is required and nothing is
+guessed: set `FDE_MODEL_BASE_URL`, or name one of the three presets below
+with `FDE_MODEL_COMPAT_PRESET`. With neither set there is nothing to
+resolve, and `doctor`'s model-provider check fails saying so. An explicit
+`FDE_MODEL_BASE_URL` always overrides the preset. The value ends where the
+preset URLs end — at the API version segment, `.../v1` — because the chat
+path appends `/chat/completions` to it and login validation appends
+`/models`:
 
 | Preset | Base URL | Notes |
 |---|---|---|
@@ -131,10 +140,12 @@ resolves for `openai-compat`, `build_model` sends the literal string
 check it. A hosted `openai-compat` endpoint that does require a key still
 needs one — via `FDE_MODEL_API_KEY` or `fde-providers login openai-compat`.
 
-`FDE_EMBED_PROVIDER=openai-compat` follows the same base-url rule
-(`FDE_EMBED_BASE_URL`, no preset table) and needs a server that serves
-`/v1/embeddings` with a 1024-dim model — `mxbai-embed-large`, `bge-m3`, and
-`snowflake-arctic-embed-l` are known-good choices.
+`FDE_EMBED_PROVIDER=openai-compat` needs its own base URL, and here the
+requirement is unconditional: there is no embeddings preset table, so
+`FDE_EMBED_BASE_URL` is the only way to name the server and both `doctor`
+and the embedder itself refuse without it. It also needs that server to
+serve `/v1/embeddings` with a 1024-dim model — `mxbai-embed-large`,
+`bge-m3`, and `snowflake-arctic-embed-l` are known-good choices.
 
 ---
 

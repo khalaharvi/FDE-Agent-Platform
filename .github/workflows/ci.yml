@@ -133,9 +133,33 @@ jobs:
         # planner discard the subquery's target list under the constant-false
         # qual, and the EXECUTE check then never fires at all. That failure is
         # at least loud: the line succeeds and trips INVARIANT BROKEN. The
-        # standard they were held to, and that any new line should be held
-        # to, is both directions: denied for the role under test, and
-        # SUCCEEDING once the privilege is granted. The twelve after them
+        # standard they were held to, and that any new line must be held to,
+        # is both directions: denied for the role under test, and SUCCEEDING
+        # once the privilege is granted. That standard is now ENFORCED, not
+        # just stated -- assert_denied runs each statement as the migration
+        # owner first and requires it to succeed, then requires the role's
+        # refusal to be a privilege refusal. A guard that has stopped testing
+        # anything fails the step on the owner leg while the invariant still
+        # holds; one that is masked only after a grant fails on the denial
+        # leg. Neither can print "ok" again.
+        #
+        # Automating the owner leg required a second SHAPE-only reshape, on
+        # 2026-08-03, of the eight statements that were still unqualified --
+        # six `UPDATE`/`DELETE` with no WHERE, plus `UPDATE kg.source SET
+        # title` and the hitl.proposal INSERT. Run as the owner they wrote to
+        # the very tables they protect: the proposal INSERT used a literal
+        # VALUES row and inserted one on ANY database, and the kg.source
+        # UPDATE rewrote every title (three rows against `--with-demo`); the
+        # other six were no-ops only because rebuild.sh happens to leave
+        # those tables empty, which is a property of the fixture and not of
+        # the statement. All eight now match no rows, and all eight were
+        # proven in both directions on an empty and a demo-seeded database
+        # before being written down. The proposal INSERT selects literals
+        # rather than reading hitl.proposal for the reason the roster block
+        # below gives: db/012:55 revokes schema hitl from fde_rl_rollout
+        # outright, so its denial fires at the schema either way, and the
+        # read-the-target form would additionally need a SELECT it must
+        # never hold. The twelve after them
         # guard the reviewer roster (db/016): the console may administer it,
         # nothing else may touch it, and even the console may only write the
         # columns db/016 names. Five more guard evidence intake
@@ -147,21 +171,55 @@ jobs:
         run: |
           set -u
           fail=0
+          # Both directions, machine-checked, in the order they have to run.
+          #
+          # OWNER LEG: the same statement as the migration owner must SUCCEED.
+          # That is what proves the statement is valid SQL that gets far
+          # enough to be refused for a privilege and nothing else -- the
+          # automated form of the hand audit that found the dead guards. A
+          # guard that has quietly stopped testing anything now fails here
+          # WHILE THE INVARIANT STILL HOLDS, instead of waiting for the grant
+          # that breaks it.
+          #
+          # DENIAL LEG: a nonzero psql exit is not evidence by itself. A typo,
+          # a foreign key, a "not found" raised inside a SECURITY DEFINER
+          # body, or a dead connection all used to print "ok". The refusal
+          # must be postgres's own, matched on its message and anchored to the
+          # start of the line so that psql's echo of the failing statement
+          # cannot itself supply the words. Every current denial phrases it
+          # "permission denied for <table|function|schema> X", so the shared
+          # prefix is the tightest pattern covering all twenty-nine.
+          #
+          # Both legs run inside BEGIN/ROLLBACK. The twenty-nine are no-op
+          # forms by construction and each was proven to touch zero rows, so
+          # this changes no result today; it is here so that a future line
+          # that is NOT a no-op cannot make CI write to the tables these
+          # statements exist to protect -- including on the denial leg, which
+          # does execute the statement in exactly the case where a grant has
+          # already widened. Anything unexpected fails the step and names the
+          # line that proved nothing.
           assert_denied() {
-            if psql -v ON_ERROR_STOP=1 -q -c "SET ROLE $1; $2" >/dev/null 2>&1; then
+            local err
+            if ! err="$(psql -v ON_ERROR_STOP=1 -q -c "BEGIN; $2 ROLLBACK;" 2>&1 >/dev/null)"; then
+              echo "::error::GUARD DEAD -- the migration owner cannot run this, so it never reaches a privilege check: $2 -- got: $(head -1 <<<"$err")"; fail=1
+              return
+            fi
+            if err="$(psql -v ON_ERROR_STOP=1 -q -c "BEGIN; SET ROLE $1; $2 ROLLBACK;" 2>&1 >/dev/null)"; then
               echo "::error::INVARIANT BROKEN -- '$1' was able to: $2"; fail=1
+            elif grep -Eq '^ERROR: +permission denied for ' <<<"$err"; then
+              echo "ok: $1 denied (owner ok) -- ${2:0:60}"
             else
-              echo "ok: $1 denied -- ${2:0:60}"
+              echo "::error::GUARD DEAD -- '$1' was refused, but not by a privilege, so this line proves nothing: $2 -- got: $(head -1 <<<"$err")"; fail=1
             fi
           }
           assert_denied fde_agent "INSERT INTO kg.node (engagement_id,node_key,node_type,label,commit_id) SELECT gen_random_uuid(),'x','activity','x',1 WHERE false;"
           assert_denied fde_agent "SELECT hitl.merge_proposal(1,'x') WHERE false;"
-          assert_denied fde_agent "UPDATE wf.workflow SET status='published';"
-          assert_denied fde_agent "UPDATE trn.trace_session SET outcome='accepted';"
-          assert_denied fde_rl_rollout "INSERT INTO hitl.proposal (engagement_id,title,rationale,authored_by,agent_name) VALUES (gen_random_uuid(),'t','r','a','engagement');"
-          assert_denied fde_rl_rollout "UPDATE trn.trace_session SET outcome='accepted';"
+          assert_denied fde_agent "UPDATE wf.workflow SET status='published' WHERE false;"
+          assert_denied fde_agent "UPDATE trn.trace_session SET outcome='accepted' WHERE false;"
+          assert_denied fde_rl_rollout "INSERT INTO hitl.proposal (engagement_id,title,rationale,authored_by,agent_name) SELECT gen_random_uuid(),'t','r','a','engagement' WHERE false;"
+          assert_denied fde_rl_rollout "UPDATE trn.trace_session SET outcome='accepted' WHERE false;"
           assert_denied fde_agent "SELECT wf.publish_workflow(1,'x') WHERE false;"
-          assert_denied fde_prodops "UPDATE wf.workflow SET status='published';"
+          assert_denied fde_prodops "UPDATE wf.workflow SET status='published' WHERE false;"
 
           # The reviewer roster decides who may clear a gate. An agent that
           # could add a reviewer, grant an authority, or reactivate itself
@@ -182,8 +240,10 @@ jobs:
           # a unique constraint; and the two identical reviewer INSERTs are
           # asserted for two different roles, so a grant that widened for the
           # first would leave the second colliding on the unique principal.
-          # Every one of those keeps assert_denied printing "ok" after the
-          # invariant is already broken.
+          # Every one of those would keep assert_denied printing "ok" after
+          # the invariant is already broken -- the class the owner leg now
+          # catches outright. The shapes stay qualified regardless, so no
+          # line's detection power depends on that leg being there.
           #
           # The INSERTs select literals rather than reading the target the
           # way db/017's pair below does, because that form would leave two
@@ -219,15 +279,17 @@ jobs:
           # The fourth line is the important one: the write reaches evidence
           # tables and stops there. hitl.merge_proposal remains the only
           # path by which anything in this platform writes the graph.
-          assert_denied fde_gate_service "UPDATE kg.chunk SET content = 'x';"
-          assert_denied fde_gate_service "DELETE FROM kg.chunk;"
-          assert_denied fde_gate_service "UPDATE kg.source SET title = 'x';"
+          assert_denied fde_gate_service "UPDATE kg.chunk SET content = 'x' WHERE false;"
+          assert_denied fde_gate_service "DELETE FROM kg.chunk WHERE false;"
+          assert_denied fde_gate_service "UPDATE kg.source SET title = 'x' WHERE false;"
           # These two are `SELECT ... WHERE false` rather than VALUES, and the
           # difference decides whether they test anything. A literal VALUES row
           # has to name a commit_id and a source_id, which do not exist -- so it
-          # fails on a foreign key EVEN FOR THE OWNER, and assert_denied would
-          # keep printing "ok" after a widened grant had already broken the
-          # invariant. Selecting zero rows from the table itself inserts nothing,
+          # fails on a foreign key EVEN FOR THE OWNER, which is now precisely
+          # what the owner leg reports as a dead guard, and which before that
+          # leg existed let assert_denied print "ok" after a widened grant had
+          # already broken the invariant. Selecting zero rows from the table
+          # itself inserts nothing,
           # succeeds trivially wherever the privilege is held, and can therefore
           # fail for exactly one reason. One caveat comes with reading the
           # target table: this form needs SELECT as well as INSERT, so
