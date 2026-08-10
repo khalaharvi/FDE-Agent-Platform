@@ -42,7 +42,7 @@ jobs:
 
       # From .python-version rather than a literal, so the plugin check cannot
       # drift onto a different interpreter than the rest of the repo.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version-file: .python-version
 
