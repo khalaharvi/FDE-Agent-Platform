@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
   "fde-mcp",
-  "bedrock-agentcore>=1.19",
+  "bedrock-agentcore>=1.21.0",
   "strands-agents[anthropic,gemini,openai]>=1.50",
   "mcp>=1.27",
   "pydantic>=2.9",
