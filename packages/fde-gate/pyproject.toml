@@ -30,7 +30,7 @@ dependencies = [
   # dashboard page's one deliberate autoescape exception), and a module we
   # import by name is a dependency we declare by name.
   "markupsafe>=2.1",
-  "boto3>=1.35",
+  "boto3>=1.43.66",
   "psycopg[binary,pool]>=3.2",
   "pydantic>=2.9",
   "structlog>=24.4",
